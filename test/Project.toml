@@ -1,0 +1,4 @@
+[deps]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+BioSequences = "7e6ae17a-c86d-528c-b3b9-7f778a29fe59"
+CRISPRofftargetHunter = "2408c727-2a6f-4260-b4c2-4d62f645fe8e"
