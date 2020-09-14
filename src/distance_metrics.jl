@@ -15,14 +15,17 @@ N      , anything -> True
 W (A/T), R (A/G)  -> False
 W      , A        -> True
 "
-@inline function isinclusive(x::S, y::S) where S <: BioSymbol
-	return all(compatbits(x) & compatbits(y) == compatbits(x)) |
-	 all(compatbits(x) & compatbits(y) == compatbits(y))
+@inline function isinclusive(x::S, y::S) where {S<:BioSymbol}
+    return all(compatbits(x) & compatbits(y) == compatbits(x)) |
+           all(compatbits(x) & compatbits(y) == compatbits(y))
 end
 
 
-@inline function commonprefix(guide::NucleotideSeq, ref::NucleotideSeq,
-	ismatch::Function=isinclusive)
+@inline function commonprefix(
+    guide::NucleotideSeq,
+    ref::NucleotideSeq,
+    ismatch::Function = isinclusive,
+)
     l = 0
     for (i, g) in enumerate(guide)
         !ismatch(g, ref[i]) && break
@@ -46,7 +49,7 @@ is 24e-9 seconds -> 7.3 second per query on full linear scan for all
 off-targets.
 "
 function hamming(s1::NucleotideSeq, s2::NucleotideSeq, ismatch = isinclusive)
-	return count(!ismatch, s1, s2)
+    return count(!ismatch, s1, s2)
 end
 
 
@@ -91,56 +94,60 @@ BenchmarkTools.TrialEstimate:
 print(judge(m1, m2))
 TrialJudgement(+1126.73% => regression)
 """
-function levenshtein(guide::NucleotideSeq, ref::NucleotideSeq,
-	k::Integer = 4, ismatch::Function=isinclusive)
+function levenshtein(
+    guide::NucleotideSeq,
+    ref::NucleotideSeq,
+    k::Integer = 4,
+    ismatch::Function = isinclusive,
+)
 
-	len1, len2 = length(guide), length(ref)
-	# prefix common to both strings can be ignored
+    len1, len2 = length(guide), length(ref)
+    # prefix common to both strings can be ignored
     f = commonprefix(guide, ref, ismatch)
     f == len1 && return 0
-	guide, ref = guide[f+1:end], ref[f+1:end]
-	len1 = length(guide)
-	if k >= len1
-		k = len1
-	end
+    guide, ref = guide[f+1:end], ref[f+1:end]
+    len1 = length(guide)
+    if k >= len1
+        k = len1
+    end
 
-	# large loop on the reference restricted by deletions
-	# small loop on the guide restricted by k
+    # large loop on the reference restricted by deletions
+    # small loop on the guide restricted by k
     v = collect(1:len1)
-	v_min_idx = 0
-	current = 0
+    v_min_idx = 0
+    current = 0
     for (i, ch1) in enumerate(ref)
         left = current = v_min = i - 1
-        for j in max(1, i - k):min(len1, i + k)
+        for j = max(1, i - k):min(len1, i + k)
             above, current, left = current, left, v[j]
             if !ismatch(ch1, guide[j])
-				# mismatch when all options equal
-				if current < above
-					if current < left # mismatch
-						current = current + 1
-					else # gap in guide
-						current = left + 1
-					end
-				else
-					if above < left # gap in ref
-						current = above + 1
-					else # mismatch
-						current = left + 1
-					end
-				end
+                # mismatch when all options equal
+                if current < above
+                    if current < left # mismatch
+                        current = current + 1
+                    else # gap in guide
+                        current = left + 1
+                    end
+                else
+                    if above < left # gap in ref
+                        current = above + 1
+                    else # mismatch
+                        current = left + 1
+                    end
+                end
             end
 
-			if v_min < left
-				v_min_idx = j - 1
-			else
-				v_min = left
-				v_min_idx = j
-			end
-			v[j] = current
+            if v_min < left
+                v_min_idx = j - 1
+            else
+                v_min = left
+                v_min_idx = j
+            end
+            v[j] = current
         end
-		# we aligned all of guide - only ref is left
-		# return smallest distance in this row
-		v_min_idx == len1 && return v_min
+        # we aligned all of guide - only ref is left
+        # return smallest distance in this row
+        v_min_idx == len1 && return v_min
         v_min > k && return k + 1
     end
     current > k && return k + 1
@@ -149,10 +156,6 @@ end
 
 # some tests
 # Random.seed!(42)
-# function getSeq(N = 20, letters = ['A', 'C', 'G', 'T'])
-# 	return LongDNASeq(randstring(letters, N))
-# end
-#
 # s, t = getSeq(), getSeq(24)
 # println(s)
 # println(t)

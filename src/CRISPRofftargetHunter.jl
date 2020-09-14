@@ -6,10 +6,8 @@ using Random
 using BioSymbols
 using BioSequences
 
+include("utils.jl")
 include("distance_metrics.jl")
 
-export isinclusive,
-       commonprefix,
-       hamming,
-       levenshtein
+export isinclusive, commonprefix, hamming, levenshtein
 end
