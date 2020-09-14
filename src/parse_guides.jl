@@ -72,6 +72,10 @@ function Bucket()
     return Bucket(Vector{Guide}(), Vector{Int}())
 end
 
+function Base.string(bucket::Bucket)
+    return "g: " * length(bucket.guides)
+end
+
 function Base.push!(bucket::Bucket, guide::Guide, d::Int)
     push!(bucket.guides, guide)
     push!(bucket.d_to_p, d)
@@ -115,16 +119,12 @@ struct Node
     outside_bucket::Bool
 end
 
+function Base.string(node::Node)
+    return "r: " * string(node.radius)
+end
+
 function Node(guide::Guide)
     return Node(guide, round((length(guide)-7)/2), 0, false, 0, false)
-end
-
-function isleaf(node::Node, inside::Bool = true)
-    return inside ? node.inside == 0 : node.outside == 0
-end
-
-function hasbucket(node::Node, inside::Bool = true)
-    return inside ? node.inside_bucket : node.outside_bucket
 end
 
 function getindex(node::Node, inside::Bool = true)
@@ -254,24 +254,60 @@ function Base.push!(tree::VPTree, guide::Guide, node_idx::Int = 1)
     return nothing
 end
 
-# function printVPtree(tree::VPtree, start_node = 1, levels = 10)
-#     if (start_node > length(tree.nodes))
-#         throw(ArgumentError("Less nodes than start_node parameter."))
-#     end
-#
-#     # assume we have #levels at the very least
-#     # "\n" "\\" "/"
-#     # left == inside
-#     p = repeat("", 10)
-#     repeat(".:Z:.", 10)
-#     join()
-#     print()
-#     "Node $(typeof(n).parameters[1]): $(n.data), index $(n.index) radius $(n.radius)"
-# end
 
-# function Base.show(io::IO, tree::VPTree)
-#     printVPtree(tree::VPTree)
-# end
+function shift(f::String, o::String, xs::Vector{String})
+    rep = repeat([o], length(xs) - 1)
+    ch = vcat(f, rep)
+    return map(*, ch, xs)
+end
+
+
+function drawSubTrees(tree::VPTree, idx:::Ind)
+    if length(xs) > 0
+        if length(xs) > 1
+        # we are not bucket
+            return vcat(['│'], shift('├─ ', '│  ', draw(xs[0])), drawSubTrees(xs[1:]))
+        else
+        # we are bucket
+            return vcat(['│'], shift('└─ ', '   ', draw(xs[0])))
+        end
+    else
+        return Vector{String}()
+    end
+end
+
+
+function draw(tree::VPTree, idx::Int, isbucket::Union{Nothing, Bool}, inside::Bool)
+    node_pic = "◯"
+    if !isnothing(isbucket)
+        if isbucket
+            node_pic = inside ? "◧" : "◨"
+        else
+            node_pic = inside ? "◐" : "◑"
+        end
+    end
+    n = node_pic * string(idx) * " "
+    n = n * isbucket ? string(tree.buckets[idx]) : string(tree.nodes[idx])
+    if isbucket
+        return [n]
+    else
+        return vcat([n], drawSubTrees(tree, idx::Int))
+    end
+end
+
+function printVPtree(tree::VPtree, start_node = 1, levels = 10)
+    if (start_node > length(tree.nodes))
+        throw(ArgumentError("Less nodes than start_node parameter."))
+    end
+    # assume we have #levels at the very least
+    # "\n" "\\" "/"
+    # left == inside
+    print(join(draw(tree, 1, false, false), "\n"))
+end
+
+function Base.show(io::IO, tree::VPTree)
+    printVPtree(tree::VPTree)
+end
 
 
 # tree = VPTree()
