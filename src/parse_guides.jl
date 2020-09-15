@@ -265,7 +265,7 @@ end
 function drawSubTrees_(tree::VPTree, idx::Vector{Int}, isbucket::Vector{Bool}, isinside::Vector{Bool})
     if length(idx) != 0
         if length(idx) == 1
-            return vcat(["│"], shiftdisp("└─ ", "",
+            return vcat(["│"], shiftdisp("└─ ", "   ",
                         drawTree(tree, idx[1], isbucket[1], isinside[1])))
         else
             return vcat(["│"], shiftdisp("├─ ", "│  ",
@@ -277,30 +277,18 @@ function drawSubTrees_(tree::VPTree, idx::Vector{Int}, isbucket::Vector{Bool}, i
     end
 end
 
-# function drawSubTrees(tree::VPTree, idx::Int)
-#     # if any is bucket then
-#     ret = drawSubTrees_(tree, tree.nodes[idx].inside, tree.nodes[idx].inside_bucket, true)
-#     ret = vcat(ret, drawSubTrees_(tree, tree.nodes[idx].outside, tree.nodes[idx].outside_bucket, false))
-#     return ret
-# end
 
 function drawTree(tree::VPTree, idx::Int, isbucket::Bool, inside::Union{Nothing, Bool})
-    node_pic = "N "
+    node_pic = "☀ "
     if !isnothing(inside)
         if isbucket
-            node_pic = inside ? "bi " : "bo "
+            node_pic = inside ? "◧ " : "◨ " # left is inside
         else
-            node_pic = inside ? "ni " : "no "
+            node_pic = inside ? "◐ " : "◑ "
         end
     end
-    n = node_pic * string(idx) * " "
-    node_n = ""
-    if isbucket
-        node_n = string(tree.buckets[idx])
-    else
-        node_n = string(tree.nodes[idx])
-    end
-    n = n * node_n
+    n_str = isbucket ? string(tree.buckets[idx]) : string(tree.nodes[idx])
+    n = node_pic * string(idx) * " " * n_str
     if isbucket
         return [n]
     else
@@ -314,12 +302,9 @@ end
 
 function printVPtree(tree::VPTree, start_node::Int = 1, levels::Int = 10)
     if (start_node > length(tree.nodes))
-        print("Empty VP tree.")
+        print("VP tree is empty.")
         return nothing
     end
-    # assume we have #levels at the very least
-    # "\n" "\\" "/"
-    # left == inside
     print(join(drawTree(tree, start_node, false, nothing), "\n"))
 end
 
@@ -345,7 +330,7 @@ for line in eachline(all_guides)
     print(guide)
     push!(tree, guide)
 end
-# ? where did the rest of nodes gone to?
+
 
 # global row = 1
 # for line in eachline(all_guides)
