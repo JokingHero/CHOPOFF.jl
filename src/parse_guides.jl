@@ -10,10 +10,7 @@ using Statistics
 # 1. Calcualte average guide
 # 2. Make a run through all guides and try to find off-targets - brute force
 
-all_guides = joinpath(
-    "/home/ai/Projects/uib/crispr/",
-    "CRISPRofftargetHunter/hg38v34_db_test.csv",
-)
+all_guides = joinpath("/home/ai/Projects/uib/crispr/", "CRISPRofftargetHunter/hg38v34_db_test.csv")
 k = 4 # max distance
 max_dist = [5, 10, 25, 75, 250]
 
@@ -55,6 +52,10 @@ function Guide()
     return Guide(CRISPRofftargetHunter.getSeq(23 + 4), ["random"])
 end
 
+function Base.length(guide::Guide)
+    return length(guide.loci)
+end
+
 function Base.isless(x::Guide, y::Guide)
     return x.seq[4:end] > y.seq[4:end]
 end
@@ -73,7 +74,15 @@ function Bucket()
 end
 
 function Base.string(bucket::Bucket)
-    return "g: " * string(length(bucket.guides))
+    return "g:" * string(length(bucket.guides)) * " b:" * string(balance(bucket.d_to_p, 0))
+end
+
+function Base.length(bucket::Bucket)
+    return length(bucket.guides)
+end
+
+function loci_count(bucket::Bucket)
+    return sum(length.(bucket.guides))
 end
 
 function Base.push!(bucket::Bucket, guide::Guide, d::Int)
@@ -86,23 +95,23 @@ function Base.unique!(bucket::Bucket)
     ranks = sortperm(bucket.guides)
     # indices to remove
     to_remove = Vector{Int}()
-    for i in 2:length(ranks)
+    for i = 2:length(ranks)
         idx_g = findfirst(isequal(i), ranks)
-        idx_g2 = findfirst(isequal(i-1), ranks)
-        if isequal(bucket.guides[idx_g],
-                   bucket.guides[idx_g2])
-           # FIXME - how can this happen actually?
-           # if !isequal(bucket.d_to_p[idx_g], bucket.d_to_p[idx_g2])
-           #     print(bucket.d_to_p[idx_g])
-           #     print(bucket.guides[idx_g])
-           #     print(bucket.d_to_p[idx_g2])
-           #     print(bucket.guides[idx_g2])
-           #     error("Here...")
-           # end
-           push!(to_remove, idx_g2)
-           append!(bucket.guides[idx_g].loci, bucket.guides[idx_g2].loci)
+        idx_g2 = findfirst(isequal(i - 1), ranks)
+        if isequal(bucket.guides[idx_g], bucket.guides[idx_g2])
+            # FIXME - how can this happen actually?
+            # if !isequal(bucket.d_to_p[idx_g], bucket.d_to_p[idx_g2])
+            #     print(bucket.d_to_p[idx_g])
+            #     print(bucket.guides[idx_g])
+            #     print(bucket.d_to_p[idx_g2])
+            #     print(bucket.guides[idx_g2])
+            #     error("Here...")
+            # end
+            push!(to_remove, idx_g2)
+            append!(bucket.guides[idx_g].loci, bucket.guides[idx_g2].loci)
         end
     end
+    sort!(to_remove)
     deleteat!(bucket.guides, to_remove)
     deleteat!(bucket.d_to_p, to_remove)
     return nothing
@@ -120,11 +129,15 @@ struct Node
 end
 
 function Base.string(node::Node)
-    return "r: " * string(node.radius)
+    return "r:" * string(node.radius)
+end
+
+function loci_count(node::Node)
+    return length(node.guide.loci)
 end
 
 function Node(guide::Guide)
-    return Node(guide, round((length(guide)-7)/2), 0, false, 0, false)
+    return Node(guide, round((length(guide) - 7) / 2), 0, false, 0, false)
 end
 
 function getindex(node::Node, inside::Bool = true)
@@ -135,7 +148,7 @@ function getindex(node::Node, inside::Bool = true)
     end
 end
 
-struct VPTree
+struct VPtree
     pam_len::Int
     pam_5prim::Bool
     guide_len::Int
@@ -145,24 +158,19 @@ struct VPTree
     max_bucket_len::Int
 end
 
-function VPTree()
-    return VPTree(3, true, 20, 4, Vector{Node}(), Vector{Bucket}(), 500)
+function VPtree()
+    return VPtree(3, true, 20, 4, Vector{Node}(), Vector{Bucket}(), 500)
 end
 
-function updatenode!(
-    tree::VPTree,
-    node_idx::Int,
-    idx::Int,
-    inside::Bool,
-    hasbucket::Bool = false
-)
+function updatenode!(tree::VPtree, node_idx::Int, idx::Int, inside::Bool, hasbucket::Bool = false)
     if inside
         tree.nodes[node_idx] = Node(
             tree.nodes[node_idx].guide,
             tree.nodes[node_idx].radius,
-            idx, hasbucket,
+            idx,
+            hasbucket,
             tree.nodes[node_idx].outside,
-            tree.nodes[node_idx].outside_bucket
+            tree.nodes[node_idx].outside_bucket,
         )
     else
         tree.nodes[node_idx] = Node(
@@ -170,7 +178,8 @@ function updatenode!(
             tree.nodes[node_idx].radius,
             tree.nodes[node_idx].inside,
             tree.nodes[node_idx].inside_bucket,
-            idx, hasbucket
+            idx,
+            hasbucket,
         )
     end
     return nothing
@@ -181,19 +190,22 @@ end
     split of values into buckets.
 "
 function balance(x::Vector{Int}, max_dist::Int = 4)
+    if isempty(x)
+        return nothing
+    end
     uniq = unique(x)
     counts = [count(y -> y == i, x) for i in uniq]
-    balance = argmin(abs.([sum(counts[1:i]) - sum(counts[i:end]) for i in 1:length(counts)]))
+    balance = argmin(abs.([sum(counts[1:i]) - sum(counts[i:end]) for i = 1:length(counts)]))
     adj_balance = uniq[balance] - max_dist
     return uniq[argmin(abs.(uniq .- adj_balance))]
 end
 
-function Base.push!(tree::VPTree, guide::Guide, node_idx::Int = 1)
+function Base.push!(tree::VPtree, guide::Guide, node_idx::Int = 1)
     guide_inserted = false
     if length(tree.nodes) == 0
         push!(tree.buckets, Bucket())
         push!(tree.buckets, Bucket())
-        push!(tree.nodes, Node(guide, round(tree.guide_len/2) - tree.max_dist, 1, true, 2, true))
+        push!(tree.nodes, Node(guide, round(tree.guide_len / 2) - tree.max_dist, 1, true, 2, true))
         return nothing
     end
 
@@ -205,8 +217,11 @@ function Base.push!(tree::VPTree, guide::Guide, node_idx::Int = 1)
             guide_inserted = true
         end
 
-        d = levenshtein(guide.seq[4:23], tree.nodes[node_idx].guide.seq[4:end],
-                        tree.max_dist + tree.nodes[node_idx].radius)
+        d = levenshtein(
+            guide.seq[4:23],
+            tree.nodes[node_idx].guide.seq[4:end],
+            tree.max_dist + tree.nodes[node_idx].radius,
+        )
         isinside = (d - tree.max_dist) > tree.nodes[node_idx].radius
         child_idx, is_bucket = getindex(tree.nodes[node_idx], isinside)
 
@@ -254,23 +269,22 @@ function Base.push!(tree::VPTree, guide::Guide, node_idx::Int = 1)
     return nothing
 end
 
-
 function shiftdisp(f::String, o::String, xs::Vector{String})
     rep = repeat([o], length(xs) - 1)
     ch = vcat(f, rep)
     return map(*, ch, xs)
 end
 
-
-function drawSubTrees_(tree::VPTree, idx::Vector{Int}, isbucket::Vector{Bool}, isinside::Vector{Bool})
+function drawVPSubTrees(tree::VPtree, idx::Vector{Int}, isbucket::Vector{Bool}, isinside::Vector{Bool}, levels::Int)
     if length(idx) != 0
         if length(idx) == 1
-            return vcat(["│"], shiftdisp("└─ ", "   ",
-                        drawTree(tree, idx[1], isbucket[1], isinside[1])))
+            return vcat(["│"], shiftdisp("└─ ", "   ", drawVPtree(tree, idx[1], isbucket[1], isinside[1], levels)))
         else
-            return vcat(["│"], shiftdisp("├─ ", "│  ",
-                        drawTree(tree, idx[1], isbucket[1], isinside[1])),
-                        drawSubTrees_(tree, idx[2:end], isbucket[2:end], isinside[2:end]))
+            return vcat(
+                ["│"],
+                shiftdisp("├─ ", "│  ", drawVPtree(tree, idx[1], isbucket[1], isinside[1], levels)),
+                drawVPSubTrees(tree, idx[2:end], isbucket[2:end], isinside[2:end], levels),
+            )
         end
     else
         return Vector{String}()
@@ -278,7 +292,7 @@ function drawSubTrees_(tree::VPTree, idx::Vector{Int}, isbucket::Vector{Bool}, i
 end
 
 
-function drawTree(tree::VPTree, idx::Int, isbucket::Bool, inside::Union{Nothing, Bool})
+function drawVPtree(tree::VPtree, idx::Int, isbucket::Bool, inside::Union{Nothing,Bool}, levels::Int)
     node_pic = "☀ "
     if !isnothing(inside)
         if isbucket
@@ -289,37 +303,53 @@ function drawTree(tree::VPTree, idx::Int, isbucket::Bool, inside::Union{Nothing,
     end
     n_str = isbucket ? string(tree.buckets[idx]) : string(tree.nodes[idx])
     n = node_pic * string(idx) * " " * n_str
-    if isbucket
+    if isbucket || levels == 0
         return [n]
     else
+        levels = levels - 1
         node = tree.nodes[idx]
-        subtree = drawSubTrees_(tree, [node.inside, node.outside],
-                                [node.inside_bucket, node.outside_bucket],
-                                [true, false])
+        subtree = drawVPSubTrees(
+            tree,
+            [node.inside, node.outside],
+            [node.inside_bucket, node.outside_bucket],
+            [true, false],
+            levels,
+        )
         return vcat([n], subtree)
     end
 end
 
-function printVPtree(tree::VPTree, start_node::Int = 1, levels::Int = 10)
-    if (start_node > length(tree.nodes))
-        print("VP tree is empty.")
+function printVPtree(tree::VPtree, start_node::Int = 1, levels::Int = 3, io::IO = stdout)
+    println(
+        io,
+        "Nodes:",
+        length(tree.nodes),
+        " Guides:",
+        sum(length.(tree.buckets)),
+        " Loci:",
+        sum(loci_count.(tree.buckets)) + sum(loci_count.(tree.nodes)),
+    )
+
+    if start_node > length(tree.nodes) || get(io, :compact, false)
         return nothing
     end
-    print(join(drawTree(tree, start_node, false, nothing), "\n"))
+
+    println(io, "\n" * join(drawVPtree(tree, start_node, false, nothing, levels), "\n"))
+    return nothing
 end
 
-# function Base.show(io::IO, tree::VPTree)
-#     printVPtree(tree::VPTree)
-# end
+function Base.show(io::IO, mime::MIME"text/plain", tree::VPtree)
+    printVPtree(tree, 1, 3, io)
+end
 
-vptree = VPTree(3, true, 20, 4, Vector{Node}(), Vector{Bucket}(), 3)
-push!(vptree, Guide())
-push!(vptree, Guide())
-push!(vptree, Guide())
-printVPtree(vptree)
+tree = VPtree(3, true, 20, 4, Vector{Node}(), Vector{Bucket}(), 3)
+push!(tree, Guide())
+push!(tree, Guide())
+push!(tree, Guide())
+printVPTree(tree)
 
 global row = 1
-global tree = VPTree()
+global tree = VPtree()
 for line in eachline(all_guides)
     global row += 1
     println(row)
