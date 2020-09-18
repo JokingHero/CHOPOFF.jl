@@ -9,5 +9,6 @@ using BioSequences
 include("utils.jl")
 include("distance_metrics.jl")
 
+export getSeq, file_read, file_write, file_add
 export isinclusive, commonprefix, hamming, levenshtein
 end

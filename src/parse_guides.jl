@@ -3,6 +3,7 @@ using CRISPRofftargetHunter
 using BioSymbols
 using BioSequences
 using Statistics
+using Serialization
 # using JLD
 
 # hamming, levenshtein
@@ -148,7 +149,7 @@ function getindex(node::Node, inside::Bool = true)
     end
 end
 
-struct VPtree
+mutable struct VPtree
     pam_len::Int
     pam_5prim::Bool
     guide_len::Int
@@ -156,6 +157,10 @@ struct VPtree
     nodes::Vector{Node}
     buckets::Vector{Bucket}
     max_bucket_len::Int
+
+    max_guides_mem::Int
+    output_folder::String # persistent buckets are here
+    file_buckets::Vector{Int}
 end
 
 function VPtree()
@@ -346,10 +351,11 @@ tree = VPtree(3, true, 20, 4, Vector{Node}(), Vector{Bucket}(), 3)
 push!(tree, Guide())
 push!(tree, Guide())
 push!(tree, Guide())
-printVPTree(tree)
+printVPtree(tree)
 
 global row = 1
 global tree = VPtree()
+all_guides = joinpath("/home/ai/Projects/uib/crispr/", "CRISPRofftargetHunter/hg38v34_db.csv")
 for line in eachline(all_guides)
     global row += 1
     println(row)
@@ -391,3 +397,6 @@ end
 #         guide_dist[guide] = Guide(guide, guide_dist, split(line, ",")[2])
 #     end
 # end
+
+# test serialization
+# https://docs.julialang.org/en/v1/stdlib/Mmap/
