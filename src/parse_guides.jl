@@ -50,7 +50,7 @@ struct Guide
 end
 
 function Guide()
-    return Guide(CRISPRofftargetHunter.getSeq(23 + 4), ["random"])
+    return Guide(getSeq(23 + 4), ["random"])
 end
 
 function Base.length(guide::Guide)
@@ -155,16 +155,13 @@ mutable struct VPtree
     guide_len::Int
     max_dist::Int
     nodes::Vector{Node}
-    buckets::Vector{Bucket}
+    bucket_size::Vector{Int}
     max_bucket_len::Int
-
-    max_guides_mem::Int
-    output_folder::String # persistent buckets are here
-    file_buckets::Vector{Int}
+    output_dir::String # persistent buckets are here
 end
 
-function VPtree()
-    return VPtree(3, true, 20, 4, Vector{Node}(), Vector{Bucket}(), 500)
+function VPtree(output_dir)
+    return VPtree(3, true, 20, 4, Vector{Node}(), Vector{Int}(), 500, output_dir)
 end
 
 function updatenode!(tree::VPtree, node_idx::Int, idx::Int, inside::Bool, hasbucket::Bool = false)
@@ -205,11 +202,36 @@ function balance(x::Vector{Int}, max_dist::Int = 4)
     return uniq[argmin(abs.(uniq .- adj_balance))]
 end
 
+
+function bucket_path(dir::String, idx::Int)
+    gp = joinpath(dir, string("bucket_", idx, "_g.bin"))
+    dp = joinpath(dir, string("bucket_", idx, "_d.bin"))
+    return gp, dp
+end
+
+" Add to bucket a guide, update bucket size."
+function push_to_bucket!(tree::VPtree, child_idx::Int, guide::Guide, d::Int)
+    gp, dp = bucket_path(tree.output_dir, child_idx)
+    file_add(gp, guide)
+    file_add(dp, d)
+    tree.bucket_size[child_idx] = tree.bucket_size[child_idx] + 1
+    return nothing
+end
+
+" Delete previous bucket and push new content."
+function push_to_bucket!(tree::VPtree, child_idx::Int, guide::Vector{Guide}, d::Vector{Int})
+    gp, dp = bucket_path(tree.output_dir, child_idx)
+    file_write(gp, guide)
+    file_write(dp, d)
+    tree.bucket_size[child_idx] = length(guide)
+    return nothing
+end
+
 function Base.push!(tree::VPtree, guide::Guide, node_idx::Int = 1)
     guide_inserted = false
     if length(tree.nodes) == 0
-        push!(tree.buckets, Bucket())
-        push!(tree.buckets, Bucket())
+        push!(tree.bucket_size, 0)
+        push!(tree.bucket_size, 0)
         push!(tree.nodes, Node(guide, round(tree.guide_len / 2) - tree.max_dist, 1, true, 2, true))
         return nothing
     end
@@ -231,39 +253,49 @@ function Base.push!(tree::VPtree, guide::Guide, node_idx::Int = 1)
         child_idx, is_bucket = getindex(tree.nodes[node_idx], isinside)
 
         if is_bucket
-            if length(tree.buckets[child_idx].guides) >= tree.max_bucket_len
+            if tree.bucket_size[child_idx] >= tree.max_bucket_len
+                # read bucket
+                gp, dp = bucket_path(tree.output_dir, child_idx)
+                gread = @sync file_read(gp)
+                dread = @sync file_read(dp)
+                bucket = Bucket(gread, dread)
                 # compress guides to unique only
-                unique!(tree.buckets[child_idx])
+                unique!(bucket)
                 # not median as we bias with restricted distance metric
-                me = balance(tree.buckets[child_idx].d_to_p, tree.max_dist)
+                me = balance(bucket.d_to_p, tree.max_dist)
                 # new split by guide close to median
-                split_idx = rand(findall(tree.buckets[child_idx].d_to_p .== me))
-                split_guide = tree.buckets[child_idx].guides[split_idx]
-                deleteat!(tree.buckets[child_idx].guides, split_idx)
-                deleteat!(tree.buckets[child_idx].d_to_p, split_idx)
+                split_idx = rand(findall(bucket.d_to_p .== me))
+                split_guide = bucket.guides[split_idx]
+                deleteat!(bucket.guides, split_idx)
+                deleteat!(bucket.d_to_p, split_idx)
                 # iterate over all guides and compute new d
-                new_d_to_p = fill(0, length(tree.buckets[child_idx].d_to_p))
-                for (idx_g, g) in enumerate(tree.buckets[child_idx].guides)
+                new_d_to_p = fill(0, length(bucket.d_to_p))
+                for (idx_g, g) in enumerate(bucket.guides)
                     new_d_to_p[idx_g] = levenshtein(g.seq[4:23], split_guide.seq[4:end], tree.max_dist + me)
                 end
                 # split into new buckets
                 new_inside = (new_d_to_p .- tree.max_dist) .> me
-                push!(tree.buckets, Bucket(tree.buckets[child_idx].guides[new_inside], new_d_to_p[new_inside]))
-                deleteat!(tree.buckets[child_idx].guides, new_inside)
-                deleteat!(tree.buckets[child_idx].d_to_p, new_inside)
+                # make new bucket from part of the guides
+                push!(tree.bucket_size, 0)
+                @sync push_to_bucket!(tree, length(tree.bucket_size),
+                                bucket.guides[new_inside], new_d_to_p[new_inside])
+                # overwrite old file with part of the guides
+                tree.bucket_size[child_idx] = 0
+                @sync push_to_bucket!(tree, child_idx, bucket.guides[.!new_inside], new_d_to_p[.!new_inside])
+
                 # add initial guide to the bucket
                 d = levenshtein(guide.seq[4:23], split_guide.seq[4:end], tree.max_dist + me)
                 if ((d - tree.max_dist) > me)
-                    push!(tree.buckets[end], guide, d)
+                    @sync push_to_bucket!(tree, length(tree.bucket_size), guide, d)
                 else
-                    push!(tree.buckets[child_idx], guide, d)
+                    @sync push_to_bucket!(tree, child_idx, guide, d)
                 end
                 # make new node pointing to the buckets
-                push!(tree.nodes, Node(split_guide, me, length(tree.buckets), true, child_idx, true))
+                push!(tree.nodes, Node(split_guide, me, length(tree.bucket_size), true, child_idx, true))
                 # update parent node to point to the above node
                 updatenode!(tree, node_idx, length(tree.nodes), isinside)
             else
-                push!(tree.buckets[child_idx], guide, d)
+                @sync push_to_bucket!(tree, child_idx, guide, d)
             end
             guide_inserted = true
         else
@@ -306,7 +338,7 @@ function drawVPtree(tree::VPtree, idx::Int, isbucket::Bool, inside::Union{Nothin
             node_pic = inside ? "◐ " : "◑ "
         end
     end
-    n_str = isbucket ? string(tree.buckets[idx]) : string(tree.nodes[idx])
+    n_str = isbucket ? string(tree.bucket_size[idx]) : string(tree.nodes[idx])
     n = node_pic * string(idx) * " " * n_str
     if isbucket || levels == 0
         return [n]
@@ -330,9 +362,9 @@ function printVPtree(tree::VPtree, start_node::Int = 1, levels::Int = 3, io::IO 
         "Nodes:",
         length(tree.nodes),
         " Guides:",
-        sum(length.(tree.buckets)),
+        sum(tree.bucket_size),
         " Loci:",
-        sum(loci_count.(tree.buckets)) + sum(loci_count.(tree.nodes)),
+        sum(tree.bucket_size) + sum(loci_count.(tree.nodes)),
     )
 
     if start_node > length(tree.nodes) || get(io, :compact, false)
@@ -347,26 +379,39 @@ function Base.show(io::IO, mime::MIME"text/plain", tree::VPtree)
     printVPtree(tree, 1, 3, io)
 end
 
-tree = VPtree(3, true, 20, 4, Vector{Node}(), Vector{Bucket}(), 3)
-push!(tree, Guide())
-push!(tree, Guide())
-push!(tree, Guide())
+temp = tempname()
+mkpath(temp)
+tree = VPtree(3, true, 20, 4, Vector{Node}(), Vector{Bucket}(), 100000, temp)
+for i in 1:300000
+    push!(tree, Guide())
+end
+
+# confirm that tree has as many loci as specified on input
+for (i, s) in enumerate(tree.bucket_size)
+    gp, dp = bucket_path(tree.output_dir, i)
+    gp_ = @sync file_read(gp)
+    dp_ = @sync file_read(dp)
+    @assert length(dp_) == s
+    @assert length(gp_) == s
+end
 printVPtree(tree)
 
-global row = 1
-global tree = VPtree()
-all_guides = joinpath("/home/ai/Projects/uib/crispr/", "CRISPRofftargetHunter/hg38v34_db.csv")
+
+
+global g_count = 0
+temp = tempname()
+mkpath(temp)
+global tree = VPtree(temp)
+#all_guides = joinpath("/home/ai/Projects/uib/crispr/", "CRISPRofftargetHunter/hg38v34_db.csv")
 for line in eachline(all_guides)
-    global row += 1
-    println(row)
     line == "guide,location" && continue
 
     line = split(line, ",")
     guide = Guide(LongDNASeq(line[1]), [line[2]])
-    print(guide)
+    global g_count = g_count + 1
     push!(tree, guide)
 end
-
+print(g_count == sum(tree.bucket_size) + sum(loci_count.(tree.nodes)))
 
 # global row = 1
 # for line in eachline(all_guides)

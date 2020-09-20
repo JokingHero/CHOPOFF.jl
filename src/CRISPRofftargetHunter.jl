@@ -5,6 +5,7 @@ module CRISPRofftargetHunter
 using Random
 using BioSymbols
 using BioSequences
+using Serialization
 
 include("utils.jl")
 include("distance_metrics.jl")

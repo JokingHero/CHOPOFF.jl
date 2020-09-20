@@ -8,9 +8,12 @@ end
 "
 Write vector to file in binary format. This is being
 serialized which means it can be read back only by the
-same version of julia.
+same version of julia. Will remove file if it exists
+before writing.
 "
 function file_write(write_path::String, vec::Vector)
+    # make sure to delete content of write path first
+    rm(write_path, force = true)
     io = open(write_path, "w")
     s = Serializer(io)
     for i in vec
