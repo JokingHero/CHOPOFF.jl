@@ -83,3 +83,25 @@ using Test
                           dna"TCACATGCGCACGTCCTCATATCT", 4) == 5
     end
 end
+
+
+@testset "utils.jl" begin
+
+    @testset "deleterange" begin
+        @test deleterange(parse(UInt64, "01111001"; base=2), 2, 5) == parse(UInt64, "0111"; base=2)
+        @test deleterange(parse(UInt64, "01111001"; base=2), 2, 2) == parse(UInt64, "0111101"; base=2)
+        @test deleterange(parse(UInt64, "1001"; base=2), 2, 3) == parse(UInt64, "11"; base=2)
+        @test deleterange(parse(UInt64, "01111000"; base=2), 1, 1) == parse(UInt64, "0111100"; base=2)
+        @test deleterange(parse(UInt64, "1111111111111111111111111111111111111111111111111111111111111111"; base=2), 3, 64) == parse(UInt64, "011"; base=2)
+        @test deleterange(parse(UInt64, "1111111111111111111111111111111111111111111111111111111111111111"; base=2), 1, 64) == parse(UInt64, "0"; base=2)
+        @test deleterange(parse(UInt64, "01111000"; base=2), 64, 64) == parse(UInt64, "01111000"; base=2)
+
+        @test deleterange(parse(UInt128, "01111001"; base=2), 2, 5) == parse(UInt128, "0111"; base=2)
+        @test deleterange(parse(UInt128, "01111001"; base=2), 2, 2) == parse(UInt128, "0111101"; base=2)
+        @test deleterange(parse(UInt128, "1001"; base=2), 2, 3) == parse(UInt128, "11"; base=2)
+        @test deleterange(parse(UInt128, "01111000"; base=2), 1, 1) == parse(UInt128, "0111100"; base=2)
+        @test deleterange(parse(UInt128, "1111111111111111111111111111111111111111111111111111111111111111"; base=2), 3, 128) == parse(UInt128, "011"; base=2)
+        @test deleterange(parse(UInt128, "1111111111111111111111111111111111111111111111111111111111111111"; base=2), 1, 128) == parse(UInt128, "0"; base=2)
+        @test deleterange(parse(UInt128, "01111000"; base=2), 128, 128) == parse(UInt128, "01111000"; base=2)
+    end
+end

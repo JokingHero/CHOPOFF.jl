@@ -1,10 +1,3 @@
-#
-# using BioSymbols
-# using Random
-# using BioSequences
-# using BioAlignments
-# using BenchmarkTools
-
 "
 x contains all options of y
 or
@@ -54,7 +47,7 @@ end
 
 
 """
-Levenshtein distance with a twist for guide + off-target comparisons
+Levenshtein distance with a twist for guide + off-target comparisons.
 Keeps the triangle inequality principle with bounded by k maximum edit
 distance.
 
@@ -68,7 +61,8 @@ ref   A-GAAATCGATG
 Score: 3 (ATG does not count)
 
 Levenshtein distance is the minimum number of operations
-(consisting of insertions, deletions, substitutions of a single character) required to change one string into the other.
+(consisting of insertions, deletions, substitutions of a single character)
+required to change one string into the other.
 Left input seqeunce is guide sequence, right input is reference sequence
 with expansion on the 3' end of max_dist bases. This extension will not
 count toward the score if it is not covered with aligned guide.
@@ -97,7 +91,7 @@ TrialJudgement(+1126.73% => regression)
 function levenshtein(
     guide::NucleotideSeq,
     ref::NucleotideSeq,
-    k::Integer = 4,
+    k::Int = 4,
     ismatch::Function = isinclusive,
 )
 
@@ -105,7 +99,7 @@ function levenshtein(
     # prefix common to both strings can be ignored
     f = commonprefix(guide, ref, ismatch)
     f == len1 && return 0
-    guide, ref = guide[f+1:end], ref[f+1:end]
+    guide, ref = guide[f+1:len1], ref[f+1:len2]
     len1 = length(guide)
     if k >= len1
         k = len1
@@ -116,9 +110,9 @@ function levenshtein(
     v = collect(1:len1)
     v_min_idx = 0
     current = 0
-    for (i, ch1) in enumerate(ref)
+    @inbounds for (i, ch1) in enumerate(ref)
         left = current = v_min = i - 1
-        for j = max(1, i - k):min(len1, i + k)
+        @inbounds for j = max(1, i - k):min(len1, i + k)
             above, current, left = current, left, v[j]
             if !ismatch(ch1, guide[j])
                 # mismatch when all options equal
@@ -153,13 +147,3 @@ function levenshtein(
     current > k && return k + 1
     return current
 end
-
-# some tests
-# Random.seed!(42)
-# s, t = getSeq(), getSeq(24)
-# println(s)
-# println(t)
-#
-# aln = pairalign(LevenshteinDistance(), s, t)
-# println(aln)
-# levenshtein(s, t, 4)

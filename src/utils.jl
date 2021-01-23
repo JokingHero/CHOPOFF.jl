@@ -6,6 +6,40 @@ function getSeq(n = 20, letters = ['A', 'C', 'G', 'T'])
 end
 
 "
+Get file extension from the string path.
+"
+function extension(s::String)
+    extension = match(r"\.[A-Za-z0-9]+$", s)
+    if extension != nothing
+        return extension.match
+    else
+        return ""
+    end
+end
+
+
+"
+Returns smallest possible Unsigned type that can contain
+given max_value.
+"
+function smallestutype(max_value::Unsigned)
+    if typemax(UInt8) >= max_value
+        return UInt8
+    elseif typemax(UInt16) >= max_value
+        return UInt16
+    elseif typemax(UInt32) >= max_value
+        return UInt32
+    elseif typemax(UInt64) >= max_value
+        return UInt64
+    elseif typemax(UInt128) >= max_value
+        return UInt128
+    else
+        throw("Too big unsigned value to fit in our types.")
+    end
+end
+
+####### OLD functions
+"
 Write vector to file in binary format. This is being
 serialized which means it can be read back only by the
 same version of julia. Will remove file if it exists
@@ -48,4 +82,28 @@ function file_add(write_path::String, value)
     s = Serializer(io)
     serialize(s, value)
     close(io)
+end
+
+"
+    Will try to find value in `x` that will allow for almost equal
+    split of values into buckets.
+"
+function balance(x::Vector{Int})
+    if isempty(x)
+        return nothing
+    end
+    uniq = unique(x)
+    sort!(uniq)
+    counts = [count(y -> y == i, x) for i in uniq]
+    balance = argmin(abs.([sum(counts[1:i]) - sum(counts[i:end]) for i = 1:length(counts)]))
+    return uniq[argmin(abs.(uniq .- uniq[balance]))]
+end
+
+"
+Provides with the bucket path for guides and distances to parent.
+"
+function bucket_path(dir::String, idx::Int)
+    gp = joinpath(dir, string("bucket_", idx, "_g.bin"))
+    dp = joinpath(dir, string("bucket_", idx, "_d.bin"))
+    return gp, dp
 end
