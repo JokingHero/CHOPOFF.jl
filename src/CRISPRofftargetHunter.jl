@@ -24,6 +24,6 @@ export isinclusive, commonprefix, hamming, levenshtein # distance_metrics
 export Motif # motif
 export SketchDB, saveDB, loadDB # persistence
 export deletion_permutations # bitoperations
-export findofftargets, estimate # find_offtargets
+export findofftargets, findofftargets!, estimate, fillrate # find_offtargets
 
 end

@@ -8,8 +8,7 @@ function removepam(seq::LongDNASeq, pam::Vector{UnitRange{<:Integer}})
         deleteat!(seq, pam[1])
     else
         pam = vcat([collect(x) for x in pam]...)
-        seq = string(seq)[pam]
-        seq = LongDNASeq(seq)
+        seq = LongDNASeq(string(seq)[pam])
     end
     return seq
 end
@@ -17,38 +16,32 @@ end
 
 function pushdeletes!(
     chrom::K,
-    query::ExactSearchQuery{LongSequence{DNAAlphabet{4}}},
+    query::BioSequences.RE.Regex{DNA},
     pam_loci::Vector{UnitRange{<:Integer}},
     distance::Int,
     reverse_comp::Bool,
-    output::Vector{T}) where {T<:Union{CountMinSketch, HyperLogLog}, K<:BioSequence}
+    output::Vector{T}) where {T<:Union{CountMinSketch, HyperLogLog, Vector{String}}, K<:BioSequence}
 
-    if length(query.seq) != 0
-        start = 1
-        guide_len = length(removepam(query.seq, pam_loci))
+    if length(query.pat) != 0
+        guide_len = length(removepam(LongDNASeq(query.pat), pam_loci))
         deletion_perm = deletion_permutations(guide_len, distance, 1)
         deletion_perm = [sort(vcat(x...)) for x in deletion_perm]
         deletion_perm = [setdiff(collect(1:guide_len), x) for x in deletion_perm]
 
-        while start != nothing
-            loci = findfirst(query, chrom, start)
-            if loci == nothing
-                start = nothing
-            else
-                guide = removepam(chrom[loci], pam_loci)
+        for x in eachmatch(query, chrom)
+            guide = matched(x)
+            if !hasambiguity(guide)
+                guide = removepam(guide, pam_loci)
                 if reverse_comp
                     reverse_complement!(guide)
                 end
 
-                if !hasambiguity(guide)
-                    push!(output[1], string(guide)) # 0 distance
-                    # for the rest of the deletes
-                    deletes = unique([string(guide)[x] for x in deletion_perm])
-                    for del in deletes
-                        push!(output[guide_len - length(del) + 1], del)
-                    end
+                push!(output[1], string(guide)) # 0 distance
+                # for the rest of the deletes
+                deletes = unique([string(guide)[x] for x in deletion_perm])
+                for del in deletes
+                    push!(output[guide_len - length(del) + 1], del)
                 end
-                start = loci.start + 1
             end
         end
     end
@@ -60,7 +53,7 @@ function findofftargets!(
     genome::String,
     motif::Motif,
     max_dist::Int,
-    output::Vector{T}) where T<:Union{CountMinSketch, HyperLogLog}
+    output::Vector{T}) where T<:Union{CountMinSketch, HyperLogLog, Vector{String}}
 
     ext = extension(genome)
     if (ext == ".fa" || ext == ".fasta" || ext == ".fna")
@@ -95,7 +88,7 @@ end
 function makeemptysketches(
     est_len::Vector{Int},
     max_count::Unsigned,
-    probability_of_error = 0.01)
+    probability_of_error = 0.0001)
 
     max_count_type = smallestutype(max_count)
     sketches = Vector{CountMinSketch{max_count_type}}() # 1st sketch => 0 distance, and so on
@@ -123,7 +116,7 @@ function findofftargets(
     findofftargets!(genome, motif, max_dist, hll)
 
     # next we adjust the estimated length +5% for error
-    est_len = [Int(ceil(length(x) + 0.05*length(x))) for x in hll]
+    est_len = [Int(ceil(5.05*length(x))) for x in hll]
     println("HLL estimations are: ", est_len)
     sketches = makeemptysketches(est_len, unsigned(max_count))
     println("Constructing database...")
@@ -137,7 +130,8 @@ end
 function estimate(
     db::SketchDB,
     seq::Vector{LongDNASeq}, # asume seq has no PAM and is 5'-3' direction
-    max_dist = (length(db.sketches) - 1))
+    max_dist = (length(db.sketches) - 1),
+    norm = false)
 
     sketches = db.sketches
     max_dist = max_dist > (length(sketches) - 1) ? (length(sketches) - 1) : max_dist
@@ -150,13 +144,29 @@ function estimate(
     deletion_perm = [sort(vcat(x...)) for x in deletion_perm]
     deletion_perm = [setdiff(collect(1:guide_len), x) for x in deletion_perm]
 
-    res = zeros(Int, length(seq), max_dist + 1)
+    res = zeros(Float64, length(seq), max_dist + 1)
+    res_hits = zeros(Int, length(seq), max_dist + 1)
     for (i, s) in enumerate(seq)
         res[i, 1] += sketches[1][string(s)] # 0 distance
+        res_hits[i, 1] += sketches[1][string(s)] > 0
         deletes = unique([string(s)[x] for x in deletion_perm])
+        deletes_hits = zeros(max_dist + 1, 1)
         for del in deletes # other distances
             col = guide_len - length(del) + 1
             res[i, col] += sketches[col][del]
+            res_hits[i, col] += sketches[col][del] > 0
+        end
+    end
+
+    # normalize
+    if norm
+        for d in 1:(max_dist + 1)
+            if d != (max_dist + 1)
+                res_hits[:, d + 1] -= res_hits[:, d] * 1
+            end
+            for i in 1:(d - 1)
+                res[:, d] -= res_hits[:, i] * 1
+            end
         end
     end
 
@@ -166,4 +176,22 @@ function estimate(
     res.guide = seq
     sort!(res, col_d)
     return res
+end
+
+
+function fprof_fixed(sketch::CountMinSketch)
+    rate = 1
+    for col in 1:sketch.width
+        full_in_row = 0
+        for row in 1:sketch.len
+            full_in_row += sketch.matrix[row, col] > zero(eltype(sketch))
+        end
+        rate *= full_in_row / sketch.len
+    end
+    return rate
+end
+
+
+function fillrate(db::SketchDB)
+    return [fprof_fixed(d) for d in db.sketches]
 end

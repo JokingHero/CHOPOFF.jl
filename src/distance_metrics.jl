@@ -92,7 +92,7 @@ function levenshtein(
     guide::NucleotideSeq,
     ref::NucleotideSeq,
     k::Int = 4,
-    ismatch::Function = isinclusive,
+    ismatch::Function = isinclusive
 )
 
     len1, len2 = length(guide), length(ref)

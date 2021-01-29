@@ -18,8 +18,8 @@ two methods bit level or DNA level removal
 "
 struct Motif
     alias::String
-    fwd::ExactSearchQuery{LongSequence{DNAAlphabet{4}}}
-    rve::ExactSearchQuery{LongSequence{DNAAlphabet{4}}}
+    fwd::BioSequences.RE.Regex{DNA}
+    rve::BioSequences.RE.Regex{DNA}
     pam_loci_fwd::Vector{UnitRange{<:Integer}}
     pam_loci_rve::Vector{UnitRange{<:Integer}}
 end
@@ -64,23 +64,22 @@ function Motif(alias::String,
         throw("fwd_motif and fwd_pam have to have the same length!")
     end
     merge = mergewith(notX, fwdmotif, fwdpam)
-    merge = LongDNASeq(merge)
 
     if forward_strand
         # where is PAM located?
         pam_loci_fwd = findall(r"[^X]+", fwdpam)
-        fwd = ExactSearchQuery(merge)
+        fwd = BioSequences.RE.Regex{DNA}(merge, :pcre)
     else
         pam_loci_fwd = Vector{UnitRange{Int64}}()
-        fwd = ExactSearchQuery(LongDNASeq(""))
+        fwd = BioSequences.RE.Regex{DNA}("", :pcre)
     end
 
     if reverse_strand
         pam_loci_rve = findall(r"[^X]+", reverse(fwdpam))
-        rve = ExactSearchQuery(reverse_complement(merge))
+        rve = BioSequences.RE.Regex{DNA}(string(reverse_complement(LongDNASeq(merge))), :pcre)
     else
         pam_loci_rve = Vector{UnitRange{Int64}}()
-        rve = ExactSearchQuery(LongDNASeq(""))
+        rve = BioSequences.RE.Regex{DNA}("", :pcre)
     end
 
     return Motif(alias, fwd, rve, pam_loci_fwd, pam_loci_rve)
