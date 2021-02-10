@@ -18,8 +18,8 @@ two methods bit level or DNA level removal
 "
 struct Motif
     alias::String
-    fwd::BioSequences.RE.Regex{DNA}
-    rve::BioSequences.RE.Regex{DNA}
+    fwd::LongDNASeq
+    rve::LongDNASeq
     pam_loci_fwd::Vector{UnitRange{<:Integer}}
     pam_loci_rve::Vector{UnitRange{<:Integer}}
 end
@@ -68,18 +68,18 @@ function Motif(alias::String,
     if forward_strand
         # where is PAM located?
         pam_loci_fwd = findall(r"[^X]+", fwdpam)
-        fwd = BioSequences.RE.Regex{DNA}(merge, :pcre)
+        fwd = LongDNASeq(merge)
     else
         pam_loci_fwd = Vector{UnitRange{Int64}}()
-        fwd = BioSequences.RE.Regex{DNA}("", :pcre)
+        fwd = LongDNASeq("")
     end
 
     if reverse_strand
         pam_loci_rve = findall(r"[^X]+", reverse(fwdpam))
-        rve = BioSequences.RE.Regex{DNA}(string(reverse_complement(LongDNASeq(merge))), :pcre)
+        rve = reverse_complement(LongDNASeq(merge))
     else
         pam_loci_rve = Vector{UnitRange{Int64}}()
-        rve = BioSequences.RE.Regex{DNA}("", :pcre)
+        rve = LongDNASeq("")
     end
 
     return Motif(alias, fwd, rve, pam_loci_fwd, pam_loci_rve)

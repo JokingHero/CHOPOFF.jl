@@ -1,3 +1,43 @@
+"
+Find all instances of pat inside seq, disregard seq ambiguous bases.
+Restrict seq to subset of start:stop.
+"
+import Base.findall
+function Base.findall(pat::BioSequence, seq::BioSequence,
+    start::Integer = 1, stop::Integer = lastindex(seq))
+
+    res = Vector{UnitRange{Int64}}()
+    m = length(pat)
+    n = length(seq)
+    stop_ = min(stop, n) - m
+    s::Int = max(start - 1, 0)
+
+    if m == 0  # empty query
+        return nothing
+    end
+
+    while s ≤ stop_
+        if isambiguous(seq[s+m])
+            s += m
+        elseif iscompatible(pat[m], seq[s+m])
+            i = m - 1
+            while i > 0
+                if isambiguous(seq[s+i]) || !iscompatible(pat[i], seq[s+i])
+                    break
+                end
+                i -= 1
+            end
+            if i == 0
+                push!(res, (s+1):(s+length(pat))) #found
+            end
+            s += 1
+        else
+            s += 1
+        end
+    end
+
+    return res  # not found
+end
 
 "
 Removes PAM from the seq.
@@ -16,7 +56,7 @@ end
 
 function pushdeletes!(
     chrom::K,
-    query::BioSequences.RE.Regex{DNA},
+    query::LongDNASeq,
     pam_loci::Vector{UnitRange{<:Integer}},
     distance::Int,
     reverse_comp::Bool,
@@ -28,8 +68,8 @@ function pushdeletes!(
         deletion_perm = [sort(vcat(x...)) for x in deletion_perm]
         deletion_perm = [setdiff(collect(1:guide_len), x) for x in deletion_perm]
 
-        for x in eachmatch(query, chrom)
-            guide = matched(x)
+        for x in findall(query, chrom)
+            guide = chrom[x]
             if !hasambiguity(guide)
                 guide = removepam(guide, pam_loci)
                 if reverse_comp
