@@ -2,6 +2,7 @@ __precompile__(true)
 
 module CRISPRofftargetHunter
 
+using Statistics
 using Random
 using Combinatorics
 using BioSymbols
@@ -11,6 +12,9 @@ using FASTX
 using TwoBit
 using Probably
 using DataFrames
+using ThreadsX
+
+import Base.findall
 
 include("utils.jl")
 include("distance_metrics.jl")

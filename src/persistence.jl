@@ -1,6 +1,8 @@
 struct SketchDB{T<:Unsigned}
-    sketches::Vector{CountMinSketch{T}}
+    sketch::CountMinSketch{T}
+    kmers::Dict{String, Int}
     motif::Motif
+    max_dist::Int
 end
 
 # overwrites previous!
