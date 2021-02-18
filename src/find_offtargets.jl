@@ -66,7 +66,7 @@ function pushguides!(
             guide = chrom[x]
             guide = removepam(guide, pam_loci)
             if reverse_comp
-                reverse_complement!(guide)
+                guide = reverse_complement(guide)
             end
 
             push!(output, string(guide)) # 0 distance
@@ -92,13 +92,17 @@ function pushguides!(
             guide = chrom[x]
             guide = removepam(guide, pam_loci)
             if reverse_comp
-                reverse_complement!(guide)
+                guide = reverse_complement(guide)
             end
 
-            # kmer treatment - just naive count
+            # kmer treatment - just unique count
+            kmers = Vector{String}()
             for i in 1:g_len-kmer_size
                 kmer = string(guide[i:(i + kmer_size - 1)])
-                output[kmer] = get(output, kmer, 0) + 1
+                if !(kmer in kmers)
+                    push!(kmers, kmer)
+                    output[kmer] = get(output, kmer, 0) + 1
+                end
             end
         end
     end
@@ -106,7 +110,7 @@ function pushguides!(
 end
 
 
-function findofftargets!(
+function gatherofftargets!(
     genome::String,
     motif::Motif,
     max_dist::Int,
@@ -159,7 +163,7 @@ function makeemptysketch(
 end
 
 
-function findofftargets(
+function gatherofftargets(
     genome::String,
     motif::Motif,
     max_dist::Int,
@@ -168,19 +172,19 @@ function findofftargets(
     # first we measure how many unique guides there are
     println("Unique guide count estimations...")
     hll = HyperLogLog{18}()
-    findofftargets!(genome, motif, max_dist, hll)
+    gatherofftargets!(genome, motif, max_dist, hll)
 
     # next we adjust the estimated length +5% for error
-    est_len = Int(ceil(5.05*length(hll)))
+    est_len = Int(ceil(1.05*length(hll)))
     println("HLL estimations are: ", est_len)
 
     println("Constructing sketch database...")
     sketch = makeemptysketch(est_len, unsigned(max_count))
-    findofftargets!(genome, motif, max_dist, sketch)
+    gatherofftargets!(genome, motif, max_dist, sketch)
 
     println("Constructing kmer sketch...")
     kmers = Dict{String, Int}() # TODO IdDict would be better
-    findofftargets!(genome, motif, max_dist, kmers)
+    gatherofftargets!(genome, motif, max_dist, kmers)
 
     println("Done!")
     db = SketchDB(sketch, kmers, motif, max_dist)
@@ -251,11 +255,11 @@ function countofftargets(
             guide_ref = chrom[x]
             guide_ref = removepam(guide_ref, pam_loci)
             if reverse_comp
-                reverse_complement!(guide_ref)
+                guide_ref = reverse_complement(guide_ref)
             end
 
-            for (i, g) in enumerate(guides)
-                dist = levenshtein(reverse(g), reverse(guide_ref), max_dist)
+            for (i, gi) in enumerate(guides)
+                dist = levenshtein(reverse(gi), reverse(guide_ref), max_dist)
                 if dist <= max_dist
                     output[i, dist + 1] += 1
                 end
@@ -266,49 +270,16 @@ function countofftargets(
 end
 
 
-function findofftargets(
-    genome::String,
-    motif::Motif, # has to be motive including the max_dist extensions on the 3'
-    max_dist::Int,
-    g::Array{LongDNASeq, 1}) # vector of guides in 1-20 (NGG) config)
-
-    ext = extension(genome)
-    if (ext == ".fa" || ext == ".fasta" || ext == ".fna")
-        is_fa = true
-    elseif (ext == ".2bit")
-        is_fa = false
-    else
-        throw(
-        "Wrong extension of the genome.",
-        "We can parse only .fa/.fna/.fasta or .2bit references.")
-    end
-
-    ref = open(genome, "r")
-    reader = is_fa ? FASTA.Reader(ref) : TwoBit.Reader(ref)
-    reader = collect(enumerate(reader))
-    shuffle!(reader)
-
+function do_chrom(record, motif, max_dist, g)
     res = zeros(Int, length(g), max_dist + 1)
-    res_vec = [res for r in 1:length(reader)]
-    Threads.mapi()
-    for (i, record) in reader #TODO use  instead
-        chrom = is_fa ? FASTA.sequence(record) : TwoBit.sequence(record)
+    chrom = FASTA.sequence(record)
 
-        if FASTA.hasidentifier(record) # TODO 2bit?!
-            println("Working on: ", FASTA.identifier(record))
-        end
-
-        res_vec[i] += countofftargets(chrom, motif.fwd, motif.pam_loci_fwd, max_dist, false, g)
-        res_vec[i] += countofftargets(chrom, motif.rve, motif.pam_loci_rve, max_dist, true, g)
+    if FASTA.hasidentifier(record) # TODO 2bit?!
+        println("Working on: ", FASTA.identifier(record))
     end
-    close(ref)
 
-    res = reduce(+, res_vec)
-    res = DataFrame(res)
-    col_d = [Symbol("D$i") for i in 0:max_dist]
-    rename!(res, col_d)
-    res.guide = [string(gi) for gi in g]
-    sort!(res, col_d)
+    res += countofftargets(chrom, motif.fwd, motif.pam_loci_fwd, max_dist, false, g)
+    res += countofftargets(chrom, motif.rve, motif.pam_loci_rve, max_dist, true, g)
+
     return res
-
 end

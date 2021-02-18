@@ -94,6 +94,11 @@ function levenshtein(
     k::Int = 4,
     ismatch::Function = isinclusive
 )
+    if occursin("-", string(guide))
+        throw("Guide sequence ", string(guide), "contains -.")
+    elseif occursin("-", string(ref))
+        throw("Reference sequence ", string(ref), "contains -.")
+    end
 
     len1, len2 = length(guide), length(ref)
     # prefix common to both strings can be ignored

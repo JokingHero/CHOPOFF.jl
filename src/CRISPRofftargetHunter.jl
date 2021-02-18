@@ -22,12 +22,14 @@ include("motif.jl")
 include("bitoperations.jl")
 include("persistence.jl")
 include("find_offtargets.jl")
+include("find_offtargets_p.jl")
 
 export getSeq, file_read, file_write, file_add, bucket_path, deleterange
 export isinclusive, commonprefix, hamming, levenshtein # distance_metrics
 export Motif # motif
 export SketchDB, saveDB, loadDB # persistence
 export deletion_permutations # bitoperations
-export findofftargets, findofftargets!, estimate, fillrate # find_offtargets
+export gatherofftargets, gatherofftargets!, estimate, fillrate # find_offtargets
+export findofftargets_p_chrom, findofftargets_p_refg
 
 end
