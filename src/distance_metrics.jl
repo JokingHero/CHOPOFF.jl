@@ -152,3 +152,73 @@ function levenshtein(
     current > k && return k + 1
     return current
 end
+
+
+
+
+function get_idx(letter::Char)
+    if letter == 'A'
+        return 1
+    elseif letter == 'C'
+        return 2
+    elseif letter == 'T'
+        return 3
+    elseif letter == 'G'
+        return 4
+    end
+end
+
+"
+Compute levenshtein distance.
+
+Input: pattern (p), text (t)
+Returns: score
+
+Based on Mayers bit-parallel alghoritm. Some references:
+# Some examples and bandend version when n > 64
+# http://www.mi.fu-berlin.de/wiki/pub/ABI/AdvancedAlgorithms11_Searching/script-03-ShiftOrUkkonenBitVecMyers.pdf
+# https://research.ijcaonline.org/volume72/number14/pxc3889214.pdf
+# http://www.mi.fu-berlin.de/wiki/pub/ABI/RnaSeqP4/myers-bitvector-verification.pdf
+# https://dl.acm.org/doi/10.1145/316542.316550 or https://www.win.tue.nl/~jfg/educ/bit.mat.pdf
+# transposition -> file:///home/ai/Downloads/10.1.1.19.7158.pdf
+"
+function levenshtein_bp(p::String, t::String, k::Int = 4)
+    n = length(t)
+    m = length(p)
+    @assert m <= 64
+    bit_alphabet = zeros(UInt64, 4)
+
+    @inbounds for i in 1:m
+        bit_alphabet[get_idx(p[i])] |= UInt64(1) << (i - 1)
+    end
+
+    pv = (UInt64(1) << m) - UInt64(1)
+    mv = UInt64(0)
+    score = m
+    final_score = m
+
+    @inbounds for pos in 1:n
+        eq = bit_alphabet[get_idx(t[pos])]
+        xv = eq | mv
+        xh = (((eq & pv) + pv) ⊻ pv) | eq
+
+        ph = mv | ~(xh | pv)
+        mh = pv & xh
+
+        if ph & (UInt64(1) << (m - 1)) != 0
+            score += 1
+        elseif mh & (UInt64(1) << (m - 1)) != 0
+            score -= 1
+        end
+
+        ph <<= 1
+        mh <<= 1
+        pv = mh | ~(xv | ph)
+        mv = ph & xv
+
+        if score <= k
+            return true
+        end
+    end
+    return false
+end

@@ -8,6 +8,7 @@ genome_test = "./test/sample_data/samirandom.fa"
 #f = FASTA.Reader(open(genome_test))
 #Base.map(x -> FASTA.hasidentifier(x), f)
 #close(f)
+# run hg38v34 on all top guides from the top genes on 18.02/16:35
 
 genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
 motif = Motif("Cas9")
@@ -22,6 +23,7 @@ guides = [LongDNASeq(g)[(max_dist + 1):end] for g in guides]
 
 # refg is faster!
 # code another paralel version of findofftargets - paralel over guides - not chromosomes
+p = CSV.read("test/sample_data/guides_linear_semirandom.csv", DataFrame)
 brute = findofftargets_p_refg(genome, motif_ref, max_dist, guides[1:2])
 any([occursin("-", g) for g in brute[!, "guide"]])
 CSV.write("test/sample_data/guides_linear_hg38v34.csv", brute)
