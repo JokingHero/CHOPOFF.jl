@@ -171,8 +171,22 @@ end
 "
 Compute levenshtein distance.
 
-Input: pattern (p), text (t)
-Returns: score
+Input: guide (p), ref (t)
+Returns: true if it can find an alignment where score <= k
+
+Four times faster than dynamic programing version, but
+does not work for our guides as it will ignore left extra bases of the ref
+Example of two valid alignments where this implementation would fail:
+   AACTG
+ AAAAC GTGAAA
+ -- these As should be counted toward the score and are not
+    (score is 1, position is 6)
+
+    AAC TG
+  AAAACGTGAAA
+  -- also skipped As (score is 1, position is 8)
+
+ No idea how to resolve this problem.
 
 Based on Mayers bit-parallel alghoritm. Some references:
 # Some examples and bandend version when n > 64
@@ -182,39 +196,36 @@ Based on Mayers bit-parallel alghoritm. Some references:
 # https://dl.acm.org/doi/10.1145/316542.316550 or https://www.win.tue.nl/~jfg/educ/bit.mat.pdf
 # transposition -> file:///home/ai/Downloads/10.1.1.19.7158.pdf
 "
-function levenshtein_bp(p::String, t::String, k::Int = 4)
-    n = length(t)
-    m = length(p)
+function levenshtein_bp(guide::String, ref::String, k::Int = 4)
+    m = length(guide)
+    n = length(ref)
     @assert m <= 64
     bit_alphabet = zeros(UInt64, 4)
 
     @inbounds for i in 1:m
-        bit_alphabet[get_idx(p[i])] |= UInt64(1) << (i - 1)
+        bit_alphabet[get_idx(guide[i])] |= UInt64(1) << (i - 1)
     end
 
-    pv = (UInt64(1) << m) - UInt64(1)
-    mv = UInt64(0)
+    vp = (UInt64(1) << m) - UInt64(1)
+    vn = UInt64(0)
     score = m
-    final_score = m
 
     @inbounds for pos in 1:n
-        eq = bit_alphabet[get_idx(t[pos])]
-        xv = eq | mv
-        xh = (((eq & pv) + pv) ⊻ pv) | eq
+        x = bit_alphabet[get_idx(ref[pos])] | vn
+        d0 = ((vp + (x & vp)) ⊻ vp) | x
 
-        ph = mv | ~(xh | pv)
-        mh = pv & xh
+        hn = vp & d0
+        hp = vn | ~(vp | d0)
 
-        if ph & (UInt64(1) << (m - 1)) != 0
+        if hp & (UInt64(1) << (m - 1)) != 0
             score += 1
-        elseif mh & (UInt64(1) << (m - 1)) != 0
+        elseif hn & (UInt64(1) << (m - 1)) != 0
             score -= 1
         end
 
-        ph <<= 1
-        mh <<= 1
-        pv = mh | ~(xv | ph)
-        mv = ph & xv
+        x = hp << 1
+        vn = x & d0
+        vp = (hn << 1) | ~(x | d0)
 
         if score <= k
             return true

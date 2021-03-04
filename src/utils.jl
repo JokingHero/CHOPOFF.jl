@@ -5,8 +5,27 @@ function getSeq(n = 20, letters = ['A', 'C', 'G', 'T'])
     return LongDNASeq(randstring(letters, n))
 end
 
+
 "
-Get file extension from the string path.
+Return a set of `k`-mers based on a string `seq`.
+"
+function getkmers(seq::String, k::Int = 4)
+    return Set([seq[i:i+k-1] for i in 1:(length(seq)-k+1)])
+end
+
+
+"
+Return pidgeon hole principle minimum required
+k-mer size that is required for two strings of
+size `len` to be aligned within distance of `d`.
+"
+function minkmersize(len::Int = 20, d::Int = 4)
+    return Int(floor(len / d + 1))
+end
+
+
+"
+Get file extension from the string path `s`.
 "
 function extension(s::String)
     extension = match(r"\.[A-Za-z0-9]+$", s)
@@ -20,7 +39,7 @@ end
 
 "
 Returns smallest possible Unsigned type that can contain
-given max_value.
+given `max_value`.
 "
 function smallestutype(max_value::Unsigned)
     if typemax(UInt8) >= max_value

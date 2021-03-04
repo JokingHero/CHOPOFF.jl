@@ -283,3 +283,52 @@ function do_chrom(record, motif, max_dist, g)
 
     return res
 end
+
+
+function getdist(guide::String, ref::String)
+    if levenshtein_bp(guide, ref, 4)
+        return levenshtein(LongDNASeq(guide), LongDNASeq(ref), 4)
+    else
+        return 5
+    end
+end
+
+# I checked whether kmers strategy for prefiltering of offtargets
+# is faster but around 0.7 of time is wasted and gains
+# are small, and even negative especially when set construction is
+# needed
+function iterate_over_offtargets(guides, all_guides, oft_file)
+    guides_str = [string(g) for g in guides]
+
+    res = zeros(Int, length(guides), 5)
+    f = open(all_guides)
+    out = open(oft_file, "w")
+    i = 0
+    w = 0
+    for ln in eachline(f)
+        if ln == "guide,location"
+            continue
+        end
+        i += 1
+        w += 1
+        if w == 100000
+            println("Iter: ", i)
+            w = 0
+        end
+        ln = split(ln, ",")
+        ref = String(ln[1][4:end])
+        loci = ln[2]
+
+        dist = ThreadsX.map(g -> getdist(g, ref), guides_str)
+        for j in 1:length(dist)
+            if dist[j] <= 4
+                res[j, dist[j] + 1] += 1
+                write(out, guides_str[j] * "," * ref * "," * string(dist) * "\n")
+            end
+        end
+    end
+    close(f)
+    close(out)
+
+    return res
+end

@@ -2,3 +2,4 @@
 
 experiments_old/
 /tests.jl
+*.csv
