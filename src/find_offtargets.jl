@@ -311,7 +311,7 @@ function iterate_over_offtargets(guides, all_guides, oft_file)
         end
         i += 1
         w += 1
-        if w == 100000
+        if w == 1000000
             println("Iter: ", i)
             w = 0
         end
@@ -323,12 +323,11 @@ function iterate_over_offtargets(guides, all_guides, oft_file)
         for j in 1:length(dist)
             if dist[j] <= 4
                 res[j, dist[j] + 1] += 1
-                write(out, guides_str[j] * "," * ref * "," * string(dist) * "\n")
+                write(out, guides_str[j] * "," * ref * "," * string(dist[j]) * "\n")
             end
         end
     end
     close(f)
     close(out)
-
     return res
 end

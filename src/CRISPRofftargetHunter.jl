@@ -24,7 +24,7 @@ include("persistence.jl")
 include("find_offtargets.jl")
 include("find_offtargets_p.jl")
 
-export getSeq, file_read, file_write, file_add, bucket_path, deleterange, getkmers, minkmersize # utils
+export getSeq, file_read, file_write, file_add, bucket_path, deleterange, getkmers, minkmersize, getkgrams # utils
 export isinclusive, commonprefix, hamming, levenshtein, levenshtein_bp # distance_metrics
 export Motif # motif
 export SketchDB, saveDB, loadDB # persistence

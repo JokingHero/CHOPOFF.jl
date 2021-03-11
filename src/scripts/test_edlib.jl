@@ -11,20 +11,20 @@ using BenchmarkTools
 seq = getSeq()
 ref_seq = getSeq(1) * seq[1:16] * getSeq(3) * seq[17:end]
 
+function withk(g::String, r::String)
+    g = getkgrams(g, 5)
+    r = getkgrams(r, 5)
+    return !isdisjoint(g, r)
+end
+
+withk(string(seq), string(ref_seq))
+
 m1 = median(@benchmark pairalign(LevenshteinDistance(), g, r, distance_only = true) setup=(g=seq; r=ref_seq))
 m2 = median(@benchmark levenshtein(g, r) setup=(g=seq; r=ref_seq))
 m3 = median(@benchmark Edlib.edit_distance(g, r, max_distance = 4, mode = :prefix) setup=(g=string(seq); r=string(ref_seq)))
 m4 = median(@benchmark levenshtein_bp(g, r) setup=(g=string(seq); r=string(ref_seq)))
 m5 = median(@benchmark isdisjoint(g, r) setup=(g=getkmers(string(seq)); r=getkmers(string(ref_seq))))
 m6 = median(@benchmark withk(g, r) setup=(g=string(seq); r=string(ref_seq)))
-
-function withk(g::String, r::String)
-    g = getkmers(g)
-    r = getkmers(r)
-    return !isdisjoint(g, r)
-end
-
-withk(string(seq), string(ref_seq))
 
 show(m1)
 show(m2)
@@ -37,6 +37,8 @@ TP = 139655
 TN = 933042475
 FP = 2114660545
 FN = 0
+
+# what will be the numbers for this with qgram?!
 
 # Is it better to ignore pidgeon hole speedup?
 (m6.time * (FP + TN) + FP * m4.time) * 1e-9 # ns

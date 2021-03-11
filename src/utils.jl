@@ -13,6 +13,19 @@ function getkmers(seq::String, k::Int = 4)
     return Set([seq[i:i+k-1] for i in 1:(length(seq)-k+1)])
 end
 
+"
+Return a set of `k`-grams based on a string `seq`.
+These will be k non-overlapping consecutive slices of `seq`.
+"
+function getkgrams(seq::String, k::Int = 5)
+    len = Int(floor(length(seq)/k))
+    kgrams = Set([seq[1:len], seq[len * (k - 1) + 1:end]])
+    for i in 2:(k-1)
+        push!(kgrams, seq[len * (i - 1) + 1:len*i])
+    end
+    return kgrams
+end
+
 
 "
 Return pidgeon hole principle minimum required
