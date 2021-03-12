@@ -1,20 +1,12 @@
 "
-we need to search using pattern with motif
-but add to the structures only bases without PAMs
+Motif defines what we search on the genome,
+what can be identified as an off-target.
 
-how to define PAM nicely?
-Input is simple:
+`distance` defines how many bases extra we need on the
+off-target sequence for the alignment.
 
-fwd style pattern with XXX where PAM
-NNNNXXX
-XXXXNGG - PAM
-reverse strand - t/f
-
-what we need is:
-transformer seqeunce fwd -> no pam seq fwd
-transformer          rve -> no pam rve
-
-two methods bit level or DNA level removal
+For example for Cas9- 20bp-NGG with up to 4 mm
+we need to have 24bp-NGG patterns on the gneome.
 "
 struct Motif
     alias::String
@@ -22,6 +14,8 @@ struct Motif
     rve::LongDNASeq
     pam_loci_fwd::Vector{UnitRange{<:Integer}}
     pam_loci_rve::Vector{UnitRange{<:Integer}}
+    distance::Int
+    extends5::Bool
 end
 
 function notX(s1, s2, x = 'X')
@@ -47,21 +41,52 @@ end
 "
 Constructor for Motif that will be found in the reference.
 
-`alias` - alias of the motif for easier identification e.g. Cas9
+`alias`    - alias of the motif for easier identification e.g. Cas9
 `fwdmotif` - Motif that indicates where is PAM inside `fwdpam`.
              For example for Cas9 it is 20*N + XXX:
              NNNNNNNNNNNNNNNNNNNNXXX
-`fwdpam` - Motif in 5'-3' that will be matched on the reference (without the X).
-           For example for Cas9 it is 20*N + NGG:
+`fwdpam`   - Motif in 5'-3' that will be matched on the reference (without the X).
+             For example for Cas9 it is 20*N + NGG:
              XXXXXXXXXXXXXXXXXXXXNGG
-`forward` - If false will not match to the forward reference strand.
-`reverse` - If false will not match to the reverse reference strand.
+`forward`  - If false will not match to the forward reference strand.
+`reverse`  - If false will not match to the reverse reference strand.
+`distance` - How many extra nucleotides are needed for a search? This
+             will indicate within what distance we can search for off-targets.
+`extend5`  - Defines how off-targets will be aligned to the guides and where
+             extra nucleotides will be added for alignment within distance. Whether
+             to extend in the 5' and 3' direction.
+
+Example for Cas9 where we want to search for off-targets within distance of 4:
+alias:    Cas9
+fwdmotif:     NNNNNNNNNNNNNNNNNNNNXXX
+fwdpam:       XXXXXXXXXXXXXXXXXXXXNGG
+forward:  true
+reverse:  true
+distance: 4
+extend5:  true
+
+This will search these motifs on the genome (forward strand)
+           NNNNNNNNNNNNNNNNNNNNNNNNNGG
+           EEEE
+
+           CCNNNNNNNNNNNNNNNNNNNNNNNNN      (reverse strand)
+                                  EEEE
+and treat those 4 E nucleotides as an extension, only used for alignment
+purposes, and alignments will start from opposite to the `extend5` direction.
 "
 function Motif(alias::String,
     fwdmotif::String, fwdpam::String,
-    forward_strand = true, reverse_strand = true)
+    forward_strand::Bool = true, reverse_strand::Bool = true,
+    distance::Int = 4, extends5::Bool = true)
     if length(fwdmotif) != length(fwdpam)
         throw("fwd_motif and fwd_pam have to have the same length!")
+    end
+    if extends5
+        fwdmotif = repeat("N", distance) * fwdmotif
+        fwdpam = repeat("X", distance) * fwdpam
+    else
+        fwdmotif = fwdmotif * repeat("N", distance)
+        fwdpam = fwdpam * repeat("X", distance)
     end
     merge = mergewith(notX, fwdmotif, fwdpam)
 
@@ -82,7 +107,7 @@ function Motif(alias::String,
         rve = LongDNASeq("")
     end
 
-    return Motif(alias, fwd, rve, pam_loci_fwd, pam_loci_rve)
+    return Motif(alias, fwd, rve, pam_loci_fwd, pam_loci_rve, distance, extends5)
 end
 
 # function print_rgb(io::IO, t::String, r = 235, g = 79, b = 52)
@@ -116,12 +141,14 @@ end
 #     end
 # end
 
-# motif database - check this with other software
+# TODO add more motifs
 const motif_db = Dict(
-    "Cas9" => Motif("Cas9", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG"),
-    "Cpf1" => Motif("Cpf1", "XXXXNNNNNNNNNNNNNNNNNNNNNNNN", "TTTNXXXXXXXXXXXXXXXXXXXXXXXX"),
-    "CasX" => Motif("CasX", "XXXXNNNNNNNNNNNNNNNNNNNNNNNN", "TTCNXXXXXXXXXXXXXXXXXXXXXXXX"),
-    "Cas13" => Motif("Cas13", "XNNNNNNNNNNNNNNNNNNNNNNNNNNN", "HXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+    "Cas9" => Motif("Cas9",
+                    "NNNNNNNNNNNNNNNNNNNNXXX",
+                    "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 4, true),
+    "Cpf1" => Motif("Cas12a",
+                    "XXXXNNNNNNNNNNNNNNNNNNNNNNNN",
+                    "TTTNXXXXXXXXXXXXXXXXXXXXXXXX", true, true, 4, false)
     )
 
 function Motif(alias::String)

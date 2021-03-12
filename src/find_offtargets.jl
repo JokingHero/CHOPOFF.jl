@@ -323,7 +323,7 @@ function iterate_over_offtargets(guides, all_guides, oft_file)
         for j in 1:length(dist)
             if dist[j] <= 4
                 res[j, dist[j] + 1] += 1
-                write(out, guides_str[j] * "," * ref * "," * string(dist[j]) * "\n")
+                write(out, guides_str[j] * "," * ref * "," * string(dist[j]) * "," * loci * "\n")
             end
         end
     end
