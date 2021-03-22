@@ -30,13 +30,28 @@ function notX(s1, s2, x = 'X')
     end
 end
 
-import Base.mergewith
-function mergewith(rule::Function, s1::String, s2::String)
+function combinestrings(rule::Function, s1::String, s2::String)
     if (length(s1) != length(s2))
-        throw("Unequal lengths.")
+        error("Unequal lengths.")
     end
     return join([rule(s1[i], s2[i]) for i in eachindex(s1)])
 end
+
+
+"
+Removes PAM from the seq.
+"
+function removepam(seq::LongDNASeq, pam::Vector{UnitRange{<:Integer}})
+    if length(pam) == 1
+        seq = copy(seq)
+        deleteat!(seq, pam[1])
+    else
+        pam = vcat([collect(x) for x in pam]...)
+        seq = LongDNASeq(string(seq)[pam])
+    end
+    return seq
+end
+
 
 "
 Constructor for Motif that will be found in the reference.
@@ -88,7 +103,7 @@ function Motif(alias::String,
         fwdmotif = fwdmotif * repeat("N", distance)
         fwdpam = fwdpam * repeat("X", distance)
     end
-    merge = mergewith(notX, fwdmotif, fwdpam)
+    merge = combinestrings(notX, fwdmotif, fwdpam)
 
     if forward_strand
         # where is PAM located?

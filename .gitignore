@@ -1,5 +1,8 @@
 /Manifest.toml
 
 experiments_old/
+.vscode/
 /tests.jl
 *.csv
+*.ebwt
+*.zip

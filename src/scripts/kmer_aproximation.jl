@@ -44,21 +44,3 @@ k = 1000 # how many guides
 
 subset_guides = p[rand(1:nrow(p), k), :]
 sort!(subset_guides, [Symbol("D$i") for i in 0:max_dist])
-
-
-
-
-# create example genome with 1k guides that are in complex relations!
-
-# quick query based on pidgeon hole
-a = "ACTGACTGACTGACTGACTG"
-k = 4
-s1 = Set()
-
-
-
-function is_within_pidgeon_hole(guide::Set{String}, ref::Set{String})
-    isdisjoint()
-end
-
-a = Set(each(DNAKmer{3}, dna"ATCCTANAGNTACT", 3))

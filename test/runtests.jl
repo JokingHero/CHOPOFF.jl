@@ -82,6 +82,71 @@ using Test
         @test levenshtein(dna"CCGTAGCCTGTCCTCCTATA",
                           dna"TCACATGCGCACGTCCTCATATCT", 4) == 5
     end
+
+    @testset "prefix_ and suffix_ levenshtein" begin
+        # default k = 4
+        # dist <k
+        function pa_sa(guide::LongDNASeq, ref::LongDNASeq, d::Int, prefixlen::Int)
+            prefix = ref[1:prefixlen]
+            suffix = ref[prefixlen+1:end]
+            pa = prefix_levenshtein(guide, prefix, d)
+            return pa.isfinal ? pa.dist : suffix_levenshtein(guide, suffix, pa, d)
+        end
+
+        @test levenshtein(dna"ACTG",
+                          dna"ACTG", 4) == pa_sa(dna"ACTG", dna"ACTG", 4, 2)
+        @test levenshtein(dna"ACTG",
+                          dna"ACTGAAA", 4) == pa_sa(dna"ACTG", dna"ACTGAAAA", 4, 2)
+        @test levenshtein(dna"GCTG",
+                          dna"ACTGAAA", 4) == pa_sa(dna"GCTG", dna"ACTGAAAA", 4, 4)
+        @test levenshtein(dna"GCTGAAA",
+                          dna"ACTG", 4) == pa_sa(dna"GCTGAAA", dna"ACTG", 4, 2)
+        @test levenshtein(dna"RCTG",
+                          dna"WCTGAAA", 4) == pa_sa(dna"RCTG", dna"WCTGAAA", 4, 2)
+        @test levenshtein(dna"CCTG",
+                          dna"NCTRAAA", 4) == pa_sa(dna"CCTG", dna"NCTRAAA", 4, 2)
+
+        # dist == k
+        @test levenshtein(dna"TGAGAA",
+                          dna"CATCAAAAA", 4) == pa_sa(dna"TGAGAA", dna"CATCAAAAA", 4, 3)
+        @test levenshtein(dna"TGAGAAAAAAC",
+                          dna"GGAGAAAAAAG", 2) == pa_sa(dna"TGAGAAAAAAC", dna"GGAGAAAAAAG", 2, 5)
+        @test pa_sa(dna"TGAGAAAAAAC", dna"GGAGAAAAAAG", 4, 5) == pa_sa(dna"TGAGAAAAAAC", dna"GGAGAAAAAAG", 4, 6)
+        @test pa_sa(dna"TGAGAAAAAAC", dna"GGAGAAAAAAG", 4, 2) == pa_sa(dna"TGAGAAAAAAC", dna"GGAGAAAAAAG", 4, 3)
+        @test pa_sa(dna"TGAGAAAAAAC", dna"GGAGAAAAAAG", 4, 1) == pa_sa(dna"TGAGAAAAAAC", dna"GGAGAAAAAAG", 4, 7)
+
+        # dist > k
+        @test levenshtein(dna"TGAGAA",
+                          dna"CATCAAAAA", 2) == pa_sa(dna"TGAGAA", dna"CATCAAAAA", 2, 5)
+
+        # random values tested with results from
+        # pairalign(LevenshteinDistance(), s, t)
+        # without endings
+        @test levenshtein(dna"CATGGTCGTTTGCCAAATGG",
+                          dna"GTTTTTTAGGACGTCCAGGTAGTG", 20) == pa_sa(
+                          dna"CATGGTCGTTTGCCAAATGG",
+                          dna"GTTTTTTAGGACGTCCAGGTAGTG", 20, 7)
+        @test levenshtein(dna"TAAGTGGGTTGATCTTGGAG",
+                          dna"AACGACGTATCTGATCTATTCTAT", 20) == pa_sa(
+                          dna"TAAGTGGGTTGATCTTGGAG",
+                          dna"AACGACGTATCTGATCTATTCTAT", 20, 7)
+        @test levenshtein(dna"TGAACTTGCATCTTTCCCGC",
+                          dna"GGCGTGAAGATAAAGGCCCCGATA", 20) == pa_sa(
+                          dna"TGAACTTGCATCTTTCCCGC",
+                          dna"GGCGTGAAGATAAAGGCCCCGATA", 20, 7)
+        @test levenshtein(dna"GAGACCAGGAGAGTTATCCC",
+                          dna"TTCTATATCCATTCAGACCTGTCT", 20) == pa_sa(
+                          dna"GAGACCAGGAGAGTTATCCC",
+                          dna"TTCTATATCCATTCAGACCTGTCT", 20, 7)
+        @test levenshtein(dna"CCGTAGCCTGTCCTCCTATA",
+                          dna"TCACATGCGCACGTCCTCATATCT", 20) == pa_sa(
+                          dna"CCGTAGCCTGTCCTCCTATA",
+                          dna"TCACATGCGCACGTCCTCATATCT", 20, 7)
+        @test levenshtein(dna"CCGTAGCCTGTCCTCCTATA",
+                          dna"TCACATGCGCACGTCCTCATATCT", 4) == pa_sa(
+                          dna"CCGTAGCCTGTCCTCCTATA",
+                          dna"TCACATGCGCACGTCCTCATATCT", 4, 7)
+    end
 end
 
 

@@ -59,7 +59,7 @@ function findofftargets_p_chrom(
     elseif (ext == ".2bit")
         is_fa = false
     else
-        throw(
+        error(
         "Wrong extension of the genome.",
         "We can parse only .fa/.fna/.fasta or .2bit references.")
     end
@@ -106,7 +106,7 @@ function findofftargets_p_refg(
     elseif (ext == ".2bit")
         is_fa = false
     else
-        throw(
+        error(
         "Wrong extension of the genome.",
         "We can parse only .fa/.fna/.fasta or .2bit references.")
     end

@@ -42,7 +42,7 @@ Get file extension from the string path `s`.
 "
 function extension(s::String)
     extension = match(r"\.[A-Za-z0-9]+$", s)
-    if extension != nothing
+    if extension !== nothing
         return extension.match
     else
         return ""

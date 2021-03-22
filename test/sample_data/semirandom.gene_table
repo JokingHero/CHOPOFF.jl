@@ -1,0 +1,5 @@
+name	chrom	strand	txStart	txEnd	cdsStart	cdsEnd	exonCount	exonStarts	exonEnds	score	name2	cdsStartStat	cdsEndStat	exonFrames
+ENST00000606857	semirandom1	+	200	500	500	500	1	200,	500,	0	OR4G4P	none	none	-1,
+ENST00000461467	semirandom2	-	200	500	250	450	2	200,400,	300,500,	0	FAM138A	none	none	-1,-1,
+ENST00000417324	semirandom3	-	200	650	280	600	3	200,300,450,	250,400,650,	0	FAM138A	none	none	-1,-1,-1,
+ENST00000607096	semirandom1	+	200	600	240	550	1	200,	600,	0	MIR1302-2	none	none	-1,

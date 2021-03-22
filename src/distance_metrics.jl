@@ -15,10 +15,9 @@ end
 
 
 @inline function commonprefix(
-    guide::NucleotideSeq,
-    ref::NucleotideSeq,
-    ismatch::Function = isinclusive,
-)
+    guide::T,
+    ref::K,
+    ismatch::Function = isinclusive) where {T <: BioSequence, K <: BioSequence}
     l = 0
     for (i, g) in enumerate(guide)
         !ismatch(g, ref[i]) && break
@@ -41,7 +40,7 @@ For all human genome we have 304794990 guides NGG, median hamming distance speed
 is 24e-9 seconds -> 7.3 second per query on full linear scan for all
 off-targets.
 "
-function hamming(s1::NucleotideSeq, s2::NucleotideSeq, ismatch = isinclusive)
+function hamming(s1::T, s2::K, ismatch = isinclusive) where {T <: BioSequence, K <: BioSequence}
     return count(!ismatch, s1, s2)
 end
 
@@ -89,15 +88,15 @@ print(judge(m1, m2))
 TrialJudgement(+1126.73% => regression)
 """
 function levenshtein(
-    guide::NucleotideSeq,
-    ref::NucleotideSeq,
+    guide::T,
+    ref::K,
     k::Int = 4,
-    ismatch::Function = isinclusive
-)
+    ismatch::Function = isinclusive) where {T <: BioSequence, K <: BioSequence}
+
     if occursin("-", string(guide))
-        throw("Guide sequence ", string(guide), "contains -.")
+        error("Guide sequence ", string(guide), "contains -.")
     elseif occursin("-", string(ref))
-        throw("Reference sequence ", string(ref), "contains -.")
+        error("Reference sequence ", string(ref), "contains -.")
     end
 
     len1, len2 = length(guide), length(ref)
@@ -113,8 +112,8 @@ function levenshtein(
     # large loop on the reference restricted by deletions
     # small loop on the guide restricted by k
     v = collect(1:len1)
-    v_min_idx = 0
     current = 0
+    v_min_idx = 0
     @inbounds for (i, ch1) in enumerate(ref)
         left = current = v_min = i - 1
         @inbounds for j = max(1, i - k):min(len1, i + k)
@@ -154,7 +153,124 @@ function levenshtein(
 end
 
 
+## PREFIX & SUFFIX PARTIAL ALIGNMENT
+struct PrefixAlignment
+    v::Vector{Int}
+    prefixlen::Int
+    dist::Int
+    isfinal::Bool # true when no more alignment is needed
+end
 
+function prefix_levenshtein(
+    guide::T,
+    prefix::K,
+    k::Int = 4,
+    ismatch::Function = isinclusive) where {T <: BioSequence, K <: BioSequence}
+    len1, len2 = length(guide), length(prefix)
+    if k >= len1
+        k = len1
+    end
+
+    # large loop on the reference restricted by deletions
+    # small loop on the guide restricted by k
+    v = collect(1:len1)
+    current = 0
+    v_min_idx = 0
+    @inbounds for (i, ch1) in enumerate(prefix)
+        println("Done $i")
+        left = current = v_min = i - 1
+        @inbounds for j = max(1, i - k):min(len1, i + k)
+            above, current, left = current, left, v[j]
+            if !ismatch(ch1, guide[j])
+                # mismatch when all options equal
+                if current < above
+                    if current < left # mismatch
+                        current = current + 1
+                    else # gap in guide
+                        current = left + 1
+                    end
+                else
+                    if above < left # gap in prefix
+                        current = above + 1
+                    else # mismatch
+                        current = left + 1
+                    end
+                end
+            end
+
+            if v_min < left
+                v_min_idx = j - 1
+            else
+                v_min = left
+                v_min_idx = j
+            end
+            v[j] = current
+        end
+        # we aligned all of guide - only prefix is left
+        # return smallest distance in this row
+        v_min_idx == len1 && return PrefixAlignment(v, len2, v_min, true)
+        v_min > k && return PrefixAlignment(v, len2, k + 1, true)
+    end
+    return PrefixAlignment(v, len2, current, false)
+end
+
+
+function suffix_levenshtein(
+    guide::T,
+    suffix::K,
+    pA::PrefixAlignment,
+    k::Int = 4,
+    ismatch::Function = isinclusive) where {T <: BioSequence, K <: BioSequence}
+
+    len1, len2 = length(guide), length(suffix)
+    if k >= len1
+        k = len1
+    end
+    # large loop on the reference restricted by deletions
+    # small loop on the guide restricted by k
+    v = copy(pA.v)
+    current = pA.dist
+    v_min_idx = 0
+    @inbounds for i in (pA.prefixlen + 1):(len2 + pA.prefixlen)
+        left = current = v_min = i - 1
+        @inbounds for j = max(1, i - k):min(len1, i + k)
+            above, current, left = current, left, v[j]
+            if !ismatch(suffix[i - pA.prefixlen], guide[j])
+                # mismatch when all options equal
+                if current < above
+                    if current < left # mismatch
+                        current = current + 1
+                    else # gap in guide
+                        current = left + 1
+                    end
+                else
+                    if above < left # gap in suffix
+                        current = above + 1
+                    else # mismatch
+                        current = left + 1
+                    end
+                end
+            end
+
+            if v_min < left
+                v_min_idx = j - 1
+            else
+                v_min = left
+                v_min_idx = j
+            end
+            v[j] = current
+        end
+        # we aligned all of guide - only suffix is left
+        # return smallest distance in this row
+        v_min_idx == len1 && return v_min
+        v_min > k && return k + 1
+    end
+    current > k && return k + 1
+    return current
+end
+
+
+## BITPARALEL
 
 function get_idx(letter::Char)
     if letter == 'A'
