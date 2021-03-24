@@ -105,51 +105,74 @@ function levenshtein(
     f == len1 && return 0
     guide, ref = guide[f+1:len1], ref[f+1:len2]
     len1 = length(guide)
-    if k >= len1
-        k = len1
+    if k > len2
+        k = len2
     end
 
-    # large loop on the reference restricted by deletions
-    # small loop on the guide restricted by k
-    v = collect(1:len1)
-    current = 0
-    v_min_idx = 0
-    @inbounds for (i, ch1) in enumerate(ref)
-        left = current = v_min = i - 1
-        @inbounds for j = max(1, i - k):min(len1, i + k)
-            above, current, left = current, left, v[j]
-            if !ismatch(ch1, guide[j])
+    v = collect(1:len2)
+    offset_k = k - (len2 - len1) # for speed instead of max(1, i - k)
+    j_start = 1
+    j_end = k
+    #@info "Initial ofset, js, je: $offset_k, $j_start, $j_end"
+
+    @inbounds for (i, ch1) in enumerate(guide)
+        # minimum v value for calculated rows - for early termination 
+        # when we are outside of k dist
+        v_min = len2
+        v_min_idx = len2
+
+        if (i - 1 > offset_k)
+            j_start += 1
+        end
+        if j_end < len2
+            j_end += 1
+        end
+        #@info "i, js, je: $i, $j_start, $j_end"
+
+        top_left = i - 1
+        left = i
+
+        @inbounds for j = j_start:j_end
+            #@info "i: $i, j: $j, current: $top_left, left: $left, v[j]: " * string(v[j])
+            # compute future above
+            current = top_left
+            if !ismatch(ch1, ref[j])
                 # mismatch when all options equal
-                if current < above
+                if current < v[j]
                     if current < left # mismatch
-                        current = current + 1
+                        current += 1
                     else # gap in guide
                         current = left + 1
                     end
                 else
-                    if above < left # gap in ref
-                        current = above + 1
+                    if v[j] < left # gap in ref
+                        current = v[j] + 1
+                        #@info "gap in ref $i $j $len1"
                     else # mismatch
                         current = left + 1
                     end
                 end
             end
 
-            if v_min < left
-                v_min_idx = j - 1
-            else
-                v_min = left
+            if current < v_min
+                v_min = current
                 v_min_idx = j
+            else
+                v_min_idx = j-1
             end
-            v[j] = current
+
+            top_left = v[j]
+            left = current
+            v[j] = current            
         end
-        # we aligned all of guide - only ref is left
-        # return smallest distance in this row
-        v_min_idx == len1 && return v_min
+        # we aligned all of guide - we don't want to count the rest of ref
         v_min > k && return k + 1
+        #@info "i: $i, v: " * string(v)
+        v_min_idx == len1 && return v_min
     end
-    current > k && return k + 1
-    return current
+    #@info "last: v" * string(v)
+    v[end] > k && return k + 1
+    return v[end]
 end
 
 
@@ -177,9 +200,8 @@ function prefix_levenshtein(
     current = 0
     v_min_idx = 0
     @inbounds for (i, ch1) in enumerate(prefix)
-        println("Done $i")
         left = current = v_min = i - 1
-        @inbounds for j = max(1, i - k):min(len1, i + k)
+        @inbounds for j = max(1, i - k - 1):min(len1, i + k)
             above, current, left = current, left, v[j]
             if !ismatch(ch1, guide[j])
                 # mismatch when all options equal
@@ -233,7 +255,7 @@ function suffix_levenshtein(
     v_min_idx = 0
     @inbounds for i in (pA.prefixlen + 1):(len2 + pA.prefixlen)
         left = current = v_min = i - 1
-        @inbounds for j = max(1, i - k):min(len1, i + k)
+        @inbounds for j = max(1, i - k - 1):min(len1, i + k)
             above, current, left = current, left, v[j]
             if !ismatch(suffix[i - pA.prefixlen], guide[j])
                 # mismatch when all options equal

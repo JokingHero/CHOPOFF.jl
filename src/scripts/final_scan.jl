@@ -42,6 +42,35 @@ guides = [dna"CGCCAGCTTTCTCAGAAGTC"]
 
 #res = searchlinearDB(db_path, 1, guides)
 
-g =  dna"CTG" #AAGACTCTTTCGACCGC"
-p = dna"CCTG" #AAG
-levenshtein(g, p, 1)
+
+
+
+#g =  dna"TA" #AAGACTCTTTCGACCGC"
+#p = dna"CCTA" #AAG
+
+# test skip at the begining
+#@assert levenshtein(dna"TA", dna"CCTA", 1) == 2
+#@assert levenshtein(dna"TA", dna"CTA", 1) == 1
+#@assert levenshtein(dna"TA", dna"CCTA", 2) == 2
+#@assert levenshtein(dna"TAT", dna"CCTAT", 1) == 2
+#@assert levenshtein(dna"TA", dna"CCCTA", 3) == 3
+#@assert levenshtein(dna"TAT", dna"CCTAT", 1) == 2
+
+# capped at 3 due to the k < len(guide)
+#levenshtein(dna"TA", dna"CCCTA", 10)
+#levenshtein(dna"TA", dna"CCTACCC", 10)
+
+# should be distance 3 regardless
+#levenshtein(dna"TAAAAA", dna"CTAAAAACCCC", 10)
+
+#levenshtein(dna"GCTG", dna"ACTGAAA", 4)
+#levenshtein(dna"TA", dna"CCTA", 2)
+
+levenshtein(dna"AAGCA", dna"AGGAGCA", 5)
+#levenshtein(dna"AAGCA", dna"AGGAGTT", 5)
+
+levenshtein(dna"RCTG", dna"WCTGAAA", 4)
+
+# "  TGAGAA "
+# "CATCAAAAA"
+levenshtein(dna"TGAGAA", dna"CATCAAAAA", 6)
