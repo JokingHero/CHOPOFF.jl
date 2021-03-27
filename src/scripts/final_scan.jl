@@ -43,34 +43,28 @@ guides = [dna"CGCCAGCTTTCTCAGAAGTC"]
 #res = searchlinearDB(db_path, 1, guides)
 
 
+#CRISPRofftargetHunter.levenshtein2(dna"ACTG", dna"GACTG")
+#g = dna"CAGAGCCTCTAAGGTGAGC"
+#ref = dna"ACAGACAGAGCGCTTTTGGAAAATGCG"
+#@assert CRISPRofftargetHunter.levenshtein2(g, ref, 8) == CRISPRofftargetHunter.levenshtein(g, ref, 8)
+
+g = dna"GAGTAAAGTATCG"
+ref = dna"GCCCCCAGAGCAGAGCCCCTGG"
+
+levenshtein(g, ref, 9)
+levenshtein2(g, ref, 9)
 
 
-#g =  dna"TA" #AAGACTCTTTCGACCGC"
-#p = dna"CCTA" #AAG
-
-# test skip at the begining
-#@assert levenshtein(dna"TA", dna"CCTA", 1) == 2
-#@assert levenshtein(dna"TA", dna"CTA", 1) == 1
-#@assert levenshtein(dna"TA", dna"CCTA", 2) == 2
-#@assert levenshtein(dna"TAT", dna"CCTAT", 1) == 2
-#@assert levenshtein(dna"TA", dna"CCCTA", 3) == 3
-#@assert levenshtein(dna"TAT", dna"CCTAT", 1) == 2
-
-# capped at 3 due to the k < len(guide)
-#levenshtein(dna"TA", dna"CCCTA", 10)
-#levenshtein(dna"TA", dna"CCTACCC", 10)
-
-# should be distance 3 regardless
-#levenshtein(dna"TAAAAA", dna"CTAAAAACCCC", 10)
-
-#levenshtein(dna"GCTG", dna"ACTGAAA", 4)
-#levenshtein(dna"TA", dna"CCTA", 2)
-
-levenshtein(dna"AAGCA", dna"AGGAGCA", 5)
-#levenshtein(dna"AAGCA", dna"AGGAGTT", 5)
-
-levenshtein(dna"RCTG", dna"WCTGAAA", 4)
-
-# "  TGAGAA "
-# "CATCAAAAA"
-levenshtein(dna"TGAGAA", dna"CATCAAAAA", 6)
+iter = 100000
+k = rand(collect(1:10), iter)
+guide_sizes = rand(collect(1:20), iter)
+for i in 1:iter
+    g = getSeq(guide_sizes[i])
+    ref = getSeq(guide_sizes[i] + k[i])
+    @show "$i $g $ref " * string(k[i])
+    aln = levenshtein2(g, ref, k[i])
+    if aln.dist <= k[i]
+        @assert aln.dist == hamming(LongDNASeq(aln.guide), LongDNASeq(aln.ref), isequal)    
+    end
+    #@assert levenshtein(g, ref, k[i]) == CRISPRofftargetHunter.levenshtein2(g, ref, k[i]).dist
+end

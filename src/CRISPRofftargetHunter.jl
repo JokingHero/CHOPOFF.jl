@@ -35,7 +35,8 @@ include("db_tree.jl")
 include("persistence.jl")
 
 export getSeq, file_read, file_write, file_add, bucket_path, deleterange, getkmers, minkmersize, getkgrams # utils
-export isinclusive, commonprefix, hamming, levenshtein, levenshtein_bp, suffix_levenshtein, prefix_levenshtein # distance_metrics
+export isinclusive, commonprefix, hamming, levenshtein, levenshtein2, Aln, PrefixAlignment
+export levenshtein_bp, suffix_levenshtein, prefix_levenshtein # distance_metrics
 export Motif # motif
 export DBInfo, Loc, decode # genomeinfo
 export SketchDB, save, load # persistence
