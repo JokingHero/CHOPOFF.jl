@@ -1,5 +1,6 @@
 using CRISPRofftargetHunter
 using BioSequences
+using BenchmarkTools
 
 path = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..","test", "sample_data", "sample_genome.fa")
 path = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..","test", "sample_data", "semirandom.fa")
@@ -48,14 +49,20 @@ guides = [dna"CGCCAGCTTTCTCAGAAGTC"]
 #ref = dna"ACAGACAGAGCGCTTTTGGAAAATGCG"
 #@assert CRISPRofftargetHunter.levenshtein2(g, ref, 8) == CRISPRofftargetHunter.levenshtein(g, ref, 8)
 
-g = dna"GAGTAAAGTATCG"
-ref = dna"GCCCCCAGAGCAGAGCCCCTGG"
+g = dna"CCTACTTGAACGCGT"
+ref = dna"TCGCGGTTCAATTCCCAGGGTAT"
+#  12 3 45 67  8
+# "CCTACTTGAACGCGT"
+# "--T-C--G--CG-GT"
+levenshtein2(g, ref, 8)
+levenshtein(g, ref, 8)
 
-levenshtein(g, ref, 9)
-levenshtein2(g, ref, 9)
+# fast version with one vector instead of matrix
+median(@benchmark levenshtein(g2, r2, 8) setup=(g2=g; r2=ref))
+median(@benchmark levenshtein2_simple(g2, r2, 8) setup=(g2=g; r2=ref))
 
 
-iter = 100000
+iter = 1000000
 k = rand(collect(1:10), iter)
 guide_sizes = rand(collect(1:20), iter)
 for i in 1:iter
@@ -66,5 +73,5 @@ for i in 1:iter
     if aln.dist <= k[i]
         @assert aln.dist == hamming(LongDNASeq(aln.guide), LongDNASeq(aln.ref), isequal)    
     end
-    #@assert levenshtein(g, ref, k[i]) == CRISPRofftargetHunter.levenshtein2(g, ref, k[i]).dist
+    @assert levenshtein(g, ref, k[i]) == aln.dist
 end

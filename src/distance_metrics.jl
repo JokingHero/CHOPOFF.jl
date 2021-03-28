@@ -105,10 +105,9 @@ function levenshtein(
 
     v = collect(1:len2)
     v_min = len2
-    offset_k = k - (len2 - len1)
-    j_start = 1
     j_start_max = len2 - k
     j_end = k
+    #j_start  = 1
 
     @inbounds for (i, ch1) in enumerate(guide)
         # minimum v value for calculated rows - for early termination 
@@ -116,17 +115,18 @@ function levenshtein(
         v_min = len2
         v_min_idx = len2
 
-        if (i - 1 > offset_k && j_start < j_start_max)
-            j_start += 1
+        j_start = max(1, i - k)
+        if j_start > j_start_max
+            j_start = j_start_max
         end
         if j_end < len2
             j_end += 1
         end
 
-        top_left = i - 1
-        left = i
+        top_left = j_start > 1 ? v[j_start - 1] : i - 1
+        left = i # this in first iteration is always i at best
 
-        @info "$j_start $j_end"
+        #@info "$j_start $j_end"
 
         @inbounds for j = j_start:j_end
             # compute future above
@@ -159,11 +159,11 @@ function levenshtein(
         # we return v_min as we can "truncate" reference
         # which means we are interested in the best alignment 
         # for the lowest row
-        #v_min > k && return k + 1
+        v_min > k && return k + 1
     end
     # ??
     #v_min > k && return k + 1
-    @info "$v"
+    #@info "$v"
     return v_min # if we want full alignment without ref skip return v[end]
 end
 
@@ -190,7 +190,7 @@ Also return alignment.
 function levenshtein2(
     guide::T,
     ref::K,
-    k::Int = 4,
+    k::Int = 4, # k has to be > 0
     ismatch::Function = isinclusive) where {T <: BioSequence, K <: BioSequence}
 
     len1, len2 = length(guide), length(ref)
@@ -209,6 +209,7 @@ function levenshtein2(
     # going left means here gap in the reference
     align = fill(ref_, (len2 + 1, len1 + 1))
     j_start_max = max(1, len1 - k)
+    j_end = k
 
     v_min = len1
     for (i, ch1) in enumerate(p_ref) # add @inbounds
@@ -217,9 +218,8 @@ function levenshtein2(
         if j_start > j_start_max
             j_start = j_start_max
         end
-        j_end = i + k # k + 1 on the right
-        if j_end > len1 
-            j_end = len1
+        if j_end < len1 
+            j_end += 1
         end
 
         # sets top_left and left at the begining of the iteration
@@ -261,6 +261,7 @@ function levenshtein2(
             end
         end
         # v_min keeps smallest value for this row
+        # we don't return anything yet as the smallest
         v_min > k && break
     end
     
@@ -303,7 +304,8 @@ end
 
 ## PREFIX & SUFFIX PARTIAL ALIGNMENT
 struct PrefixAlignment
-    v::Vector{Int}
+    v::Array{Int64, 2}
+    align::Array{AlnPath, 2}
     prefixlen::Int
     dist::Int
     k::Int
@@ -317,67 +319,75 @@ function prefix_levenshtein(
     k::Int = 4,
     ismatch::Function = isinclusive) where {T <: BioSequence, K <: BioSequence}
 
-    len1, len2 = length(guide), length(prefix) + suffix_len
+    len1, len2 = length(guide), length(ref)
     # prefix common to both strings can be ignored
-    f = commonprefix(guide, prefix, ismatch)
-    f == len1 && return 0
-    guide, prefix = guide[f+1:len1], prefix[f+1:len2]
-    len1, len2 = len1 - f, len2 - f
-    if k > len2
-        k = len2
+    p = commonprefix(guide, ref, ismatch)
+    p == len1 && return Aln(guide, ref[1:len1], k, 0)
+    p_guide, p_ref = guide[p + 1:len1], ref[p + 1:len2]
+    len1, len2 = len1 - p, len2 - p
+    if k > len1
+        k = len1
     end
 
-    v = collect(1:len2)
-    v_min = len2
-    offset_k = k - (len2 - len1) # for speed instead of max(1, i - k)
-    j_start = 1
+    # we initialize all array with the top values
+    v = Array(transpose(repeat(0:len1, 1, len2 + 1)))
+    # when we are at the top right corner we have to go left
+    # going left means here gap in the reference
+    align = fill(ref_, (len2 + 1, len1 + 1))
+    j_start_max = max(1, len1 - k)
     j_end = k
 
-    @inbounds for (i, ch1) in enumerate(guide)
-        # minimum v value for calculated rows - for early termination 
-        # when we are outside of k dist
-        v_min = len2
-        v_min_idx = len2
-
-        if (i - 1 > offset_k)
-            j_start += 1
+    v_min = len1
+    for (i, ch1) in enumerate(p_ref) # add @inbounds
+        v_min = len1 # minimum score for each row
+        j_start = max(1, i - k)
+        if j_start > j_start_max
+            j_start = j_start_max
         end
-        if j_end < len2
+        if j_end < len1 
             j_end += 1
         end
 
-        top_left = i - 1
-        left = i
+        # sets top_left and left at the begining of the iteration
+        #@info "$j_start $j_end"
+        v[i + 1, j_start] = i
+        # going top is gap in the guide
+        align[i + 1, j_start] = g_
 
-        @inbounds for j = j_start:j_end
-            # compute future above
-            current = top_left
-            if !ismatch(ch1, prefix[j])
+        for j =  j_start:j_end # @in_bounds
+            if !ismatch(ch1, p_guide[j])
                 # mismatch when all options equal
-                if current < v[j]
-                    if current < left # mismatch
-                        current += 1
-                    else # gap in guide
-                        current = left + 1
+                # top_left < top
+                if v[i, j] < v[i, j + 1]
+                    # top_left < left
+                    if v[i, j] < v[i + 1, j] # mismatch
+                        v[i + 1, j + 1] = v[i, j] + 1
+                        align[i + 1, j + 1] = nogap
+                    else # gap in ref
+                        v[i + 1, j + 1] = v[i + 1, j] + 1
+                        align[i + 1, j + 1] = ref_
                     end
                 else
-                    if v[j] < left # gap in prefix
-                        current = v[j] + 1
-                    else # mismatch
-                        current = left + 1
+                    # top < left
+                    if v[i, j + 1] < v[i + 1, j] # gap in guide
+                        v[i + 1, j + 1] = v[i, j + 1] + 1
+                        align[i + 1, j + 1] = g_
+                    else # gap in ref
+                        v[i + 1, j + 1] = v[i + 1, j] + 1
+                        align[i + 1, j + 1] = ref_
                     end
                 end
+            else # match
+                v[i + 1, j + 1] = v[i, j]
+                align[i + 1, j + 1] = nogap
             end
 
-            if current < v_min
-                v_min = current
+            if v[i + 1, j + 1] < v_min
+                v_min = v[i + 1, j + 1]
             end
-
-            top_left = v[j]
-            left = current
-            v[j] = current            
         end
-        v_min > k && return PrefixAlignment(v, len2, k + 1, k, true)
+        # v_min keeps smallest value for this row
+        v_min > k && break
     end
 
     v_min > k && return PrefixAlignment(v, len2, k + 1, k, true)
@@ -469,6 +479,14 @@ function suffix_levenshtein(
     # for the lowest row
     v_min > k && return k + 1
     return v_min # if we want full alignment without ref skip return v[end]
+end
+
+
+function pa_sa(guide::LongDNASeq, ref::LongDNASeq, d::Int, prefixlen::Int)
+    prefix = ref[1:prefixlen]
+    suffix = ref[prefixlen+1:end]
+    pa = prefix_levenshtein(guide, prefix, d)
+    return pa.isfinal ? pa.dist : suffix_levenshtein(guide, suffix, pa, d)
 end
 
 
