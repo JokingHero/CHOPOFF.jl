@@ -49,29 +49,24 @@ guides = [dna"CGCCAGCTTTCTCAGAAGTC"]
 #ref = dna"ACAGACAGAGCGCTTTTGGAAAATGCG"
 #@assert CRISPRofftargetHunter.levenshtein2(g, ref, 8) == CRISPRofftargetHunter.levenshtein(g, ref, 8)
 
-g = dna"CCTACTTGAACGCGT"
-ref = dna"TCGCGGTTCAATTCCCAGGGTAT"
+levenshtein(dna"GCTGAAA", dna"ACTG", 4)
+levenshtein2(dna"GCTGAAA", dna"ACTG", 4)
+pa_sa(dna"GCTGAAA", dna"ACTG", 4, 4)
+
+
+# CACT CTCCCTTT 4 3
+g = dna"CACT"
+ref = dna"CTCCCTTT"
 #  12 3 45 67  8
 # "CCTACTTGAACGCGT"
 # "--T-C--G--CG-GT"
-levenshtein2(g, ref, 8)
-levenshtein(g, ref, 8)
+# hm the difference here is from swallowing the first letters!
+align(g, ref, 4)
+levenshtein(g, ref, 4)
+pa_sa(g, ref, 4, 3)
 
 # fast version with one vector instead of matrix
-median(@benchmark levenshtein(g2, r2, 8) setup=(g2=g; r2=ref))
-median(@benchmark levenshtein2_simple(g2, r2, 8) setup=(g2=g; r2=ref))
+#median(@benchmark levenshtein(g2, r2, 8) setup=(g2=g; r2=ref))
+#median(@benchmark levenshtein2_simple(g2, r2, 8) setup=(g2=g; r2=ref))
 
-
-iter = 1000000
-k = rand(collect(1:10), iter)
-guide_sizes = rand(collect(1:20), iter)
-for i in 1:iter
-    g = getSeq(guide_sizes[i])
-    ref = getSeq(guide_sizes[i] + k[i])
-    @show "$i $g $ref " * string(k[i])
-    aln = levenshtein2(g, ref, k[i])
-    if aln.dist <= k[i]
-        @assert aln.dist == hamming(LongDNASeq(aln.guide), LongDNASeq(aln.ref), isequal)    
-    end
-    @assert levenshtein(g, ref, k[i]) == aln.dist
-end
+prefix_align(dna"AAAAAAA", dna"GGGGGGG", 16, 4)

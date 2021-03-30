@@ -106,8 +106,10 @@ function levenshtein(
     v = collect(1:len2)
     v_min = len2
     j_start_max = len2 - k
+    if !(j_start_max > 0)
+        j_start_max = 1
+    end
     j_end = k
-    #j_start  = 1
 
     @inbounds for (i, ch1) in enumerate(guide)
         # minimum v value for calculated rows - for early termination 
@@ -125,9 +127,6 @@ function levenshtein(
 
         top_left = j_start > 1 ? v[j_start - 1] : i - 1
         left = i # this in first iteration is always i at best
-
-        #@info "$j_start $j_end"
-
         @inbounds for j = j_start:j_end
             # compute future above
             current = top_left
@@ -161,9 +160,6 @@ function levenshtein(
         # for the lowest row
         v_min > k && return k + 1
     end
-    # ??
-    #v_min > k && return k + 1
-    #@info "$v"
     return v_min # if we want full alignment without ref skip return v[end]
 end
 
@@ -175,7 +171,6 @@ struct Aln
     # can contain "-"
     guide::String
     ref::String
-    k::Int
     dist::Int
 end
 
@@ -187,7 +182,7 @@ small loop along guide.
 
 Also return alignment.
 "
-function levenshtein2(
+function align(
     guide::T,
     ref::K,
     k::Int = 4, # k has to be > 0
@@ -196,7 +191,7 @@ function levenshtein2(
     len1, len2 = length(guide), length(ref)
     # prefix common to both strings can be ignored
     p = commonprefix(guide, ref, ismatch)
-    p == len1 && return Aln(guide, ref[1:len1], k, 0)
+    p == len1 && return Aln(guide, ref[1:len1], 0)
     p_guide, p_ref = guide[p + 1:len1], ref[p + 1:len2]
     len1, len2 = len1 - p, len2 - p
     if k > len1
@@ -211,9 +206,11 @@ function levenshtein2(
     j_start_max = max(1, len1 - k)
     j_end = k
 
-    v_min = len1
-    for (i, ch1) in enumerate(p_ref) # add @inbounds
-        v_min = len1 # minimum score for each row
+    # we will keep track of the smallest distance in the last column
+    v_min_row, v_min_col = len1, len1
+    v_min_col_idx = 1
+    @inbounds for (i, ch1) in enumerate(p_ref)
+        v_min_row = len1 # minimum score for each row
         j_start = max(1, i - k)
         if j_start > j_start_max
             j_start = j_start_max
@@ -228,7 +225,7 @@ function levenshtein2(
         # going top is gap in the guide
         align[i + 1, j_start] = g_
 
-        for j =  j_start:j_end # @in_bounds
+        @inbounds for j = j_start:j_end
             if !ismatch(ch1, p_guide[j])
                 # mismatch when all options equal
                 # top_left < top
@@ -256,40 +253,35 @@ function levenshtein2(
                 align[i + 1, j + 1] = nogap
             end
 
-            if v[i + 1, j + 1] < v_min
-                v_min = v[i + 1, j + 1]
+            if v[i + 1, j + 1] < v_min_row
+                v_min_row = v[i + 1, j + 1]
+            end
+
+            # we calculate for last column
+            if j == len1 && v[i + 1, end] < v_min_col
+                v_min_col = v[i + 1, end]
+                v_min_col_idx = i + 1
             end
         end
-        # v_min keeps smallest value for this row
-        # we don't return anything yet as the smallest
-        v_min > k && break
+        # v_min_row keeps smallest value for this row
+        # we don't return anything yet as 
+        # the smallest is in the last column not row!
+        v_min_row > k && break
     end
-    
-    # find smallest value in the last column, 
-    # we can truncate reference to minimize edit dist
-    # exclude _ref gaps in this column!
-    min_dist = v[end, end]
-    i = len2 + 1
-    for (idx, dist) in enumerate(v[:, end])
-        if dist < min_dist && align[idx, end] != ref_
-            min_dist = dist
-            i = idx
-        end
-    end
-    min_dist > k && return Aln("", "", k, k + 1)
+    v_min_col > k && return Aln("", "", k + 1)
 
     j = len1 + 1 # j along guide, i along reference
     aln_g, aln_ref = "", ""
-    while i > 1 || j > 1
-        if align[i, j] == nogap
+    while v_min_col_idx > 1 || j > 1
+        if align[v_min_col_idx, j] == nogap
             aln_g *= string(p_guide[j - 1])
-            aln_ref *= string(p_ref[i - 1])
-            i -= 1
+            aln_ref *= string(p_ref[v_min_col_idx - 1])
+            v_min_col_idx -= 1
             j -= 1
-        elseif align[i, j] == g_
+        elseif align[v_min_col_idx, j] == g_
             aln_g *= "-"
-            aln_ref *= string(p_ref[i - 1])
-            i -= 1
+            aln_ref *= string(p_ref[v_min_col_idx - 1])
+            v_min_col_idx -= 1
         else
             aln_g *= string(p_guide[j - 1])
             aln_ref *= "-"
@@ -298,64 +290,66 @@ function levenshtein2(
     end
     return Aln(string(guide[1:p]) * reverse(aln_g), 
                string(ref[1:p]) * reverse(aln_ref), 
-               k, min_dist)
+               v_min_col)
 end
 
 
 ## PREFIX & SUFFIX PARTIAL ALIGNMENT
-struct PrefixAlignment
+struct PrefixAlignment{T <: BioSequence, K <: BioSequence}
     v::Array{Int64, 2}
     align::Array{AlnPath, 2}
-    prefixlen::Int
-    dist::Int
+    prefix::T
+    prefix_len::Int
+    guide::K
+    guide_len::Int
+    suffix_len::Int
+    v_min_col::Int
+    v_min_col_idx::Int
     k::Int
     isfinal::Bool # true when no more alignment is needed
 end
 
-function prefix_levenshtein(
+function prefix_align(
     guide::T,
     prefix::K,
     suffix_len::Int,
-    k::Int = 4,
+    k::Int = 4, # asumption that k has to be less than prefix length
     ismatch::Function = isinclusive) where {T <: BioSequence, K <: BioSequence}
 
-    len1, len2 = length(guide), length(ref)
-    # prefix common to both strings can be ignored
-    p = commonprefix(guide, ref, ismatch)
-    p == len1 && return Aln(guide, ref[1:len1], k, 0)
-    p_guide, p_ref = guide[p + 1:len1], ref[p + 1:len2]
-    len1, len2 = len1 - p, len2 - p
-    if k > len1
-        k = len1
+    guide_len, prefix_len = length(guide), length(prefix)
+    ref_len = prefix_len + suffix_len 
+    if k > prefix_len
+        k = prefix_len
     end
 
     # we initialize all array with the top values
-    v = Array(transpose(repeat(0:len1, 1, len2 + 1)))
+    v = Array(transpose(repeat(0:guide_len, 1, ref_len + 1)))
     # when we are at the top right corner we have to go left
     # going left means here gap in the reference
-    align = fill(ref_, (len2 + 1, len1 + 1))
-    j_start_max = max(1, len1 - k)
+    align = fill(ref_, (ref_len + 1, guide_len + 1))
+    j_start_max = max(1, guide_len - k)
     j_end = k
 
-    v_min = len1
-    for (i, ch1) in enumerate(p_ref) # add @inbounds
-        v_min = len1 # minimum score for each row
+    # we will keep track of the smallest distance in the last column
+    v_min_row, v_min_col = guide_len, guide_len
+    v_min_col_idx = 1
+    @inbounds for (i, ch1) in enumerate(prefix)
+        v_min_row = guide_len # minimum score for each row
         j_start = max(1, i - k)
         if j_start > j_start_max
             j_start = j_start_max
         end
-        if j_end < len1 
+        if j_end < guide_len 
             j_end += 1
         end
 
         # sets top_left and left at the begining of the iteration
-        #@info "$j_start $j_end"
         v[i + 1, j_start] = i
         # going top is gap in the guide
         align[i + 1, j_start] = g_
 
-        for j =  j_start:j_end # @in_bounds
-            if !ismatch(ch1, p_guide[j])
+        @inbounds for j = j_start:j_end
+            if !ismatch(ch1, guide[j])
                 # mismatch when all options equal
                 # top_left < top
                 if v[i, j] < v[i, j + 1]
@@ -382,111 +376,140 @@ function prefix_levenshtein(
                 align[i + 1, j + 1] = nogap
             end
 
-            if v[i + 1, j + 1] < v_min
-                v_min = v[i + 1, j + 1]
+            if v[i + 1, j + 1] < v_min_row
+                v_min_row = v[i + 1, j + 1]
+            end
+
+            # we calculate for last column
+            if j == guide_len && v[i + 1, end] < v_min_col
+                v_min_col = v[i + 1, end]
+                v_min_col_idx = i + 1
             end
         end
-        # v_min keeps smallest value for this row
-        v_min > k && break
+        v_min_row > k && break
     end
-
-    v_min > k && return PrefixAlignment(v, len2, k + 1, k, true)
-    return PrefixAlignment(v, len2, v[end], k, false)
+    return PrefixAlignment(v, align,
+                           prefix, prefix_len, 
+                           guide, guide_len, 
+                           suffix_len, 
+                           v_min_col, v_min_col_idx, k, v_min_row > k)
 end
 
 
-function suffix_levenshtein(
-    guide::T,
+function suffix_align(
     suffix::K,
     pA::PrefixAlignment,
-    k::Int = 4,
-    ismatch::Function = isinclusive) where {T <: BioSequence, K <: BioSequence}
+    ismatch::Function = isinclusive) where {K <: BioSequence}
 
-    len1, len2 = length(guide), length(suffix)
-    if k >= len2
-        k = len2
-    end
-    # large loop on the reference restricted by deletions
-    # small loop on the guide restricted by k
+    # we initialize all array with the top values
     v = copy(pA.v)
-    current = pA.dist
-    v_min_idx = 0
-    #@inbounds for i in (pA.prefixlen + 1):(len2 + pA.prefixlen)
-    #    left = current = v_min = i - 1
-    #    @inbounds for j = max(1, i - k - 1):min(len1, i + k)
-    #        above, current, left = current, left, v[j]
-    
-    
-    len1, len2 = length(guide), length(suffix)
-    if k > len2
-        k = len2
-    end
+    align = copy(pA.align)
+    j_start_max = max(1, pA.guide_len - pA.k)
+    j_end = min(pA.k + pA.prefix_len, pA.guide_len)
 
-    v = collect(1:len2)
-    v_min = len2
-    offset_k = k - (len2 - len1) # for speed instead of max(1, i - k)
-    j_start = 1
-    j_end = k
+    # we will keep track of the smallest distance in the last column
+    v_min_row = pA.guide_len
+    v_min_col = pA.v_min_col
+    v_min_col_idx = pA.v_min_col_idx
+    if !pA.isfinal
+        @inbounds for (l, ch1) in enumerate(suffix)
+            i = l + pA.prefix_len
+            v_min_row = pA.guide_len # minimum score for each row
+            j_start = max(1, i - pA.k)
+            if j_start > j_start_max
+                j_start = j_start_max
+            end
+            if j_end < pA.guide_len 
+                j_end += 1
+            end
 
-    @inbounds for (i, ch1) in enumerate(guide)
-        # minimum v value for calculated rows - for early termination 
-        # when we are outside of k dist
-        v_min = len2
-        v_min_idx = len2
-
-        if (i - 1 > offset_k)
-            j_start += 1
-        end
-        if j_end < len2
-            j_end += 1
-        end
-
-        top_left = i - 1
-        left = i
-
-        @inbounds for j = j_start:j_end
-            # compute future above
-            current = top_left
-            if !ismatch(ch1, ref[j]) !ismatch(suffix[i - pA.prefixlen], ref[j])
-                # mismatch when all options equal
-                if current < v[j]
-                    if current < left # mismatch
-                        current += 1
-                    else # gap in guide
-                        current = left + 1
+            # sets top_left and left at the begining of the iteration
+            v[i + 1, j_start] = i
+            # going top is gap in the guide
+            align[i + 1, j_start] = g_
+            @inbounds for j = j_start:j_end
+                if !ismatch(ch1, pA.guide[j])
+                    # mismatch when all options equal
+                    # top_left < top
+                    if v[i, j] < v[i, j + 1]
+                        # top_left < left
+                        if v[i, j] < v[i + 1, j] # mismatch
+                            v[i + 1, j + 1] = v[i, j] + 1
+                            align[i + 1, j + 1] = nogap
+                        else # gap in ref
+                            v[i + 1, j + 1] = v[i + 1, j] + 1
+                            align[i + 1, j + 1] = ref_
+                        end
+                    else
+                        # top < left
+                        if v[i, j + 1] < v[i + 1, j] # gap in guide
+                            v[i + 1, j + 1] = v[i, j + 1] + 1
+                            align[i + 1, j + 1] = g_
+                        else # gap in ref
+                            v[i + 1, j + 1] = v[i + 1, j] + 1
+                            align[i + 1, j + 1] = ref_
+                        end
                     end
-                else
-                    if v[j] < left # gap in ref
-                        current = v[j] + 1
-                    else # mismatch
-                        current = left + 1
-                    end
+                else # match
+                    v[i + 1, j + 1] = v[i, j]
+                    align[i + 1, j + 1] = nogap
+                end
+
+                if v[i + 1, j + 1] < v_min_row
+                    v_min_row = v[i + 1, j + 1]
+                end
+
+                # we calculate for last column
+                if j == pA.guide_len && v[i + 1, end] < v_min_col
+                    v_min_col = v[i + 1, end]
+                    v_min_col_idx = i + 1
                 end
             end
-
-            if current < v_min
-                v_min = current
-            end
-
-            top_left = v[j]
-            left = current
-            v[j] = current            
+            # v_min_row keeps smallest value for this row
+            # we don't return anything yet as 
+            # the smallest is in the last column not row!
+            v_min_row > pA.k && break
         end
-        v_min > k && return k + 1
     end
-    # we return v_min as we can "truncate" reference
-    # which means we are interested in the best alignment 
-    # for the lowest row
-    v_min > k && return k + 1
-    return v_min # if we want full alignment without ref skip return v[end]
+    if v_min_col > pA.k
+        return Aln("", "", pA.k + 1)
+    end
+
+    j = pA.guide_len + 1 # j along guide, i along reference
+    aln_g, aln_ref = "", ""
+    ref = string(pA.prefix) * string(suffix)
+    while v_min_col_idx > 1 || j > 1
+        if align[v_min_col_idx, j] == nogap
+            aln_g *= string(pA.guide[j - 1])
+            aln_ref *= string(ref[v_min_col_idx - 1])
+            v_min_col_idx -= 1
+            j -= 1
+        elseif align[v_min_col_idx, j] == g_
+            aln_g *= "-"
+            aln_ref *= string(ref[v_min_col_idx - 1])
+            v_min_col_idx -= 1
+        else
+            aln_g *= string(pA.guide[j - 1])
+            aln_ref *= "-"
+            j -= 1
+        end
+    end
+    return Aln(reverse(aln_g), reverse(aln_ref), v_min_col)
 end
 
 
-function pa_sa(guide::LongDNASeq, ref::LongDNASeq, d::Int, prefixlen::Int)
-    prefix = ref[1:prefixlen]
-    suffix = ref[prefixlen+1:end]
-    pa = prefix_levenshtein(guide, prefix, d)
-    return pa.isfinal ? pa.dist : suffix_levenshtein(guide, suffix, pa, d)
+"
+Created for testing purposes, performs prefix alignment followed
+by suffix alignment.
+"
+function pa_sa(guide::LongDNASeq, ref::LongDNASeq, d::Int, prefix_len::Int)
+    if prefix_len > length(guide)
+        prefix_len = length(guide)
+    end
+    prefix = ref[1:prefix_len]
+    suffix = ref[prefix_len+1:end]
+    pa = prefix_align(guide, prefix, length(suffix), d)
+    return suffix_align(suffix, pa)
 end
 
 
@@ -503,6 +526,7 @@ function get_idx(letter::Char)
         return 4
     end
 end
+
 
 "
 Compute levenshtein distance.
