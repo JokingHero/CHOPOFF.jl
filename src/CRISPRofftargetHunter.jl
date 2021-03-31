@@ -14,7 +14,6 @@ using FASTX
 using TwoBit
 using Probably
 using DataFrames
-using StaticArrays
 using ThreadsX
 
 import Base.findall
@@ -34,6 +33,7 @@ include("db_tree.jl")
 
 include("persistence.jl")
 
+# TODO only export small interaface for building databases and interactions with it
 export getSeq, file_read, file_write, file_add, bucket_path, deleterange, getkmers, minkmersize, getkgrams # utils
 export isinclusive, commonprefix, hamming, levenshtein, align, Aln, PrefixAlignment, pa_sa
 export levenshtein_bp, suffix_align, prefix_align # distance_metrics
