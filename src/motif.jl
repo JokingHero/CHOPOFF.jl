@@ -3,17 +3,15 @@ Motif defines what we search on the genome,
 what can be identified as an off-target.
 
 `distance` defines how many bases extra we need on the
-off-target sequence for the alignment.
-
-For example for Cas9- 20bp-NGG with up to 4 mm
-we need to have 24bp-NGG patterns on the gneome.
+off-target sequence for the alignment, when we don't 
+have those bases we use DNA_Gap.
 "
 struct Motif
     alias::String
     fwd::LongDNASeq
     rve::LongDNASeq
-    pam_loci_fwd::Vector{UnitRange{<:Integer}}
-    pam_loci_rve::Vector{UnitRange{<:Integer}}
+    pam_loci_fwd::UnitRange{<:Integer}
+    pam_loci_rve::UnitRange{<:Integer}
     distance::Int
     extends5::Bool
 end
@@ -41,15 +39,10 @@ end
 "
 Removes PAM from the seq.
 "
-function removepam(seq::LongDNASeq, pam::Vector{UnitRange{<:Integer}})
-    if length(pam) == 1
-        seq = copy(seq)
-        deleteat!(seq, pam[1])
-    else
-        pam = vcat([collect(x) for x in pam]...)
-        seq = LongDNASeq(string(seq)[pam])
-    end
-    return seq
+function removepam(seq::LongDNASeq, pam::UnitRange{<:Integer})
+    x = copy(seq)
+    deleteat!(x, pam)
+    return x
 end
 
 
@@ -69,25 +62,18 @@ Constructor for Motif that will be found in the reference.
              will indicate within what distance we can search for off-targets.
 `extend5`  - Defines how off-targets will be aligned to the guides and where
              extra nucleotides will be added for alignment within distance. Whether
-             to extend in the 5' and 3' direction.
+             to extend in the 5' and 3' direction. Cas9 is extend5 = true.
 
 Example for Cas9 where we want to search for off-targets within distance of 4:
 alias:    Cas9
-fwdmotif:     NNNNNNNNNNNNNNNNNNNNXXX
-fwdpam:       XXXXXXXXXXXXXXXXXXXXNGG
+fwdmotif: NNNNNNNNNNNNNNNNXXX
+fwdpam:   XXXXXXXXXXXXXXXXNGG
 forward:  true
 reverse:  true
 distance: 4
 extend5:  true
 
-This will search these motifs on the genome (forward strand)
-           NNNNNNNNNNNNNNNNNNNNNNNNNGG
-           EEEE
-
-           CCNNNNNNNNNNNNNNNNNNNNNNNNN      (reverse strand)
-                                  EEEE
-and treat those 4 E nucleotides as an extension, only used for alignment
-purposes, and alignments will start from opposite to the `extend5` direction.
+Alignments will start from opposite to the `extend5` direction.
 "
 function Motif(alias::String,
     fwdmotif::String, fwdpam::String,
@@ -107,22 +93,33 @@ function Motif(alias::String,
 
     if forward_strand
         # where is PAM located?
-        pam_loci_fwd = findall(r"[^X]+", fwdpam)
+        pam_loci_fwd = findall(r"[^X]+", fwdpam)[1]
         fwd = LongDNASeq(merge)
     else
-        pam_loci_fwd = Vector{UnitRange{Int64}}()
+        pam_loci_fwd = UnitRange{Int64}()
         fwd = LongDNASeq("")
     end
 
     if reverse_strand
-        pam_loci_rve = findall(r"[^X]+", reverse(fwdpam))
+        pam_loci_rve = findall(r"[^X]+", reverse(fwdpam))[1]
         rve = reverse_complement(LongDNASeq(merge))
     else
-        pam_loci_rve = Vector{UnitRange{Int64}}()
+        pam_loci_rve = UnitRange{Int64}()
         rve = LongDNASeq("")
     end
 
     return Motif(alias, fwd, rve, pam_loci_fwd, pam_loci_rve, distance, extends5)
+end
+
+
+"
+Calculate what is the length of the motif, with extension, but without PAM.
+Effectively, size of the off-target on the genome.
+"
+function length_noPAM(motif::Motif)
+    fwd_len = length(motif.fwd) - length(motif.pam_loci_fwd)
+    rve_len = length(motif.rve) - length(motif.pam_loci_rve)
+    return max(fwd_len, rve_len)
 end
 
 # function print_rgb(io::IO, t::String, r = 235, g = 79, b = 52)
@@ -159,11 +156,11 @@ end
 # TODO add more motifs
 const motif_db = Dict(
     "Cas9" => Motif("Cas9",
-                    "NNNNNNNNNNNNNNNNNNNNXXX",
-                    "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 4, true),
+                    "NNNNNNNNNNNNNNNNXXX",
+                    "XXXXXXXXXXXXXXXXNGG", true, true, 4, true),
     "Cpf1" => Motif("Cas12a",
-                    "XXXXNNNNNNNNNNNNNNNNNNNNNNNN",
-                    "TTTNXXXXXXXXXXXXXXXXXXXXXXXX", true, true, 4, false)
+                    "XXXXNNNNNNNNNNNNNNNNNNNN",
+                    "TTTNXXXXXXXXXXXXXXXXXXXX", true, true, 4, false)
     )
 
 function Motif(alias::String)

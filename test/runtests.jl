@@ -15,13 +15,16 @@ using Test
         @test !isinclusive(DNA_W, DNA_R)
         @test !isinclusive(DNA_R, DNA_W)
         @test !isinclusive(DNA_A, DNA_C)
+
+        @test !isinclusive(DNA_Gap, DNA_N)
+        @test !isinclusive(DNA_Gap, DNA_A)
     end
 
     @testset "commonprefix" begin
         @test commonprefix(dna"ACTGACTG", dna"ACTGACTG") == 8
         @test commonprefix(dna"GCTGACTG", dna"ACTGACTG") == 0
         @test commonprefix(dna"NCTGACTG", dna"ACTGACTG") == 8
-        @test commonprefix(dna"RCTGACTG", dna"WCTGACTG") == 0
+        @test commonprefix(dna"RCTGACTG", dna"WCTGACTG", isinclusive) == 0
 
         @test commonprefix(dna"ACTGACTG", dna"ACTGACTGAAAAA") == 8
         @test commonprefix(dna"GCTGACTG", dna"ACTGACTGAAAAA") == 0
@@ -36,11 +39,11 @@ using Test
         @test hamming(dna"AGTGACGG", dna"ACTGACTGGGG") == 2
         @test hamming(dna"AGTGACGGGGG", dna"ACTGACTG") == 2
 
-        @test hamming(dna"RGTGACGG", dna"WCTGACTG") == 3
-        @test hamming(dna"RGTGACGG", dna"ACTGACTG") == 2
+        @test hamming(dna"RGTGACGG", dna"WCTGACTG", isinclusive) == 3
+        @test hamming(dna"RGTGACGG", dna"ACTGACTG", isinclusive) == 2
 
-        @test hamming(dna"RGTGACGG", dna"WCTGACTG", iscompatible) == 2
-        @test hamming(dna"RGTGACGG", dna"ACTGACTG", iscompatible) == 2
+        @test hamming(dna"RGTGACGG", dna"WCTGACTG") == 2
+        @test hamming(dna"RGTGACGG", dna"ACTGACTG") == 2
     end
 
     @testset "levenshtein" begin
@@ -55,9 +58,9 @@ using Test
         @test levenshtein(dna"GCTGAAA",
                           dna"ACTG", 4) == 4
         @test levenshtein(dna"RCTG",
-                          dna"WCTGAAA", 4) == 1
+                          dna"WCTGAAA", 4, isinclusive) == 1
         @test levenshtein(dna"CCTG",
-                          dna"NCTRAAA", 4) == 0
+                          dna"NCTRAAA", 4, isinclusive) == 0
 
         # dist == k
         @test levenshtein(dna"TGAGAA",

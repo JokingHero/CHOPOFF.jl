@@ -72,5 +72,5 @@ end
 
 function decode(loc::Loc, dbi::DBInfo)
     strand = loc.isplus ? "+" : "-"
-    return dbi[loc.chrom] * ":" * string(loc.pos) * ":" * strand
+    return dbi.chrom[loc.chrom] * "," * string(loc.pos) * "," * strand
 end

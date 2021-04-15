@@ -14,7 +14,6 @@ using FASTX
 using TwoBit
 using Probably
 using DataFrames
-using ThreadsX
 
 import Base.findall
 

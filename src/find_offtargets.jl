@@ -42,14 +42,19 @@ function Base.findall(pat::BioSequence, seq::BioSequence,
 end
 
 
+"
+Will push guides found by the dbi.motif into the output as strings.
+Guides are as is for forward strand and reverse complemented when on reverse strand.
+Guides do not contain PAM sequence here.
+"
 function pushguides!(
     output::T,
     dbi::DBInfo,
     chrom::K,
     reverse_comp::Bool) where {T<:Union{CountMinSketch, HyperLogLog, Vector{String}}, K<:BioSequence}
-
-    query = reverse_comp ? dbi.motif.fwd : dbi.motif.rve
-    pam_loci = reverse_comp ? dbi.motif.pam_loci_fwd : dbi.motif.pam_loci_rve
+    
+    query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd
+    pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
 
     if length(query) != 0
         for x in findall(query, chrom)
@@ -59,6 +64,7 @@ function pushguides!(
                 guide = reverse_complement(guide)
             end
 
+            # these guides are all in NNNGG direction (without PAM)
             push!(output, string(guide))
         end
     end

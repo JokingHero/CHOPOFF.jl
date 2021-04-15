@@ -7,8 +7,16 @@ e.g.
 N      , anything -> True
 W (A/T), R (A/G)  -> False
 W      , A        -> True
+
+see also
+
+isequal
+iscompatible
 "
 @inline function isinclusive(x::S, y::S) where {S<:BioSymbol}
+    if x == DNA_Gap || y == DNA_Gap 
+        return false
+    end
     return all(compatbits(x) & compatbits(y) == compatbits(x)) |
            all(compatbits(x) & compatbits(y) == compatbits(y))
 end
@@ -17,7 +25,7 @@ end
 @inline function commonprefix(
     guide::T,
     ref::K,
-    ismatch::Function = isinclusive) where {T <: BioSequence, K <: BioSequence}
+    ismatch::Function = iscompatible) where {T <: BioSequence, K <: BioSequence}
     l = 0
     for (i, g) in enumerate(guide)
         !ismatch(g, ref[i]) && break
@@ -40,7 +48,7 @@ For all human genome we have 304794990 guides NGG, median hamming distance speed
 is 24e-9 seconds -> 7.3 second per query on full linear scan for all
 off-targets.
 "
-function hamming(s1::T, s2::K, ismatch = isinclusive) where {T <: BioSequence, K <: BioSequence}
+function hamming(s1::T, s2::K, ismatch = iscompatible) where {T <: BioSequence, K <: BioSequence}
     return count(!ismatch, s1, s2)
 end
 
@@ -91,7 +99,7 @@ function levenshtein(
     guide::T,
     ref::K,
     k::Int = 4,
-    ismatch::Function = isinclusive) where {T <: BioSequence, K <: BioSequence}
+    ismatch::Function = iscompatible) where {T <: BioSequence, K <: BioSequence}
 
     len1, len2 = length(guide), length(ref)
     # prefix common to both strings can be ignored
@@ -186,7 +194,7 @@ function align(
     guide::T,
     ref::K,
     k::Int = 4, # k has to be > 0
-    ismatch::Function = isinclusive) where {T <: BioSequence, K <: BioSequence}
+    ismatch::Function = iscompatible) where {T <: BioSequence, K <: BioSequence}
 
     len1, len2 = length(guide), length(ref)
     # prefix common to both strings can be ignored
@@ -314,7 +322,7 @@ function prefix_align(
     prefix::K,
     suffix_len::Int,
     k::Int = 4, # asumption that k has to be less than prefix length
-    ismatch::Function = isinclusive) where {T <: BioSequence, K <: BioSequence}
+    ismatch::Function = iscompatible) where {T <: BioSequence, K <: BioSequence}
 
     guide_len, prefix_len = length(guide), length(prefix)
     ref_len = prefix_len + suffix_len 
@@ -399,7 +407,7 @@ end
 function suffix_align(
     suffix::K,
     pA::PrefixAlignment,
-    ismatch::Function = isinclusive) where {K <: BioSequence}
+    ismatch::Function = iscompatible) where {K <: BioSequence}
 
     # we initialize all array with the top values
     v = copy(pA.v)
