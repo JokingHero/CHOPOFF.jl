@@ -40,8 +40,12 @@ export Motif # motif
 export DBInfo, Loc, decode # genomeinfo
 export SketchDB, save, load # persistence
 export deletion_permutations # bitoperations
-export gatherofftargets, gatherofftargets!, estimate, fillrate, iterate_over_offtargets # find_offtargets
+export gatherofftargets, gatherofftargets! # find_offtargets
 export findofftargets_p_chrom, findofftargets_p_refg # find_offtargets_p
-export buildlinearDB, LinearDB, searchlinearDB
+
+# only this should be exported for the users - other functions are overly complicated
+# and not usefull for them anyway but will bloat tutorial etc.
+export buildlinearDB, searchlinearDB # db_linear
+export buildsketchDB, searchsketchDB # db_sketch
 
 end

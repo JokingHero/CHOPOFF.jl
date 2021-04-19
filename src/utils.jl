@@ -28,12 +28,12 @@ end
 
 
 "
-Return pidgeon hole principle minimum required
+Pidgeon hole principle: minimum
 k-mer size that is required for two strings of
 size `len` to be aligned within distance of `d`.
 "
 function minkmersize(len::Int = 20, d::Int = 4)
-    return Int(floor(len / d + 1))
+    return Int(floor(len / (d + 1)))
 end
 
 

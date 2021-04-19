@@ -192,8 +192,12 @@ function buildlinearDB(
     name::String,
     genomepath::String,
     motif::Motif,
-    prefix_len::Int,
-    storagedir::String)
+    storagedir::String,
+    prefix_len::Int = 7)
+
+    if prefix_len <= motif.distance
+        throw("prefix_len $prefix_len is <= to " * string(motif.distance))
+    end
 
     dbi = DBInfo(genomepath, name, motif)
 
@@ -226,7 +230,7 @@ function buildlinearDB(
 
     linDB = LinearDB(dbi, prefixes)
     save(linDB, joinpath(storagedir, "linearDB.bin"))
-    @info "Finished building linearDB in " * storagedir
+    @info "Finished constructing linearDB in " * storagedir
     return storagedir
 end
 

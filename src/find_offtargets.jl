@@ -42,6 +42,24 @@ function Base.findall(pat::BioSequence, seq::BioSequence,
 end
 
 
+function strandedguide(guide, reverse_comp::Bool, extends5::Bool)
+    if extends5 && reverse_comp
+        # CCN ... EXT
+        guide = complement(guide)
+        # becomes GGN ... EXT
+    elseif extends5 && !reverse_comp 
+        # EXT ... NGG
+        guide = reverse(guide)
+        # becomes GGN ... EXT
+    elseif !extends5 && reverse_comp 
+        # EXT ... NAA
+        guide = reverse_complement(guide)
+        # becomes TTA ... EXT
+    end
+    return guide
+end
+
+
 "
 Will push guides found by the dbi.motif into the output as strings.
 Guides are as is for forward strand and reverse complemented when on reverse strand.
@@ -60,11 +78,8 @@ function pushguides!(
         for x in findall(query, chrom)
             guide = LongDNASeq(chrom[x])
             guide = removepam(guide, pam_loci)
-            if reverse_comp
-                guide = reverse_complement(guide)
-            end
-
-            # these guides are all in NNNGG direction (without PAM)
+            # we don't need extensions here
+            guide = strandedguide(guide, reverse_comp, dbi.motif.extends5)
             push!(output, string(guide))
         end
     end
@@ -88,18 +103,16 @@ function pushguides!(
         for x in findall(query, chrom)
             guide = LongDNASeq(chrom[x])
             guide = removepam(guide, pam_loci)
-            if reverse_comp
-                guide = reverse_complement(guide)
-            end
+            guide = strandedguide(guide, reverse_comp, dbi.motif.extends5)
 
             # kmer treatment - just unique count
-            kmers = Vector{String}()
+            #kmers = Set{String}()
             for i in 1:g_len-kmer_size
                 kmer = string(guide[i:(i + kmer_size - 1)])
-                if !(kmer in kmers)
-                    push!(kmers, kmer)
-                    output[kmer] = get(output, kmer, 0) + 1
-                end
+                #if !(kmer in kmers)
+                #    push!(kmers, kmer)
+                output[kmer] = get(output, kmer, 0) + 1
+                #end
             end
         end
     end
@@ -135,7 +148,7 @@ end
 
 
 # SHENANIGANS
-
+#=
 function countofftargets(
     chrom::K,
     query::LongDNASeq,
@@ -227,3 +240,4 @@ function iterate_over_offtargets(guides, all_guides, oft_file)
     close(out)
     return res
 end
+=#
