@@ -1,6 +1,7 @@
 struct SketchDB{T<:Unsigned}
     sketch::CountMinSketch{T}
     kmers::IdDict{String, Int}
+    kt::KmerTransitions
     dbi::DBInfo
 end
 
@@ -67,7 +68,15 @@ function buildsketchDB(
     kmers = IdDict{String, Int}()
     gatherofftargets!(kmers, dbi)
 
-    db = SketchDB(sketch, kmers, dbi)
+    @info "Constructing kmer transition sketch..."
+    kmer_len = 7
+    all_kmers = getkmers(kmer_len)
+    kt = KmerTransitions(all_kmers, zeros(UInt16, length(all_kmers), 4, length_noPAM(dbi.motif) - kmer_len))
+    gatherofftargets!(kt, dbi)
+    @info "Fraction of zeros in Kmer Transition Sketch: " * 
+        string(sum(iszero.(kt.transitions_by_pos))/length(kt.transitions_by_pos))
+    
+    db = SketchDB(sketch, kmers, kt, dbi)
     save(db, joinpath(storagedir, "sketchDB.bin"))
     @info "Finished constructing sketchDB in " * storagedir
     @info "Database fillrate is " * string(round(fillrate(db.sketch); digits = 3))
@@ -95,22 +104,40 @@ function searchsketchDB(
         guides_ = reverse.(guides_)
     end
 
-    kmer_len = length(first(keys(sdb.kmers)))
+    kmer_len = length(first(keys(sdb.kmers))) - 2 #_1
     # TODO check that seq is in line with motif
 
-    res = zeros(Float64, length(guides_), 2)
+    res = zeros(Float64, length(guides_), 5)
     for (i, s) in enumerate(guides_)
-        res[i, 1] += sdb.sketch[string(s)] # 0 distance
+        s = string(s)
+        res[i, 1] += sdb.sketch[s] # 0 distance
 
-        counts = Vector()
-        for j in 1:(length(guides_[i]) - kmer_len) # 0-max_dist
-            push!(counts, get(sdb.kmers, string(guides_[i][j:(j + kmer_len - 1)]), 0))
+        # now the ordered kmer
+        kmers = getkmers(s, kmer_len)
+        okmers = kmer_with_order(kmers)
+        ok_counts = Vector()
+        @info "" * string(sdb.kmers)
+        for ok in okmers
+            @info "$ok"
+            push!(ok_counts, get(sdb.kmers, ok, 0))
         end
-        res[i, 2] = maximum(counts) # sum is worst!, median best
+        @info "$ok_counts"
+        res[i, 2] = sum(ok_counts)
+
+        # now lets see how many 0 distance counts we have in our db
+        res[i, 3] = sdb.kt[s]
+
+        # now distance 1
+        d1 = [sdb.kt[s1] for s1 in comb_of_d(s, 1)]
+        res[i, 4] = sum(d1)
+
+        # now distance 2
+        d2 = [sdb.kt[s2] for s2 in comb_of_d(s, 2)]
+        res[i, 5] = sum(d2)
     end
 
     res = DataFrame(res)
-    col_d = ["CMS", "Kmer"]
+    col_d = ["CMS", "OKmer", "D0", "D1", "D2"]
     rename!(res, col_d)
     res.guide = guides
     sort!(res, col_d)

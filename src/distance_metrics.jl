@@ -523,19 +523,6 @@ end
 
 ## BITPARALEL
 
-function get_idx(letter::Char)
-    if letter == 'A'
-        return 1
-    elseif letter == 'C'
-        return 2
-    elseif letter == 'T'
-        return 3
-    elseif letter == 'G'
-        return 4
-    end
-end
-
-
 "
 Compute levenshtein distance.
 
@@ -571,7 +558,7 @@ function levenshtein_bp(guide::String, ref::String, k::Int = 4)
     bit_alphabet = zeros(UInt64, 4)
 
     @inbounds for i in 1:m
-        bit_alphabet[get_idx(guide[i])] |= UInt64(1) << (i - 1)
+        bit_alphabet[base_to_idx(guide[i])] |= UInt64(1) << (i - 1)
     end
 
     vp = (UInt64(1) << m) - UInt64(1)
@@ -579,7 +566,7 @@ function levenshtein_bp(guide::String, ref::String, k::Int = 4)
     score = m
 
     @inbounds for pos in 1:n
-        x = bit_alphabet[get_idx(ref[pos])] | vn
+        x = bit_alphabet[base_to_idx(ref[pos])] | vn
         d0 = ((vp + (x & vp)) ⊻ vp) | x
 
         hn = vp & d0

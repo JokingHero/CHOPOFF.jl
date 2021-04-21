@@ -18,6 +18,7 @@ using DataFrames
 import Base.findall
 
 include("utils.jl")
+include("kmers.jl")
 include("distance_metrics.jl")
 include("motif.jl")
 include("db_info.jl")
@@ -33,7 +34,7 @@ include("db_tree.jl")
 include("persistence.jl")
 
 # TODO only export small interaface for building databases and interactions with it
-export getSeq, file_read, file_write, file_add, bucket_path, deleterange, getkmers, minkmersize, getkgrams # utils
+export getSeq, file_read, file_write, file_add, bucket_path, deleterange, getkmers, minkmersize, getkgrams, comb_of_d # utils
 export isinclusive, commonprefix, hamming, levenshtein, align, Aln, PrefixAlignment, pa_sa
 export levenshtein_bp, suffix_align, prefix_align # distance_metrics
 export Motif # motif

@@ -93,8 +93,8 @@ function pushguides!(
     chrom::K,
     reverse_comp::Bool) where {K<:BioSequence}
 
-    query = reverse_comp ? dbi.motif.fwd : dbi.motif.rve
-    pam_loci = reverse_comp ? dbi.motif.pam_loci_fwd : dbi.motif.pam_loci_rve
+    query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd
+    pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
 
     g_len = length(query) - length(collect(vcat(pam_loci...)))
     kmer_size = minkmersize(g_len, dbi.motif.distance)
@@ -105,14 +105,37 @@ function pushguides!(
             guide = removepam(guide, pam_loci)
             guide = strandedguide(guide, reverse_comp, dbi.motif.extends5)
 
-            # kmer treatment - just unique count
-            #kmers = Set{String}()
-            for i in 1:g_len-kmer_size
-                kmer = string(guide[i:(i + kmer_size - 1)])
-                #if !(kmer in kmers)
-                #    push!(kmers, kmer)
+            kmers = kmer_with_order(getkmers(string(guide), kmer_size))
+            for kmer in kmers
                 output[kmer] = get(output, kmer, 0) + 1
-                #end
+            end
+        end
+    end
+    return output
+end
+
+
+function pushguides!(
+    output::KmerTransitions,
+    dbi::DBInfo,
+    chrom::K,
+    reverse_comp::Bool) where {K<:BioSequence}
+
+    query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd
+    pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
+
+    g_len = length(query) - length(collect(vcat(pam_loci...)))
+    kmer_size = length(first(output.kmers))
+
+    if length(query) != 0
+        for x in findall(query, chrom)
+            guide = LongDNASeq(chrom[x])
+            guide = removepam(guide, pam_loci)
+            guide = strandedguide(guide, reverse_comp, dbi.motif.extends5)
+            # kmer treatment - just unique count
+            kmers = getkmers(string(guide), kmer_size)
+            for i in 1:(length(kmers) - 1)
+                add!(output, kmers[i], kmers[i + 1], i, 1)
             end
         end
     end

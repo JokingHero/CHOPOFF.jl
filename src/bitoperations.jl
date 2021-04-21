@@ -1,15 +1,3 @@
-## For some reason BioSequences does not support 
-## serialization of Mer, so we need to implement it
-import Base.write
-function write(io::IOStream, mer::Mer{DNAAlphabet{2}, K}) where K
-    write(io, BioSequences.encoded_data(mer))
-end
-
-import Base.read
-function read(io::IOStream, ::Type{Mer{DNAAlphabet{2}, K}}) where K
-    return Mer{DNAAlphabet{2}, K}(read(io, UInt64))
-end
-
 # using Combinatorics
 # using BenchmarkTools
 # using BioSymbols
