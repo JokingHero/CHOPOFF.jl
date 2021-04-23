@@ -331,7 +331,7 @@ files which will have same name as detail, but with a sequence prefix. Final fil
 will contain all those intermediate files. Leave `detail` empty if you are only 
 interested in off-target counts returned by the searchDB.
 "
-function searchlinearDB(storagedir::String, dist::Int, guides::Vector{LongDNASeq}; detail::String = "")
+function searchlinearDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")
     ldb = load(joinpath(storagedir, "linearDB.bin"))
     prefixes = collect(ldb.prefixes)
     if dist > length(first(prefixes)) || dist > ldb.dbi.motif.distance

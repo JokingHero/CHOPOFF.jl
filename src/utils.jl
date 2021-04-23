@@ -10,6 +10,19 @@ function getSeq(n = 20, letters = ['A', 'C', 'G', 'T'])
 end
 
 
+function base_to_idx(letter::Char)
+    if letter == 'A'
+        return 1
+    elseif letter == 'C'
+        return 2
+    elseif letter == 'T'
+        return 3
+    elseif letter == 'G'
+        return 4
+    end
+end
+
+
 "
 Get file extension from the string path `s`.
 "
@@ -95,6 +108,16 @@ function comb_of_d(s::String, d::Int = 1, alphabet::Vector{Char} = ['A', 'C', 'T
     allcomb = collect(allcomb)
     dist = [levenshtein(LongDNASeq(s), LongDNASeq(x), d) == d for x in allcomb]
     return allcomb[dist]
+end
+
+
+"
+Pidgeon hole principle: minimum
+k-mer size that is required for two strings of
+size `len` to be aligned within distance of `d`.
+"
+function minkmersize(len::Int = 20, d::Int = 4)
+    return Int(floor(len / (d + 1)))
 end
 
 
