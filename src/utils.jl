@@ -5,7 +5,7 @@ safeadd(x::T, y::T) where {T} = ifelse(x + y ≥ x, x + y, typemax(T))
 "
 Randomize sequence of length `n` from `letters`.
 "
-function getSeq(n = 20, letters = ['A', 'C', 'G', 'T'])
+function getseq(n = 20, letters = ['A', 'C', 'G', 'T'])
     return LongDNASeq(randstring(letters, n))
 end
 
@@ -19,6 +19,8 @@ function base_to_idx(letter::Char)
         return 3
     elseif letter == 'G'
         return 4
+    else
+        throw("Not ACTG character.")
     end
 end
 
@@ -57,57 +59,89 @@ function smallestutype(max_value::Unsigned)
 end
 
 
-"
-Create a list of possible strings of distance d
-toward the string s. Don't include combinations 
-which are smaller than d.
-'-' in alphabet will be treated as indel.
 
-TODO test this extensively...
 "
-function comb_of_d(s::String, d::Int = 1, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
+This is a helper function, it can generate distances larger than 1!
+"
+function comb_of_d1(s::String, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
     s_ = collect(s)
     allcomb = Set{String}()
-    idx_in_s = combinations(1:length(s), d)
-    alphabet_comb = multiset_permutations(repeat(vcat(alphabet, ['-']), d), d)
+    idx_in_s = combinations(1:length(s), 1)
+    alphabet_ = vcat(alphabet, ['-'])
     for i in idx_in_s
-        for j in alphabet_comb
-            if all(s_[i] .!= j)
-                is_gap = j .== '-'
-                i_not_gap = i[.!is_gap]
-                i_gap = i[is_gap]
-                if any(is_gap)
-                    scopy = copy(s_)
-                    scopy[i_not_gap] = j[.!is_gap]
-                    alphabet_comb_for_gap = multiset_permutations(repeat(alphabet, length(i_gap)), length(i_gap))
-
-                    scopy_new = copy(scopy)
-                    deleteat!(scopy_new, i_gap)
-                    for k in alphabet_comb_for_gap
-                        
+        for j in alphabet_
+            if s_[i[1]] != j
+                if j == '-'
+                    scopy_new = copy(s_)
+                    deleteat!(scopy_new, i[1])
+                    for k in alphabet
                         # gap in the s -> we insert base at the index and truncate to the size
-                        scopy_s_ = copy(scopy)
-                        for (w, kw) in enumerate(k)
-                            insert!(scopy_s_, (i_gap[w] + w - 1), kw)
-                        end
+                        scopy_s_ = copy(s_)
+                        insert!(scopy_s_, i[1], k)
                         push!(allcomb, join(scopy_s_[1:length(s)]))
                         # gap in the new string -> we delete base at the index and add base at the end
                         scopy_new_ = copy(scopy_new)
                         append!(scopy_new_, k)
                         push!(allcomb, join(scopy_new_))
+                        # same as above but add base at the begining
+                        scopy_new_ = copy(scopy_new)
+                        prepend!(scopy_new_, k)
+                        push!(allcomb, join(scopy_new_))
                     end
                 else
                     scopy = copy(s_)
-                    scopy[i] = j
+                    scopy[i[1]] = j
                     push!(allcomb, join(scopy))
                 end
             end
         end
     end
     # for now we need this - suboptimal method
-    allcomb = collect(allcomb)
-    dist = [levenshtein(LongDNASeq(s), LongDNASeq(x), d) == d for x in allcomb]
-    return allcomb[dist]
+    #allcomb = collect(allcomb)
+    #dist = [levenshtein(LongDNASeq(s), LongDNASeq(x), 1) == 1 for x in allcomb]
+    return allcomb #[dist]
+end
+
+
+function is_within_d(s::LongDNASeq, x::LongDNASeq, d::Int)
+    dist = levenshtein(s, x, d)
+    if dist == d
+        return true
+
+    # add corner cases where we can have e.g. d = 1
+    # GGN ACTGA 
+    # GGNGACTGA
+    # which gives reference guide of GACTG 
+    # which is normally dist 2        ACTGA
+    # but is valid as reference also has A there, unfortunatelly
+    # we have to assume it might be the case and we count those off-targets
+    elseif dist - 1 == d
+        return levenshtein(s[1:end-1], x, d) == d
+    end
+    return false
+end
+
+"
+Create a list of possible strings of levenshtein distance d
+toward the string s. Don't include combinations 
+which are smaller and larger than d, but also include 
+corner cases.
+Assume PAM inside s is on the left!
+'-' in alphabet will be treated as indel, don't use it.
+"
+function comb_of_d(s::String, d::Int = 1, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
+    comb = comb_of_d1(s, alphabet)
+    for i in 1:(d-1)
+        new_comb = Set{String}()
+        for el in comb
+            new_comb = union(new_comb, comb_of_d1(el, alphabet))
+        end
+        comb = new_comb
+    end
+
+    comb = collect(comb)
+    dist = [is_within_d(LongDNASeq(s), LongDNASeq(x), d) for x in comb]
+    return comb[dist]
 end
 
 
@@ -121,55 +155,9 @@ function minkmersize(len::Int = 20, d::Int = 4)
 end
 
 
-####### OLD functions
-"
-Write vector to file in binary format. This is being
-serialized which means it can be read back only by the
-same version of julia. Will remove file if it exists
-before writing.
-"
-function file_write(write_path::String, vec::Vector)
-    # make sure to delete content of write path first
-    rm(write_path, force = true)
-    io = open(write_path, "w")
-    s = Serializer(io)
-    for i in vec
-        serialize(s, i)
-    end
-    close(io)
-    return nothing
-end
-
-"
-Read serialized vector from binary file. It can be read
-back only by the same version of julia as when used during saving.
-"
-function file_read(read_path::String)
-    x = Vector()
-    io = open(read_path, "r")
-    s = Serializer(io)
-    while !eof(io)
-        push!(x, deserialize(s))
-    end
-    close(io)
-    return x
-end
-
-"
-Append value to file in binary format. This is being
-serialized which means it can be read back only by the
-same version of julia.
-"
-function file_add(write_path::String, value)
-    io = open(write_path, "a")
-    s = Serializer(io)
-    serialize(s, value)
-    close(io)
-end
-
 "
     Will try to find value in `x` that will allow for almost equal
-    split of values into buckets.
+    split of values into buckets/leafs.
 "
 function balance(x::Vector{Int})
     if isempty(x)
@@ -180,13 +168,4 @@ function balance(x::Vector{Int})
     counts = [count(y -> y == i, x) for i in uniq]
     balance = argmin(abs.([sum(counts[1:i]) - sum(counts[i:end]) for i = 1:length(counts)]))
     return uniq[argmin(abs.(uniq .- uniq[balance]))]
-end
-
-"
-Provides with the bucket path for guides and distances to parent.
-"
-function bucket_path(dir::String, idx::Int)
-    gp = joinpath(dir, string("bucket_", idx, "_g.bin"))
-    dp = joinpath(dir, string("bucket_", idx, "_d.bin"))
-    return gp, dp
 end

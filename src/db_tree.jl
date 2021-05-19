@@ -5,8 +5,8 @@ This guide also contains a radius and pointers
 to other Nodes that are inside and outside the 
 radius.
 "
-struct Node{T <: Int}
-    suffix::LongSequence{DNAAlphabet{4}} # Mer{DNAAlphabet{2}, T}
+struct Node
+    suffix::LongSequence{DNAAlphabet{4}}
     loci_idx::LociRange
     radius::UInt8
     inside::UInt32
@@ -18,161 +18,93 @@ end
 Final SuffixVPtreeDB unit that contains all guides from
 all chromosomes that start with the `prefix` and their locations.
 "
-struct SuffixVPtreeDB
+struct SuffixTreeDB
     prefix::LongSequence{DNAAlphabet{4}}
     nodes::Vector{Node}
     loci::Vector{Loc}
 end
 
 
-struct VPtreeDB
+function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}}, d::Dict, ext::Int)
+    guides = collect(keys(d))
+    loci = collect(values(d))
+    lengths = length.(loci)
+    cs = cumsum(lengths)
+    loci = reduce(vcat, loci)
+    stops = cs
+    starts = stops .- lengths .+ 1
+    loci_range = LociRange.(starts, stops)
+    # construct tree nodes
+    # we want consecutive guides to be the ones that are splitting
+    # this is the order we want for node array
+    # we are not guaranteed that a node will have leafs
+    #     1
+    #  \     \
+    #  2     3
+    # \  \  \  \
+    # 4  5  6  7
+    #  \  \ \\ \
+    nodes = Vector{Any}([Pair.(guides, loci_range)])
+    g_len = length(guides[1]) - ext
+    i = 1
+
+    while !isnothing(i)
+        # take leftmost from queue that is not a Node
+        leaves = nodes[i]
+        #@info "leaves: $leaves"
+        #parent = popat!(leaves, rand(1:length(leaves)))
+        #@info "parent: $parent"
+        d_to_p = Base.map(g -> levenshtein(g.first[1:g_len], parent.first, g_len), leaves)
+        #@info "leaves: $d_to_p"
+        if length(d_to_p) != 0
+            radius = balance(d_to_p)
+            #@info "radius: $radius"
+            inside = leaves[d_to_p .<= radius]
+            outside = leaves[d_to_p .> radius]
+            # add to the queue future left and right
+            if length(inside) > 0
+                push!(nodes, inside)
+                inside_idx = UInt32(length(nodes))
+            else
+                inside_idx = UInt32(0)
+            end
+            if length(outside) > 0
+                push!(nodes, outside)
+                outside_idx = UInt32(length(nodes))
+            else
+                outside_idx = UInt32(0)
+            end
+            nodes[i] = Node(parent.first, parent.second, UInt8(radius), inside_idx, outside_idx)
+        else
+            nodes[i] = Node(parent.first, parent.second, UInt8(0), UInt32(0), UInt32(0))
+        end
+        #sleep(60)
+        i = findfirst(x -> typeof(x) != Node, nodes)
+    end
+    nodes = Vector{Node}(nodes)
+    return SuffixTreeDB(prefix, nodes, loci)
+end
+
+
+struct TreeDB
     dbi::DBInfo
     prefixes::Set{LongSequence{DNAAlphabet{4}}}
 end
 
 
-" 
-Extract 3' extension of the guide:
-TTN ... EXT
-CCN ... EXT
 "
-function getExt3(chrom::K, chrom_max::Int, ext_start::Int, dist::Int) where K <: BioSequence
-    ext_end = ext_start + dist
-    if ext_start > chrom_max
-        ext = LongDNASeq(repeat("-", dist))
-    elseif ext_end > chrom_max
-        ext = chrom[ext_start:chrom_max] 
-        ext = ext * LongDNASeq(repeat("-", dist - length(ext)))
-    else
-        ext = chrom[ext_start:ext_end]
-    end
-    return ext
-end
-
-" 
-Extract 5' extension of the guide:
-EXT ... NAA
-EXT ... NGG
-"
-function getExt5(chrom::K, ext_end::Int, dist::Int)  where K <: BioSequence
-    ext_start = ext_end - dist + 1
-    if ext_end < 1
-        ext = LongDNASeq(repeat("-", dist))
-    elseif ext_start < 1
-        ext = chrom[1:ext_end]
-        ext = LongDNASeq(repeat("-", dist - length(ext))) * ext
-    else
-        ext = chrom[ext_start:ext_end]
-    end
-    return ext
-end
-
-
-"
-Prefix is the length of our common part between guides!
-Guide reversal happens here too, so that alignment is more
-convienient.
-"
-function pushguides!(
-    output::Vector{PrefixDB},
-    dbi::DBInfo,
-    chrom::K,
-    chrom_name::String,
-    reverse_comp::Bool,
-    prefix_len::Int) where {K<:BioSequence}
-
-    query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd 
-    pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
-
-    g_len = length(query) - length(pam_loci)
-    suffix_len = g_len - prefix_len
-
-    if length(query) != 0
-        chrom_max = lastindex(chrom)
-
-        for x in findall(query, chrom)
-            guide = LongDNASeq(chrom[x])
-            guide = removepam(guide, pam_loci)
-            # add extension
-            if dbi.motif.extends5 && reverse_comp
-                # CCN ... EXT
-                guide = guide * getExt3(chrom, chrom_max, last(x) + 1, dbi.motif.distance)
-                guide = complement(guide)
-                pos_ = first(x)
-                # becomes GGN ... EXT
-            elseif dbi.motif.extends5 && !reverse_comp 
-                # EXT ... NGG
-                guide = getExt5(chrom, first(x) - 1, dbi.motif.distance) * guide
-                guide = reverse(guide)
-                pos_ = last(x)
-                # becomes GGN ... EXT
-            elseif !dbi.motif.extends5 && reverse_comp 
-                # EXT ... NAA
-                guide = getExt5(chrom, first(x) - 1, dbi.motif.distance) * guide
-                guide = reverse_complement(guide)
-                pos_ = last(x)
-                # becomes TTA ... EXT
-            else #!dbi.motif.extends5 && !reverse_comp
-                # TTN ... EXT
-                guide = guide * getExt3(chrom, chrom_max, last(x) + 1, dbi.motif.distance)
-                pos_ = first(x)
-            end
-
-            gprefix = guide[1:prefix_len]
-            gsuffix = guide[prefix_len+1:end]
-            chrom_name_ = convert(dbi.chrom_type, findfirst(isequal(chrom_name), dbi.chrom))
-            pos_ = convert(dbi.pos_type, pos_)
-            loc = Loc(chrom_name_, pos_, !reverse_comp)
-
-            prefix_idx = findfirst(x -> gprefix == x.prefix, output)
-
-            if prefix_idx !== nothing
-                if haskey(output[prefix_idx].suffix, gsuffix)
-                    push!(output[prefix_idx].suffix[gsuffix], loc)
-                else
-                    output[prefix_idx].suffix[gsuffix] = [loc]
-                end
-            else
-                push!(output, PrefixDB(gprefix, Dict(gsuffix => [loc])))
-            end
-        end
-    end
-    return output
-end
-
-
-function do_linear_chrom(chrom_name::String, chrom::K, dbi::DBInfo, prefix_len::Int, storagedir::String) where K<:BioSequence
-    @info "Working on $chrom_name"
-    output = Vector{PrefixDB}()
-    pushguides!(output, dbi, chrom, chrom_name, false, prefix_len)
-    pushguides!(output, dbi, chrom, chrom_name, true, prefix_len)
-    # save small files as it is to large to store them in memory
-    for pdb in output
-        save(pdb, joinpath(storagedir, string(pdb.prefix) * "_" * chrom_name * ".bin"))
-    end
-    return [x.prefix for x in output]
-end
-
-
-function getseq(isfa, record)
-    return isfa ? FASTA.sequence(record) : TwoBit.sequence(record)
-end
-
-
-"
-Build a DB of offtargets for the given `motif`,
-DB groups off-targets by their prefixes.
+Build a Vantage Point tree DB of offtargets for the given `motif`,
+DB groups off-targets by their prefixes, each prefix has its own
+Vantage Point tree.
 
 Will return a path to the database location, same as `storagedir`.
-When this database is used for the guide off-target scan it is similar 
-to linear in performance, hence the name.
 
 There is an optimization that if the alignment becomes imposible against
 the prefix we don't search the off-targets grouped inside the prefix.
 Therefore it is advantageous to select larger prefix than maximum 
 search distance, however in that case number of files also grows.
 "
-function buildtreeDB(
+function build_treeDB(
     name::String,
     genomepath::String,
     motif::Motif,
@@ -190,7 +122,7 @@ function buildtreeDB(
     # For each chromsome paralelized we build database
     ref = open(dbi.filepath, "r")
     reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
-    prefixes = Base.map(x -> do_linear_chrom(x, getseq(dbi.is_fa, reader[x]), dbi, prefix_len, storagedir), dbi.chrom)
+    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.is_fa, reader[x]), dbi, prefix_len, storagedir), dbi.chrom)
     close(ref)
 
     prefixes = Set(vcat(prefixes...))
@@ -208,7 +140,7 @@ function buildtreeDB(
                 rm(p)
             end
         end
-        sdb = to_suffix(prefix, merged)
+        sdb = to_suffixtree(prefix, merged, motif.distance)
         save(sdb, joinpath(storagedir, string(prefix) * ".bin"))
     end
 
@@ -219,34 +151,24 @@ function buildtreeDB(
 end
 
 
-function search_prefix(
+function search_prefixtree(
     prefix::LongSequence{DNAAlphabet{4}},
     dist::Int,
     dbi::DBInfo,
     detail::String,
     guides::Vector{LongDNASeq},
     storagedir::String)
-
     
     res = zeros(Int, length(guides), dist + 1)
-    # CGCATG-CCATCACAGCAAGG - guide
-    # CGCATGACCATCAtAGCAAtG AGG - ref
-    #=if string(prefix) == "GTAACGA"
-        @info "Working on $prefix"
-        println(decode(Loc{UInt8,UInt32}(0x08, 0x0000440c, true), dbi))
-    else
-        return res
-    end =#
-
     if detail != ""
         detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
         detail_file = open(detail_path, "w")
     end
 
     # prefix alignment against all the guides
-    suffix_len = length_noPAM(dbi.motif) + dbi.motif.distance - length(prefix)
-    prefix_aln = Base.map(g -> prefix_align(g, prefix, suffix_len, dist), guides)
-    isfinal = Base.map(x -> x.isfinal, prefix_aln)
+    len_noPAM = length_noPAM(dbi.motif)
+    suffix_len =  len_noPAM + dbi.motif.distance - length(prefix)
+    isfinal = Base.map(g -> prefix_align(g, prefix, suffix_len, dist).isfinal, guides)
 
     if all(isfinal)
         return res
@@ -255,35 +177,40 @@ function search_prefix(
     # if any of the guides requires further alignment 
     # load the SuffixDB and iterate
     sdb = load(joinpath(storagedir, string(prefix) * ".bin"))
-    #@info "$sdb"
-
     for (i, g) in enumerate(guides)
         if !isfinal[i]
-            for (j, suffix) in enumerate(sdb.suffix)
-                suffix_aln = suffix_align(suffix, prefix_aln[i])
-                if suffix_aln.dist <= dist
-                    sl_idx = sdb.suffix_loci_idx[j]
-                    res[i, suffix_aln.dist + 1] += length(sl_idx)
+            queue = Vector{UInt32}([1])
+            while length(queue) > 0
+                node = sdb.nodes[popfirst!(queue)]
+                dist_i = levenshtein(g, prefix * node.suffix, length(g)) # TODO adjust k, merge prefix-suffix in node?
+                if dist_i <= dist
+                    res[i, dist_i + 1] += length(node.loci_idx)
                     if detail != ""
-                        offtargets = sdb.loci[sl_idx.start:sl_idx.stop]
-                        #@info "$offtargets"
-                        #show(sdb.loci)
+                        aln = align(g, prefix * node.suffix, length(g))
+                        offtargets = sdb.loci[node.loci_idx.start:node.loci_idx.stop]
                         if dbi.motif.extends5
-                            guide_stranded = reverse(prefix_aln[i].guide)
-                            aln_guide = reverse(suffix_aln.guide)
-                            aln_ref = reverse(suffix_aln.ref)
+                            guide_stranded = reverse(g)
+                            aln_guide = reverse(aln.guide)
+                            aln_ref = reverse(aln.ref)
                         else
-                            guide_stranded = prefix_aln[i].guide
-                            aln_guide = suffix_aln.guide
-                            aln_ref = suffix_aln.ref
+                            guide_stranded = g
+                            aln_guide = aln.guide
+                            aln_ref = aln.ref
                         end
                         noloc = string(guide_stranded) * "," * aln_guide * "," * 
-                                aln_ref * "," * string(suffix_aln.dist) * ","
+                                aln_ref * "," * string(aln.dist) * ","
                         for offt in offtargets
-                            #@info "$offt"
                             write(detail_file, noloc * decode(offt, dbi) * "\n")
                         end
                     end
+                end
+
+                if ((dist_i - dist - 1) <= node.radius) && (node.inside != 0)
+                    push!(queue, node.inside)
+                end
+    
+                if ((dist_i + dist + 1) > node.radius)  && (node.outside != 0)
+                    push!(queue, node.outside)
                 end
             end
         end
@@ -291,7 +218,6 @@ function search_prefix(
 
     if detail != ""
         close(detail_file)
-        @info "closing $prefix"
     end
     return res
 end
@@ -315,7 +241,7 @@ files which will have same name as detail, but with a sequence prefix. Final fil
 will contain all those intermediate files. Leave `detail` empty if you are only 
 interested in off-target counts returned by the searchDB.
 "
-function searchtreeDB(storagedir::String, dist::Int, guides::Vector{LongDNASeq}; detail::String = "")
+function search_treeDB(storagedir::String, guides::Vector{LongDNASeq},  dist::Int = 4; detail::String = "")
     ldb = load(joinpath(storagedir, "treeDB.bin"))
     prefixes = collect(ldb.prefixes)
     if dist > length(first(prefixes)) || dist > ldb.dbi.motif.distance
@@ -331,7 +257,7 @@ function searchtreeDB(storagedir::String, dist::Int, guides::Vector{LongDNASeq};
 
     res = zeros(Int, length(guides_), dist + 1)
     for p in prefixes
-        res += search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storagedir)
+        res += search_prefixtree(p, dist, ldb.dbi, dirname(detail), guides_, storagedir)
     end
     
     if detail != ""
@@ -356,4 +282,90 @@ function searchtreeDB(storagedir::String, dist::Int, guides::Vector{LongDNASeq};
     res.guide = guides
     sort!(res, col_d)
     return res
+end
+
+
+# Visualize the tree
+function shiftdisp(f::String, o::String, xs::Vector{String})
+    rep = repeat([o], length(xs) - 1)
+    ch = vcat(f, rep)
+    return map(*, ch, xs)
+end
+
+
+function draw_subtrees(tree::SuffixTreeDB, idx::Vector{UInt32}, isinside::Vector{Bool}, levels::Int)
+    if length(idx) != 0
+        if length(idx) == 1
+            return vcat(["│"], shiftdisp("└─ ", "   ", draw_tree(tree, idx[1], isinside[1], levels)))
+        else
+            return vcat(
+                ["│"],
+                shiftdisp("├─ ", "│  ", draw_tree(tree, idx[1], isinside[1], levels)),
+                draw_subtrees(tree, idx[2:end], isinside[2:end], levels),
+            )
+        end
+    else
+        return Vector{String}()
+    end
+end
+
+
+function draw_tree(tree::SuffixTreeDB, idx::UInt32, inside::Union{Nothing,Bool}, levels::Int)
+    node_pic = "☀ "
+    if !isnothing(inside)
+            node_pic = inside ? "◐ " : "◑ "
+    end
+    n = node_pic * string(idx) * " r:" * string(tree.nodes[idx].radius)
+    if levels == 0
+        return [n]
+    else
+        levels = levels - 1
+        node = tree.nodes[idx]
+        leaves = Vector{UInt32}()
+        isinside = Vector{Bool}()
+        if node.inside != UInt32(0)
+            push!(leaves, node.inside)
+            push!(isinside, true)
+        end
+        if node.outside != UInt32(0)
+            push!(leaves, node.outside)
+            push!(isinside, false)
+        end
+
+        subtree = draw_subtrees(tree, leaves, isinside, levels)
+        return vcat([n], subtree)
+    end
+end
+
+
+function print_treeDB(tree::SuffixTreeDB, start_node::Int = 1, levels::Int = 3, io::IO = stdout)
+    println(
+        io,
+        "Nodes/Guides:",
+        length(tree.nodes),
+        " Loci:",
+        length(tree.loci))
+
+    if start_node > length(tree.nodes) || get(io, :compact, false)
+        return nothing
+    end
+
+    println(io, "\n" * join(draw_tree(tree, UInt32(start_node), nothing, levels), "\n"))
+    return nothing
+end
+
+
+function inspect_treeDB(storagedir::String; levels::Int = 5, inspect_prefix::String = "")
+    ldb = load(joinpath(storagedir, "treeDB.bin"))
+    prefixes = collect(ldb.prefixes)
+    println("Database Info: \n")
+    println(ldb.dbi)
+    println("\n prefixes: " * string(length(prefixes)) * "\n")
+    if inspect_prefix == ""
+        inspect_prefix = rand(prefixes)
+    end
+    sdb = load(joinpath(storagedir, string(inspect_prefix) * ".bin"))
+    println("Tree at prefix: " * string(inspect_prefix) * "\n")
+    print_treeDB(sdb, 1, levels)
+    return nothing
 end

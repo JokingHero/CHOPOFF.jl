@@ -40,7 +40,7 @@ function makeemptysketch(
     # we compute how many hashing functions we need
     depth = ceil(log(1/probability_of_error))
     # estimate our error E based on the max_len
-    width = ceil(Base.ℯ / (1/(est_len)))
+    width = ceil(Base.ℯ / (1/(est_len))) + 1
     sketch = CountMinSketch{max_count_type}(width, depth)
     return sketch
 end
@@ -49,7 +49,7 @@ end
 "
 Build Count-Min-Sketch and kmer count database.
 "
-function buildsketchDB(
+function build_sketchDB(
     name::String, 
     genomepath::String, 
     motif::Motif,
@@ -92,7 +92,7 @@ are estimations of offtarget counts in the genome.
 If CMS column is 0, it is guaranteed this guide has 
 no 0-distance off-targets in the genome!
 "
-function searchsketchDB(
+function search_sketchDB(
     storagedir::String,
     guides::Vector{LongDNASeq},
     dist::Int = 2)

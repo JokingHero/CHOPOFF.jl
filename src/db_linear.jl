@@ -1,21 +1,3 @@
-struct LociRange
-    start::UInt32
-    stop::UInt32
-end
-
-import Base.length
-@inline length(x::LociRange) = x.stop - x.start + 1
-
-"
-Temporary structure that is build per chromosome, per prefix.
-Slow to save/load.
-"
-struct PrefixDB
-    prefix::LongSequence{DNAAlphabet{4}}
-    suffix::Dict{LongSequence{DNAAlphabet{4}}, Vector{Loc}}
-end
-
-
 "
 Final SuffixDB unit that contains all guides from
 all chromosomes that start with the `prefix` and their locations.
@@ -47,134 +29,6 @@ struct LinearDB
 end
 
 
-" 
-Extract 3' extension of the guide:
-TTN ... EXT
-CCN ... EXT
-"
-function getExt3(chrom::K, chrom_max::Int, ext_start::Int, dist::Int) where K <: BioSequence
-    ext_end = ext_start + dist
-    if ext_start > chrom_max
-        ext = LongDNASeq(repeat("-", dist))
-    elseif ext_end > chrom_max
-        ext = chrom[ext_start:chrom_max] 
-        ext = ext * LongDNASeq(repeat("-", dist - length(ext)))
-    else
-        ext = chrom[ext_start:ext_end]
-    end
-    return ext
-end
-
-" 
-Extract 5' extension of the guide:
-EXT ... NAA
-EXT ... NGG
-"
-function getExt5(chrom::K, ext_end::Int, dist::Int)  where K <: BioSequence
-    ext_start = ext_end - dist + 1
-    if ext_end < 1
-        ext = LongDNASeq(repeat("-", dist))
-    elseif ext_start < 1
-        ext = chrom[1:ext_end]
-        ext = LongDNASeq(repeat("-", dist - length(ext))) * ext
-    else
-        ext = chrom[ext_start:ext_end]
-    end
-    return ext
-end
-
-
-"
-Prefix is the length of our common part between guides!
-Guide reversal happens here too, so that alignment is more
-convienient.
-"
-function pushguides!(
-    output::Vector{PrefixDB},
-    dbi::DBInfo,
-    chrom::K,
-    chrom_name::String,
-    reverse_comp::Bool,
-    prefix_len::Int) where {K<:BioSequence}
-
-    query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd 
-    pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
-
-    g_len = length(query) - length(pam_loci)
-    suffix_len = g_len - prefix_len
-
-    if length(query) != 0
-        chrom_max = lastindex(chrom)
-
-        for x in findall(query, chrom)
-            guide = LongDNASeq(chrom[x])
-            guide = removepam(guide, pam_loci)
-            # add extension
-            if dbi.motif.extends5 && reverse_comp
-                # CCN ... EXT
-                guide = guide * getExt3(chrom, chrom_max, last(x) + 1, dbi.motif.distance)
-                guide = complement(guide)
-                pos_ = first(x)
-                # becomes GGN ... EXT
-            elseif dbi.motif.extends5 && !reverse_comp 
-                # EXT ... NGG
-                guide = getExt5(chrom, first(x) - 1, dbi.motif.distance) * guide
-                guide = reverse(guide)
-                pos_ = last(x)
-                # becomes GGN ... EXT
-            elseif !dbi.motif.extends5 && reverse_comp 
-                # EXT ... NAA
-                guide = getExt5(chrom, first(x) - 1, dbi.motif.distance) * guide
-                guide = reverse_complement(guide)
-                pos_ = last(x)
-                # becomes TTA ... EXT
-            else #!dbi.motif.extends5 && !reverse_comp
-                # TTN ... EXT
-                guide = guide * getExt3(chrom, chrom_max, last(x) + 1, dbi.motif.distance)
-                pos_ = first(x)
-            end
-
-            gprefix = guide[1:prefix_len]
-            gsuffix = guide[prefix_len+1:end]
-            chrom_name_ = convert(dbi.chrom_type, findfirst(isequal(chrom_name), dbi.chrom))
-            pos_ = convert(dbi.pos_type, pos_)
-            loc = Loc(chrom_name_, pos_, !reverse_comp)
-
-            prefix_idx = findfirst(x -> gprefix == x.prefix, output)
-
-            if prefix_idx !== nothing
-                if haskey(output[prefix_idx].suffix, gsuffix)
-                    push!(output[prefix_idx].suffix[gsuffix], loc)
-                else
-                    output[prefix_idx].suffix[gsuffix] = [loc]
-                end
-            else
-                push!(output, PrefixDB(gprefix, Dict(gsuffix => [loc])))
-            end
-        end
-    end
-    return output
-end
-
-
-function do_linear_chrom(chrom_name::String, chrom::K, dbi::DBInfo, prefix_len::Int, storagedir::String) where K<:BioSequence
-    @info "Working on $chrom_name"
-    output = Vector{PrefixDB}()
-    pushguides!(output, dbi, chrom, chrom_name, false, prefix_len)
-    pushguides!(output, dbi, chrom, chrom_name, true, prefix_len)
-    # save small files as it is to large to store them in memory
-    for pdb in output
-        save(pdb, joinpath(storagedir, string(pdb.prefix) * "_" * chrom_name * ".bin"))
-    end
-    return [x.prefix for x in output]
-end
-
-
-function getseq(isfa, record)
-    return isfa ? FASTA.sequence(record) : TwoBit.sequence(record)
-end
-
-
 "
 Build a DB of offtargets for the given `motif`,
 DB groups off-targets by their prefixes.
@@ -188,7 +42,7 @@ the prefix we don't search the off-targets grouped inside the prefix.
 Therefore it is advantageous to select larger prefix than maximum 
 search distance, however in that case number of files also grows.
 "
-function buildlinearDB(
+function build_linearDB(
     name::String,
     genomepath::String,
     motif::Motif,
@@ -206,7 +60,7 @@ function buildlinearDB(
     # For each chromsome paralelized we build database
     ref = open(dbi.filepath, "r")
     reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
-    prefixes = Base.map(x -> do_linear_chrom(x, getseq(dbi.is_fa, reader[x]), dbi, prefix_len, storagedir), dbi.chrom)
+    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.is_fa, reader[x]), dbi, prefix_len, storagedir), dbi.chrom)
     close(ref)
 
     prefixes = Set(vcat(prefixes...))
@@ -245,15 +99,6 @@ function search_prefix(
 
     
     res = zeros(Int, length(guides), dist + 1)
-    # CGCATG-CCATCACAGCAAGG - guide
-    # CGCATGACCATCAtAGCAAtG AGG - ref
-    #=if string(prefix) == "GTAACGA"
-        @info "Working on $prefix"
-        println(decode(Loc{UInt8,UInt32}(0x08, 0x0000440c, true), dbi))
-    else
-        return res
-    end =#
-
     if detail != ""
         detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
         detail_file = open(detail_path, "w")
@@ -271,9 +116,7 @@ function search_prefix(
     # if any of the guides requires further alignment 
     # load the SuffixDB and iterate
     sdb = load(joinpath(storagedir, string(prefix) * ".bin"))
-    #@info "$sdb"
-
-    for (i, g) in enumerate(guides)
+    for i in 1:length(guides)
         if !isfinal[i]
             for (j, suffix) in enumerate(sdb.suffix)
                 suffix_aln = suffix_align(suffix, prefix_aln[i])
@@ -282,8 +125,6 @@ function search_prefix(
                     res[i, suffix_aln.dist + 1] += length(sl_idx)
                     if detail != ""
                         offtargets = sdb.loci[sl_idx.start:sl_idx.stop]
-                        #@info "$offtargets"
-                        #show(sdb.loci)
                         if dbi.motif.extends5
                             guide_stranded = reverse(prefix_aln[i].guide)
                             aln_guide = reverse(suffix_aln.guide)
@@ -296,7 +137,6 @@ function search_prefix(
                         noloc = string(guide_stranded) * "," * aln_guide * "," * 
                                 aln_ref * "," * string(suffix_aln.dist) * ","
                         for offt in offtargets
-                            #@info "$offt"
                             write(detail_file, noloc * decode(offt, dbi) * "\n")
                         end
                     end
@@ -331,7 +171,7 @@ files which will have same name as detail, but with a sequence prefix. Final fil
 will contain all those intermediate files. Leave `detail` empty if you are only 
 interested in off-target counts returned by the searchDB.
 "
-function searchlinearDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")
+function search_linearDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")
     ldb = load(joinpath(storagedir, "linearDB.bin"))
     prefixes = collect(ldb.prefixes)
     if dist > length(first(prefixes)) || dist > ldb.dbi.motif.distance

@@ -78,11 +78,11 @@ Return k + 1 if distance higher than k and terminate early.
 Medium benchmark on random 20bp guide vs 24bp ref:
 
 Random.seed!(42)
-function getSeq(N = 20, letters = ['A', 'C', 'G', 'T'])
+function getseq(N = 20, letters = ['A', 'C', 'G', 'T'])
 	return LongDNASeq(randstring(letters, N))
 end
 
-setSeq =(g=getSeq();r=getSeq(24))
+setSeq =(g=getseq();r=getseq(24))
 m1 = median(@benchmark pairalign(LevenshteinDistance(), g, r, distance_only = true) setup=setSeq)
 m2 = median(@benchmark levenshtein(g, r) setup=setSeq)
 
@@ -123,7 +123,6 @@ function levenshtein(
         # minimum v value for calculated rows - for early termination 
         # when we are outside of k dist
         v_min = len2
-        v_min_idx = len2
 
         j_start = max(1, i - k)
         if j_start > j_start_max

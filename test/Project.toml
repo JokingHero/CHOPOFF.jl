@@ -1,4 +1,7 @@
 [deps]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 BioSequences = "7e6ae17a-c86d-528c-b3b9-7f778a29fe59"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+Combinatorics = "861a8166-3701-5b0c-9a16-15d98fcdc6aa"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 CRISPRofftargetHunter = "2408c727-2a6f-4260-b4c2-4d62f645fe8e"

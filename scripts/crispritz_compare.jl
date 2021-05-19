@@ -56,7 +56,7 @@ end
 
 # list all alignments that are in linearDB and not in crizpritz output
 for g in guides
-    #g = "AGAGCGCCTGTGGTTGCCGG"
+    g = "ACTCAATCATGTTTCCCGTC"
     czg = cz[cz.guide .== g, :]
     ldbg = ldb[ldb.guide .== g, :]
 
