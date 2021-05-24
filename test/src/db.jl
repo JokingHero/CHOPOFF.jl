@@ -60,7 +60,7 @@ end
     ldb_res = search_linearDB(ldb_path, guides, 3; detail = detail_path)
     ldb = DataFrame(CSV.File(detail_path))
 
-    #= @testset "linearDB against CRISPRitz" begin
+    @testset "linearDB against CRISPRitz" begin
         ## Files
         cz_file = "./sample_data/crispritz_results/guides.output.targets.txt"
         cz = DataFrame(CSV.File(cz_file))
@@ -111,7 +111,7 @@ end
                 @info "$czg"
             end
         end
-    end =#
+    end
 
     @testset "linearDB vs sketchDB" begin
         # make and run default sketchDB
@@ -123,16 +123,40 @@ end
         @test nrow(sdb_res) == length(guides)
         @test all(sdb_res.guide .== guides)
         @test all(ldb_res.guide .== guides)
-        ldb_res = convert(Array, ldb_res[:, 1:3])
+        ldb_res2 = convert(Array, ldb_res[:, 1:3])
         sdb_res = convert(Array, sdb_res[:, 1:3])
         for i in 1:length(guides)
-            compare = ldb_res[i, :] .<= sdb_res[i, :]
+            compare = ldb_res2[i, :] .<= sdb_res[i, :]
             @test all(compare)
             if !all(compare)
-                @info "Failed at guide $i " * string(guides[i])
-                @info "linearDB result: " * string(ldb_res[i, :])
+                @info "Failed at guideS $i " * string(guides[i])
+                @info "linearDB result: " * string(ldb_res2[i, :])
                 @info "sketchDB result: " * string(sdb_res[i, :])
             end
         end
+    end
+
+    @testset "linearDB vs treeDB" begin
+        tdb_path = joinpath(tdir, "treeDB")
+        mkpath(tdb_path)
+        build_treeDB("samirandom", genome, Motif("Cas9"), tdb_path, 7)
+
+        detail_path = joinpath(tdb_path, "detail.csv")
+        tdb_res = search_treeDB(tdb_path, guides, 3; detail = detail_path)
+        tdb = DataFrame(CSV.File(detail_path))
+
+        @test nrow(tdb_res) == length(guides)
+        @test all(tdb_res.guide .== guides)
+        @test all(ldb_res.guide .== guides)
+        # index 11
+        # ACCTAATTTTGGGGGGTCGG 
+        # we miss 3 mismatch offtargets
+        # we fail to find
+        # ACCTAATTTTGGGGGGTCGG │ 
+        # ACCTAATTTTGGGGGGTCGG--- 
+        # ACCTAATTTTGGGGGGTCGGGGG 
+        # semirandom4 │ 47128 │ +
+        failed = antijoin(ldb, tdb, on = [:guide, :distance, :chromosome, :start, :strand])
+        @test nrow(failed) == 0
     end
 end

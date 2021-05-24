@@ -105,18 +105,24 @@ function search_sketchDB(
     end
 
     # TODO check that seq is in line with motif
-    res = zeros(Int, length(guides_), dist + 1)
+    res = zeros(Int, length(guides_), (dist + 1) * 3 - 2)
     for (i, s) in enumerate(guides_)
         s = string(s)
         res[i, 1] += sdb.sketch[s] # 0 distance
         for d in 1:dist
-            res[i, d + 1] = sum([sdb.sketch[sd] for sd in comb_of_d(s, d)])
+            norm_d, border_d = comb_of_d(s, d)
+            norm_d_res = sum([sdb.sketch[sd] for sd in norm_d])
+            border_d_res = sum([sdb.sketch[sd] for sd in border_d])
+            res[i, d + 1] = norm_d_res + border_d_res
+            res[i, dist + d + 1] = norm_d_res
+            res[i, dist * 2 + d + 1] = border_d_res
         end
     end
 
     res = DataFrame(res)
     col_d = [Symbol("D$i") for i in 0:dist]
-    rename!(res, col_d)
+    all_col_d = vcat(col_d, [Symbol("DN$i") for i in 1:dist], [Symbol("DB$i") for i in 1:dist])
+    rename!(res, all_col_d)
     res.guide = guides
     sort!(res, col_d)
     return res

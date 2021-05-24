@@ -52,7 +52,7 @@ function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}}, d::Dict, ext::Int)
         # take leftmost from queue that is not a Node
         leaves = nodes[i]
         #@info "leaves: $leaves"
-        #parent = popat!(leaves, rand(1:length(leaves)))
+        parent = popat!(leaves, 1)
         #@info "parent: $parent"
         d_to_p = Base.map(g -> levenshtein(g.first[1:g_len], parent.first, g_len), leaves)
         #@info "leaves: $d_to_p"
@@ -78,7 +78,6 @@ function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}}, d::Dict, ext::Int)
         else
             nodes[i] = Node(parent.first, parent.second, UInt8(0), UInt32(0), UInt32(0))
         end
-        #sleep(60)
         i = findfirst(x -> typeof(x) != Node, nodes)
     end
     nodes = Vector{Node}(nodes)
@@ -205,11 +204,15 @@ function search_prefixtree(
                     end
                 end
 
-                if ((dist_i - dist - 1) <= node.radius) && (node.inside != 0)
+                # * 2 is to account for the shifted guide 
+                # ACCTAATTTTGGGGGGTCGG--- 3 gaps next to PAM shift the reference guide
+                # ACCTAATTTTGGGGGGTCGGGGG
+                # perform more research on this - any strategy to circumvent this issue?
+                if (node.inside != 0) && ((dist_i - dist * 2) <= node.radius)
                     push!(queue, node.inside)
                 end
     
-                if ((dist_i + dist + 1) > node.radius)  && (node.outside != 0)
+                if (node.outside != 0) && ((dist_i + dist * 2) > node.radius)
                     push!(queue, node.outside)
                 end
             end
@@ -241,7 +244,7 @@ files which will have same name as detail, but with a sequence prefix. Final fil
 will contain all those intermediate files. Leave `detail` empty if you are only 
 interested in off-target counts returned by the searchDB.
 "
-function search_treeDB(storagedir::String, guides::Vector{LongDNASeq},  dist::Int = 4; detail::String = "")
+function search_treeDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")
     ldb = load(joinpath(storagedir, "treeDB.bin"))
     prefixes = collect(ldb.prefixes)
     if dist > length(first(prefixes)) || dist > ldb.dbi.motif.distance

@@ -1,5 +1,6 @@
 using Test
 
+using BioSequences
 using CRISPRofftargetHunter: safeadd, smallestutype, base_to_idx, 
     getseq, extension, levenshtein, comb_of_d1, comb_of_d, minkmersize, balance
 using Combinatorics
@@ -53,7 +54,7 @@ using Combinatorics
             all_comb_dist = [levenshtein(LongDNASeq(seq), LongDNASeq(x), 4) for x in all_comb]
             for dist in [0, 1, 2, 3]
                 all_comb_d = all_comb[all_comb_dist .== dist]
-                combd = comb_of_d(seq, dist)
+                combd, combd_b = comb_of_d(seq, dist)
                 @test Set(combd) == Set(all_comb_d)
             end
         end

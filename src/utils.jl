@@ -103,11 +103,18 @@ function comb_of_d1(s::String, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
 end
 
 
+"
+0 - is not within distance d
+1 - is within distance d
+2 - is within distance d, but assuming bulge and that guide
+last position will match on the ref (which we don't know)
+
+d is assumed to be > 0
+"
 function is_within_d(s::LongDNASeq, x::LongDNASeq, d::Int)
     dist = levenshtein(s, x, d)
     if dist == d
-        return true
-
+        return 1
     # add corner cases where we can have e.g. d = 1
     # GGN ACTGA 
     # GGNGACTGA
@@ -116,10 +123,13 @@ function is_within_d(s::LongDNASeq, x::LongDNASeq, d::Int)
     # but is valid as reference also has A there, unfortunatelly
     # we have to assume it might be the case and we count those off-targets
     elseif dist - 1 == d
-        return levenshtein(s[1:end-1], x, d) == d
+        if levenshtein(s[1:end-1], x, d) == d
+            return 2
+        end
     end
-    return false
+    return 0
 end
+
 
 "
 Create a list of possible strings of levenshtein distance d
@@ -130,6 +140,9 @@ Assume PAM inside s is on the left!
 '-' in alphabet will be treated as indel, don't use it.
 "
 function comb_of_d(s::String, d::Int = 1, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
+    if d == 0 
+        return ([s], [])
+    end
     comb = comb_of_d1(s, alphabet)
     for i in 1:(d-1)
         new_comb = Set{String}()
@@ -141,7 +154,7 @@ function comb_of_d(s::String, d::Int = 1, alphabet::Vector{Char} = ['A', 'C', 'T
 
     comb = collect(comb)
     dist = [is_within_d(LongDNASeq(s), LongDNASeq(x), d) for x in comb]
-    return comb[dist]
+    return (comb[dist .== 1], comb[dist .== 2])
 end
 
 
