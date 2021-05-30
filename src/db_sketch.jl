@@ -111,8 +111,8 @@ function search_sketchDB(
         res[i, 1] += sdb.sketch[s] # 0 distance
         for d in 1:dist
             norm_d, border_d = comb_of_d(s, d)
-            norm_d_res = sum([sdb.sketch[sd] for sd in norm_d])
-            border_d_res = sum([sdb.sketch[sd] for sd in border_d])
+            norm_d_res = ThreadsX.sum(sdb.sketch[sd] for sd in norm_d)
+            border_d_res = ThreadsX.sum(sdb.sketch[sd] for sd in border_d)
             res[i, d + 1] = norm_d_res + border_d_res
             res[i, dist + d + 1] = norm_d_res
             res[i, dist * 2 + d + 1] = border_d_res

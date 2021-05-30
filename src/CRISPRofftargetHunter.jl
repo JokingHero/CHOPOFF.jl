@@ -14,6 +14,8 @@ using FASTX
 using TwoBit
 using Probably
 using DataFrames
+using Transducers
+using ThreadsX
 
 include("utils.jl")
 include("persistence.jl")

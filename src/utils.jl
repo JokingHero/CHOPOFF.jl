@@ -145,15 +145,11 @@ function comb_of_d(s::String, d::Int = 1, alphabet::Vector{Char} = ['A', 'C', 'T
     end
     comb = comb_of_d1(s, alphabet)
     for i in 1:(d-1)
-        new_comb = Set{String}()
-        for el in comb
-            new_comb = union(new_comb, comb_of_d1(el, alphabet))
-        end
-        comb = new_comb
+        comb = foldxt(union, Map(x -> comb_of_d1(x, alphabet)), comb)
     end
 
-    comb = collect(comb)
-    dist = [is_within_d(LongDNASeq(s), LongDNASeq(x), d) for x in comb]
+    comb = ThreadsX.collect(comb)
+    dist = ThreadsX.collect(is_within_d(LongDNASeq(s), LongDNASeq(x), d) for x in comb)
     return (comb[dist .== 1], comb[dist .== 2])
 end
 
