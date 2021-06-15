@@ -258,10 +258,13 @@ function search_treeDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int
         guides_ = reverse.(guides_)
     end
 
+    #= Non paralel version of the mapreduce
     res = zeros(Int, length(guides_), dist + 1)
     for p in prefixes
         res += search_prefixtree(p, dist, ldb.dbi, dirname(detail), guides_, storagedir)
     end
+    =#
+    res = ThreadsX.mapreduce(p -> search_prefixtree(p, dist, ldb.dbi, dirname(detail), guides_, storagedir), +, prefixes)
     
     if detail != ""
         # clean up detail files into one file

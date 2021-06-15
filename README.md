@@ -6,7 +6,7 @@ Julia package that allows to search for guideRNA off-targets within genome
 of interest while allowing for arbitrary distance
 (allows for insertions, deletions and mismatches).
 
-It is fast and reliable.
+The goal is to make it fast and reliable.
 
 ## License  
 
