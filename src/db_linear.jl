@@ -14,10 +14,9 @@ function to_suffix(prefix::LongSequence{DNAAlphabet{4}}, d::Dict)
     guides = collect(keys(d))
     loci = collect(values(d))
     lengths = length.(loci)
-    cs = cumsum(lengths)
     loci = reduce(vcat, loci)
-    stops = cs
-    starts = stops .- lengths .+ 1
+    stops = cumsum(lengths)
+    starts = @. stops - lengths + 1
     loci_range = LociRange.(starts, stops)
     return SuffixDB(prefix, guides, loci_range, loci)
 end
@@ -50,7 +49,7 @@ function build_linearDB(
     prefix_len::Int = 7)
 
     if prefix_len <= motif.distance
-        throw("prefix_len $prefix_len is <= to " * string(motif.distance))
+        throw("prefix_len $prefix_len is <= " * string(motif.distance))
     end
 
     dbi = DBInfo(genomepath, name, motif)
@@ -60,6 +59,7 @@ function build_linearDB(
     # For each chromsome paralelized we build database
     ref = open(dbi.filepath, "r")
     reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
+    # Don't paralelize here as you can likely run out of memory (chromosomes are large)
     prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.is_fa, reader[x]), dbi, prefix_len, storagedir), dbi.chrom)
     close(ref)
 
@@ -97,7 +97,6 @@ function search_prefix(
     guides::Vector{LongDNASeq},
     storagedir::String)
 
-    
     res = zeros(Int, length(guides), dist + 1)
     if detail != ""
         detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
@@ -185,10 +184,11 @@ function search_linearDB(storagedir::String, guides::Vector{LongDNASeq}, dist::I
         guides_ = reverse.(guides_)
     end
 
-    res = zeros(Int, length(guides_), dist + 1)
-    for p in prefixes
-        res += search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storagedir)
-    end
+    #res = zeros(Int, length(guides_), dist + 1)
+    res = ThreadsX.mapreduce(p -> search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storagedir), +, prefixes)
+    #for p in prefixes
+    #    res += search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storagedir)
+    #end
     
     if detail != ""
         # clean up detail files into one file
@@ -206,7 +206,7 @@ function search_linearDB(storagedir::String, guides::Vector{LongDNASeq}, dist::I
         end
     end
 
-    res = DataFrame(res)
+    res = DataFrame(res, :auto)
     col_d = [Symbol("D$i") for i in 0:dist]
     rename!(res, col_d)
     res.guide = guides

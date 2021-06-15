@@ -123,8 +123,8 @@ end
         @test nrow(sdb_res) == length(guides)
         @test all(sdb_res.guide .== guides)
         @test all(ldb_res.guide .== guides)
-        ldb_res2 = convert(Array, ldb_res[:, 1:3])
-        sdb_res = convert(Array, sdb_res[:, 1:3])
+        ldb_res2 = Matrix(ldb_res[:, 1:3])
+        sdb_res = Matrix(sdb_res[:, 1:3])
         for i in 1:length(guides)
             compare = ldb_res2[i, :] .<= sdb_res[i, :]
             @test all(compare)

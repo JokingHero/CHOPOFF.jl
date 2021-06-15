@@ -279,7 +279,7 @@ function search_treeDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int
         end
     end
 
-    res = DataFrame(res)
+    res = DataFrame(res, :auto)
     col_d = [Symbol("D$i") for i in 0:dist]
     rename!(res, col_d)
     res.guide = guides

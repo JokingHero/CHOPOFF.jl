@@ -119,7 +119,7 @@ function search_sketchDB(
         end
     end
 
-    res = DataFrame(res)
+    res = DataFrame(res, :auto)
     col_d = [Symbol("D$i") for i in 0:dist]
     all_col_d = vcat(col_d, [Symbol("DN$i") for i in 1:dist], [Symbol("DB$i") for i in 1:dist])
     rename!(res, all_col_d)

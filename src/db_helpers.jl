@@ -69,9 +69,9 @@ function pushguides!(
     query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd 
     pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
 
+    # This can't be paralelized with Threads and lock
     if length(query) != 0
         chrom_max = lastindex(chrom)
-
         for x in findall(query, chrom)
             guide = LongDNASeq(chrom[x])
             guide = removepam(guide, pam_loci)
@@ -105,7 +105,6 @@ function pushguides!(
             chrom_name_ = convert(dbi.chrom_type, findfirst(isequal(chrom_name), dbi.chrom))
             pos_ = convert(dbi.pos_type, pos_)
             loc = Loc(chrom_name_, pos_, !reverse_comp)
-
             prefix_idx = findfirst(x -> gprefix == x.prefix, output)
 
             if prefix_idx !== nothing
@@ -128,11 +127,11 @@ function do_linear_chrom(chrom_name::String, chrom::K, dbi::DBInfo, prefix_len::
     output = Vector{PrefixDB}()
     pushguides!(output, dbi, chrom, chrom_name, false, prefix_len)
     pushguides!(output, dbi, chrom, chrom_name, true, prefix_len)
-    # save small files as it is to large to store them in memory
+    # save small files as they are too large to store them in memory
     for pdb in output
         save(pdb, joinpath(storagedir, string(pdb.prefix) * "_" * chrom_name * ".bin"))
     end
-    return [x.prefix for x in output]
+    return ThreadsX.collect(x.prefix for x in output)
 end
 
 
