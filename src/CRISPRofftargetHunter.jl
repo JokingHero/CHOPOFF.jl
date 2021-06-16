@@ -199,5 +199,7 @@ end
 
 # julia --project=. --startup-file=no --trace-compile=app_precompile.jl ./src/CRISPRofftargetHunter.jl test
 # julia --project=.
+# using Pkg
+# Pkg.add("PackageCompiler")
 # using PackageCompiler
-# create_app(".", "./compiled_app"; precompile_statements_file = "./app_precompile.jl", force = true)
+# create_app(".", "./CRISPRofftargetHunter"; precompile_statements_file = "./app_precompile.jl", force = true)
