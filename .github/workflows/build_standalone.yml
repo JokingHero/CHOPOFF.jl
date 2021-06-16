@@ -32,4 +32,4 @@ jobs:
           title: "CRISPRofftargetHunter_${{ matrix.os }}-${{ matrix.julia-arch }}-julia_v${{ matrix.julia-version }}"
           files: |
             LICENSE.txt
-            ./../CRISPRofftargetHunter_lin-x64
+            ./../CRISPRofftargetHunter_lin-x64.tar.gz
