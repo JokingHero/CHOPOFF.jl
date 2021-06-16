@@ -17,20 +17,19 @@ jobs:
         os: [ubuntu-latest]
 
     steps:
-      steps:
-        - uses: actions/checkout@v2
-        - uses: julia-actions/setup-julia@v1
-          with:
-            version: ${{ matrix.julia-version }}
-        - uses: julia-actions/julia-buildpkg@v1
-        - name: "Build"
-          run: ./build_standalone.sh
-        - uses: "marvinpinto/action-automatic-releases@latest"
-          with:
-            repo_token: "${{ secrets.GITHUB_TOKEN }}"
-            automatic_release_tag: "latest"
-            prerelease: false
-            title: "CRISPRofftargetHunter_${{ matrix.os }}-${{ matrix.julia-arch }}-julia_v${{ matrix.julia-version }}"
-            files: |
-              LICENSE.txt
-              ./../CRISPRofftargetHunter_lin-x64
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: ${{ matrix.julia-version }}
+      - uses: julia-actions/julia-buildpkg@v1
+      - name: "Build"
+        run: ./build_standalone.sh
+      - uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "latest"
+          prerelease: false
+          title: "CRISPRofftargetHunter_${{ matrix.os }}-${{ matrix.julia-arch }}-julia_v${{ matrix.julia-version }}"
+          files: |
+            LICENSE.txt
+            ./../CRISPRofftargetHunter_lin-x64
