@@ -13,7 +13,7 @@ jobs:
         with:
           file: lcov.info
       - name: Get the Numbers
-        run: echo """::set-env name=CODE_LINES::$( julia -v -e 'using Pkg; Pkg.add("Coverage"); using Coverage; @show get_summary(process_folder())' )"""
+        run: echo """COVERAGE=$( julia -v -e 'using Pkg; Pkg.add("Coverage"); using Coverage; cl, tl = get_summary(process_folder()); println(string(Int(cl*100/tl)))' )""" >> $GITHUB_ENV
       - name: Create Coverage-Badge
         uses: schneegans/dynamic-badges-action@v1.0.0
         with:
@@ -21,6 +21,6 @@ jobs:
           gistID: 90e476e8365403823681230c8d99fd38
           filename: loc.json
           label: Coverage
-          message: ${{ env.CODE_LINES }}
+          message: ${{ env.COVERAGE }}
           color: green
           
