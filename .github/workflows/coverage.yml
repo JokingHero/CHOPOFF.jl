@@ -13,8 +13,7 @@ jobs:
         with:
           file: lcov.info
       - name: Get the Numbers
-      - run: echo """::set-env name=CODE_LINES::$( julia -v -e 'using Pkg; Pkg.add("Coverage"); using Coverage; @show get_summary(process_folder())' )"""
-        shell: bash
+        run: echo """::set-env name=CODE_LINES::$( julia -v -e 'using Pkg; Pkg.add("Coverage"); using Coverage; @show get_summary(process_folder())' )"""
       - name: Create Coverage-Badge
         uses: schneegans/dynamic-badges-action@v1.0.0
         with:
