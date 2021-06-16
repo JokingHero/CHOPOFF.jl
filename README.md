@@ -1,4 +1,7 @@
+[![Tests](https://github.com/JokingHero/CRISPRofftargetHunter.jl/actions/workflows/test.yml/badge.svg)](https://github.com/JokingHero/CRISPRofftargetHunter.jl/actions/workflows/test.yml)
+
 # CRISPRofftargetHunter  
+
 
 ## About
 
