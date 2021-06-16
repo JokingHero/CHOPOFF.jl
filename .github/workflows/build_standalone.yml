@@ -17,6 +17,12 @@ jobs:
         os: [ubuntu-latest]
 
     steps:
+      steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: ${{ matrix.julia-version }}
+      - uses: julia-actions/julia-buildpkg@v1
       - name: "Build"
         run: ./build_standalone.sh
       - uses: "marvinpinto/action-automatic-releases@latest"
