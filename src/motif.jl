@@ -1,11 +1,62 @@
-"
+"""
+`Motif(
+    alias::String,
+    fwdmotif::String, 
+    fwdpam::String, 
+    forward_strand::Bool = true, 
+    reverse_strand::Bool = true, 
+    distance::Int = 4, 
+    extends5::Bool = true)`
+
+`Motif(alias::String)`
+
+
 Motif defines what we search on the genome,
 what can be identified as an off-target.
 
-`distance` defines how many bases extra we need on the
-off-target sequence for the alignment, when we don't 
-have those bases we use DNA_Gap.
-"
+
+# Arguments
+`alias` - alias of the motif for easier identification e.g. Cas9
+
+`fwdmotif` - Motif that indicates where is PAM inside `fwdpam`.
+    For example for Cas9 it is 20*N + XXX: NNNNNNNNNNNNNNNNNNNNXXX
+
+`fwdpam`   - Motif in 5'-3' that will be matched on the reference (without the X).
+             For example for Cas9 it is 20*X + NGG:
+             XXXXXXXXXXXXXXXXXXXXNGG
+
+`forward`  - If false will not match to the forward reference strand.
+
+`reverse`  - If false will not match to the reverse reference strand.
+
+`distance` - How many extra nucleotides are needed for a search? This
+             will indicate within what distance we can search for off-targets.
+             When we don't have those bases we use DNA_Gap.
+             
+`extend5`  - Defines how off-targets will be aligned to the guides and where
+             extra nucleotides will be added for alignment within distance. Whether
+             to extend in the 5' and 3' direction. Cas9 is extend5 = true.
+
+
+```
+Example for Cas9 where we want to search for off-targets within distance of 4:
+  alias:    Cas9
+  fwdmotif: NNNNNNNNNNNNNNNNXXX
+  fwdpam:   XXXXXXXXXXXXXXXXNGG
+  forward:  true
+  reverse:  true
+  distance: 4
+  extend5:  true
+```
+
+Alignments will be performed from opposite to the extension direction (which is deifned by extend5).
+
+# Examples
+```julia-repl
+Motif('Cas9')
+Motif('Cas9', 'NNNNNNNNNNNNNNNNXXX', 'XXXXXXXXXXXXXXXXNGG'. true, true, 3, true)
+```
+"""
 struct Motif
     alias::String
     fwd::LongDNASeq
@@ -46,35 +97,6 @@ function removepam(seq::LongDNASeq, pam::UnitRange{<:Integer})
 end
 
 
-"
-Constructor for Motif that will be found in the reference.
-
-`alias`    - alias of the motif for easier identification e.g. Cas9
-`fwdmotif` - Motif that indicates where is PAM inside `fwdpam`.
-             For example for Cas9 it is 20*N + XXX:
-             NNNNNNNNNNNNNNNNNNNNXXX
-`fwdpam`   - Motif in 5'-3' that will be matched on the reference (without the X).
-             For example for Cas9 it is 20*N + NGG:
-             XXXXXXXXXXXXXXXXXXXXNGG
-`forward`  - If false will not match to the forward reference strand.
-`reverse`  - If false will not match to the reverse reference strand.
-`distance` - How many extra nucleotides are needed for a search? This
-             will indicate within what distance we can search for off-targets.
-`extend5`  - Defines how off-targets will be aligned to the guides and where
-             extra nucleotides will be added for alignment within distance. Whether
-             to extend in the 5' and 3' direction. Cas9 is extend5 = true.
-
-Example for Cas9 where we want to search for off-targets within distance of 4:
-alias:    Cas9
-fwdmotif: NNNNNNNNNNNNNNNNXXX
-fwdpam:   XXXXXXXXXXXXXXXXNGG
-forward:  true
-reverse:  true
-distance: 4
-extend5:  true
-
-Alignments will start from opposite to the `extend5` direction.
-"
 function Motif(alias::String,
     fwdmotif::String, fwdpam::String,
     forward_strand::Bool = true, reverse_strand::Bool = true,

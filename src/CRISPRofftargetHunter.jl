@@ -15,12 +15,12 @@ using BioSequences
 using Serialization
 using FASTX
 using TwoBit
-using Probably
 using DataFrames
 using Transducers
 using ThreadsX
 using PkgVersion
 using ArgParse
+using CSV
 
 include("utils.jl")
 include("persistence.jl")
@@ -28,17 +28,20 @@ include("persistence.jl")
 include("distance_metrics.jl")
 include("motif.jl")
 include("db_info.jl")
+include("probabilistic/hyperloglog.jl")
+include("probabilistic/countminsketch.jl")
 
 include("find_offtargets.jl")
 include("db_helpers.jl")
+include("db_dict.jl")
 include("db_sketch.jl")
 include("db_linear.jl")
 include("db_tree.jl")
 
 export Motif # motif
-export gatherofftargets! # find_offtargets
 export build_linearDB, search_linearDB # db_linear
 export build_sketchDB, search_sketchDB # db_sketch
+export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 
 ## Standalone binary generation
@@ -55,8 +58,8 @@ function parse_commandline()
         "build", "B"
             help = "Build a database of the guideRNAs."
             action = :command
-        "find", "F"
-            help = "Find in a database all off-targets."
+        "search", "S"
+            help = "Search database for off-targets."
             action = :command       
     end  
 
@@ -113,6 +116,7 @@ function parse_commandline()
         "--motif"
             help = """Will try to get the Motif from Motif databases avaialble are e.g. Cas9 or Cpf1"""
             arg_type = String
+            default = ""
     end
 
     @add_arg_table! s["build"]["treeDB"] begin
@@ -139,6 +143,11 @@ function parse_commandline()
                 "Decreasing this value will increase the size of the sketchDB."
             arg_type = Float64
             default = 0.001
+        "--error_size"
+            help = "Transforms into length of the table, it is epsilon indicating what is desired " *
+                "error of the estimated count we can afford."
+            arg_type = Int
+            default = 3
         "--max_count"
             help = "Maximum count value for given off-target sequence. " * 
                 "Increasing this value will allow to keep more precise counts of often repeated guide sequences" * 
@@ -147,24 +156,32 @@ function parse_commandline()
             default = 255
     end
 
-    @add_arg_table! s["find"] begin
+    @add_arg_table! s["search"] begin
         "--distance"
             help = "Maximum edit distance to analyze. Must be less or equal to distance used when building db."
             arg_type = Int
-            default = 3
+            default = 1
         "--detail"
             help = "Path to the file where additional detailed results should be written. Not aplicable for sketchDB."
             arg_type = String
+            default = ""
         "database"
             help = "Path to the folder where the database is stored. Same as used when building."
             arg_type = String
+            required = true
         "type"
             help = "Type of the database: treeDB, sketchDB or linearDB."
             arg_type = String
             range_tester = (x -> x == "sketchDB" || x == "treeDB" || x == "linearDB")
+            required = true
         "guides"
             help = "File path to the guides, each row in the file contains a guide WITHOUT PAM."
             arg_type = String
+            required = true
+        "output"
+            help = "File path to the file where summarized output should be generated."
+            arg_type = String
+            required = true
     end
 
     return parse_args(s)
@@ -176,6 +193,41 @@ function main()
     
     for (arg, val) in args
         println(" $arg  =>  $val")
+    end
+
+    if args["%COMMAND%"] == "build"
+        args = args["build"]
+        if args["motif"] != ""
+            motif = Motif(args["motif"])
+        else
+            motif = Motif(
+                args["name"], args["fwd_motif"], 
+                args["fwd_pam"], !args["not_forward"], !args["not_reverse"],
+                args["distance"], !args["extend3"])
+        end
+
+        if args["%COMMAND%"] == "treeDB"
+            build_treeDB(args["name"], args["genome"], motif, args["output"], 
+                args["treeDB"]["prefix_length"])
+        elseif args["%COMMAND%"] == "linearDB"
+            build_linearDB(args["name"], args["genome"], motif, args["output"], 
+                args["linearDB"]["prefix_length"])
+        else
+            build_sketchDB(args["name"], args["genome"], motif, args["output"], 
+                args["sketchDB"]["probability_of_error"], args["sketchDB"]["error_size"]; 
+                max_count = args["sketchDB"]["max_count"])
+        end
+    elseif args["%COMMAND%"] == "search"
+        args = args["search"]
+        guides = LongDNASeq.(readlines(args["guides"]))
+        if args["type"] == "treeDB"
+            res = search_treeDB(args["database"], guides, args["distance"]; detail = args["detail"])
+        elseif args["type"] == "linearDB"
+            res = search_linearDB(args["database"], guides, args["distance"]; detail = args["detail"])
+        else
+            res = search_sketchDB(args["database"],  guides, args["distance"])
+        end
+        CSV.write(args["output"], res)
     end
 end
 

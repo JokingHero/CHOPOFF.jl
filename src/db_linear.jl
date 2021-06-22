@@ -28,7 +28,14 @@ struct LinearDB
 end
 
 
-"
+"""
+`build_linearDB(
+    name::String,
+    genomepath::String,
+    motif::Motif,
+    storagedir::String,
+    prefix_len::Int = 7)`
+
 Build a DB of offtargets for the given `motif`,
 DB groups off-targets by their prefixes.
 
@@ -40,7 +47,7 @@ There is an optimization that if the alignment becomes imposible against
 the prefix we don't search the off-targets grouped inside the prefix.
 Therefore it is advantageous to select larger prefix than maximum 
 search distance, however in that case number of files also grows.
-"
+"""
 function build_linearDB(
     name::String,
     genomepath::String,
@@ -152,24 +159,30 @@ function search_prefix(
 end
 
 
-"
+"""
+`search_linearDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")`
+
 Will search the previously build database for the off-targets of the `guides`. 
 Assumes your guides do not contain PAM, and are all in the same direction as 
 you would order from the lab e.g.:
 
+`
 5' - ...ACGTCATCG NGG - 3'  -> will be input: ...ACGTCATCG
      guide        PAM
 
 3' - CCN GGGCATGCT... - 5'  -> will be input: ...AGCATGCCC
      PAM guide
+`
+
+# Arguments
 
 `dist` - defines maximum levenshtein distance (insertions, deletions, mismatches) for
-which off-targets are considered.
+which off-targets are considered.  
 `detail` - path and name for the output file. This search will create intermediate 
 files which will have same name as detail, but with a sequence prefix. Final file
 will contain all those intermediate files. Leave `detail` empty if you are only 
-interested in off-target counts returned by the searchDB.
-"
+interested in off-target counts returned by the linearDB.  
+"""
 function search_linearDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")
     ldb = load(joinpath(storagedir, "linearDB.bin"))
     prefixes = collect(ldb.prefixes)

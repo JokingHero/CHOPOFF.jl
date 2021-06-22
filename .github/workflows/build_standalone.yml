@@ -13,8 +13,8 @@ jobs:
     strategy:
       matrix:
         julia-version: ['1']
-        julia-arch: [x86]
-        os: [ubuntu-latest]
+        julia-arch: [x64, x86]
+        os: [ubuntu-latest, macOS-latest]
 
     steps:
       - uses: actions/checkout@v2
@@ -29,7 +29,7 @@ jobs:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           automatic_release_tag: "latest"
           prerelease: false
-          title: "CRISPRofftargetHunter_${{ matrix.os }}-${{ matrix.julia-arch }}-julia_v${{ matrix.julia-version }}"
+          title: "CRISPRofftargetHunter"
           files: |
             LICENSE.txt
-            ./../CRISPRofftargetHunter_lin-x64.tar.gz
+            ./../*.tar.gz

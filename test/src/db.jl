@@ -60,6 +60,12 @@ end
     ldb_res = search_linearDB(ldb_path, guides, 3; detail = detail_path)
     ldb = DataFrame(CSV.File(detail_path))
 
+    # make and run default sketchDB
+    sdb_path = joinpath(tdir, "sketchDB")
+    mkpath(sdb_path)
+    build_sketchDB("samirandom", genome, Motif("Cas9"), sdb_path)
+    sdb_res = search_sketchDB(sdb_path, guides, 2)
+
     @testset "linearDB against CRISPRitz" begin
         ## Files
         cz_file = "./sample_data/crispritz_results/guides.output.targets.txt"
@@ -114,26 +120,63 @@ end
     end
 
     @testset "linearDB vs sketchDB" begin
-        # make and run default sketchDB
-        sdb_path = joinpath(tdir, "sketchDB")
-        mkpath(sdb_path)
-        build_sketchDB("samirandom", genome, Motif("Cas9"), sdb_path)
-
-        sdb_res = search_sketchDB(sdb_path, guides, 2)
         @test nrow(sdb_res) == length(guides)
         @test all(sdb_res.guide .== guides)
         @test all(ldb_res.guide .== guides)
         ldb_res2 = Matrix(ldb_res[:, 1:3])
-        sdb_res = Matrix(sdb_res[:, 1:3])
+        sdb_res2 = Matrix(sdb_res[:, 1:3])
         for i in 1:length(guides)
-            compare = ldb_res2[i, :] .<= sdb_res[i, :]
+            compare = ldb_res2[i, :] .<= sdb_res2[i, :]
             @test all(compare)
             if !all(compare)
                 @info "Failed at guideS $i " * string(guides[i])
                 @info "linearDB result: " * string(ldb_res2[i, :])
-                @info "sketchDB result: " * string(sdb_res[i, :])
+                @info "sketchDB result: " * string(sdb_res2[i, :])
             end
         end
+    end
+
+    @testset "sketchDB vs dictDB" begin
+        # make and run default sketchDB
+        ddb_path = joinpath(tdir, "dictDB")
+        mkpath(ddb_path)
+        build_dictDB("samirandom", genome, Motif("Cas9"), ddb_path)
+
+        ddb_res = search_dictDB(ddb_path, guides, 2)
+        @test nrow(sdb_res) == nrow(ddb_res)
+        @test all(sdb_res.guide .== guides)
+        @test all(ddb_res.guide .== guides)
+        ddb_res2 = Matrix(ddb_res)
+        sdb_res2 = Matrix(sdb_res)
+        for i in 1:length(guides)
+            compare = ddb_res2[i, :] .<= sdb_res2[i, :]
+            @test all(compare)
+            if !all(compare)
+                @info "Failed at guideS $i " * string(guides[i])
+                @info "dictDB result: " * string(ddb_res2[i, :])
+                @info "sketchDB result: " * string(sdb_res2[i, :])
+            end
+        end
+        
+        # Now check complete dictionary vs sketch
+        dDB = CRISPRofftargetHunter.load(joinpath(ddb_path, "dictDB.bin"))
+        sDB = CRISPRofftargetHunter.load(joinpath(sdb_path, "sketchDB.bin"))
+        fr = CRISPRofftargetHunter.fillrate(sDB.sketch)
+        conflict = 0
+        error = Vector()
+        for (key, value) in dDB.dict
+            svalue = sDB.sketch[key]
+            @test  value <= svalue
+            if svalue != value
+                conflict += 1
+                push!(error, svalue - value)
+            end
+        end
+        true_error_rate = conflict / length(dDB.dict)
+        @test true_error_rate <= fr
+        @info "True error rate is: $true_error_rate"
+        @info "Estimated error rate is: $fr"
+        @info "Maximum error: " * string(maximum(error))
     end
 
     @testset "linearDB vs treeDB" begin
