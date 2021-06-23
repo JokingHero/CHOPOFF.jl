@@ -30,6 +30,8 @@ include("motif.jl")
 include("db_info.jl")
 include("probabilistic/hyperloglog.jl")
 include("probabilistic/countminsketch.jl")
+include("probabilistic/cuckoo.jl")
+include("probabilistic/bloom.jl")
 
 include("find_offtargets.jl")
 include("db_helpers.jl")
