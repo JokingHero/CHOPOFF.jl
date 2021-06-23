@@ -4,6 +4,7 @@ using CRISPRofftargetHunter
 using BioSequences
 using CSV
 using DataFrames
+using Probably
 
 ## SET WD when debugging
 # cd("test")
@@ -161,7 +162,7 @@ end
         # Now check complete dictionary vs sketch
         dDB = CRISPRofftargetHunter.load(joinpath(ddb_path, "dictDB.bin"))
         sDB = CRISPRofftargetHunter.load(joinpath(sdb_path, "sketchDB.bin"))
-        fr = CRISPRofftargetHunter.fillrate(sDB.sketch)
+        fr = fprof(sDB.sketch)
         conflict = 0
         error = Vector()
         for (key, value) in dDB.dict

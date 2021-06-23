@@ -72,7 +72,7 @@ function pushguides!(
     output::T,
     dbi::DBInfo,
     chrom::K,
-    reverse_comp::Bool) where {T<:Union{IdDict, CMSketch, HyperLogLog, Vector{String}}, K<:BioSequence}
+    reverse_comp::Bool) where {T<:Union{IdDict, CountMinSketch, HyperLogLog, Vector{String}}, K<:BioSequence}
     
     query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd
     pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd

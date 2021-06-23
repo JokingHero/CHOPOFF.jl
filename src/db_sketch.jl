@@ -1,6 +1,28 @@
 struct SketchDB{T<:Unsigned}
-    sketch::CMSketch{T}
+    sketch::CountMinSketch{T}
     dbi::DBInfo
+end
+
+
+"
+What % of the database contains zeros.
+"
+function zerorate(sketch::CountMinSketch)
+    return sum(sketch.matrix .> zero(eltype(sketch))) / (sketch.len * sketch.width)
+end
+
+
+function add_guides!(sketch::HyperLogLog, guides::Vector{LongDNASeq})
+    for g in guides
+        push!(sketch, unsigned(DNAMer(g)))
+    end
+end
+
+
+function add_guides!(sketch::CountMinSketch, guides::Vector{LongDNASeq})
+    for g in guides
+        push!(sketch, unsigned(DNAMer(g)))
+    end
 end
 
 
@@ -15,7 +37,7 @@ function makeemptysketch(
     depth = max(ceil(log(1/probability_of_error)), 2)
     # estimate our error E based on the max_len
     width = max(ceil(Base.ℯ / (error_size/(est_len))), 2)
-    sketch = CMSketch{max_count_type}(width, depth)
+    sketch = CountMinSketch{max_count_type}(width, depth)
     return sketch
 end
 
@@ -75,7 +97,7 @@ function build_sketchDB(
     db = SketchDB(sketch, dbi)
     save(db, joinpath(storagedir, "sketchDB.bin"))
     @info "Finished constructing sketchDB in " * storagedir
-    @info "Estimated probability of miscounting an element in the sketch is " * string(round(fillrate(db.sketch); digits = 6))
+    @info "Estimated probability of miscounting an element in the sketch is " * string(round(fprof(db.sketch); digits = 6))
     @info "Database empty field fraction is " * string(round(zerorate(db.sketch); digits = 3))
     @info "Database size is:\n width -> " * string(db.sketch.width) *
         "\n length -> " * string(db.sketch.len) *
