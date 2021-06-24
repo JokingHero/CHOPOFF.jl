@@ -67,6 +67,13 @@ end
     build_sketchDB("samirandom", genome, Motif("Cas9"), sdb_path)
     sdb_res = search_sketchDB(sdb_path, guides, 2)
 
+    # make and run default dictDB
+    ddb_path = joinpath(tdir, "dictDB")
+    mkpath(ddb_path)
+    build_dictDB("samirandom", genome, Motif("Cas9"), ddb_path)
+
+    ddb_res = search_dictDB(ddb_path, guides, 2)
+
     @testset "linearDB against CRISPRitz" begin
         ## Files
         cz_file = "./sample_data/crispritz_results/guides.output.targets.txt"
@@ -138,12 +145,6 @@ end
     end
 
     @testset "sketchDB vs dictDB" begin
-        # make and run default sketchDB
-        ddb_path = joinpath(tdir, "dictDB")
-        mkpath(ddb_path)
-        build_dictDB("samirandom", genome, Motif("Cas9"), ddb_path)
-
-        ddb_res = search_dictDB(ddb_path, guides, 2)
         @test nrow(sdb_res) == nrow(ddb_res)
         @test all(sdb_res.guide .== guides)
         @test all(ddb_res.guide .== guides)
@@ -179,6 +180,48 @@ end
         @info "Estimated error rate is: $fr"
         @info "Maximum error: " * string(maximum(error))
     end
+
+
+    @testset "binDB vs dictDB" begin
+        # make and run default sketchDB
+        bdb_path = joinpath(tdir, "binDB")
+        mkpath(bdb_path)
+        build_binDB("samirandom", genome, Motif("Cas9"), bdb_path)
+
+        bdb_res = search_binDB(bdb_path, guides, 2)
+        @test nrow(bdb_res) == nrow(ddb_res)
+        @test all(bdb_res.guide .== guides)
+        @test all(ddb_res.guide .== guides)
+        ddb_res2 = Matrix(ddb_res)
+        bdb_res2 = Matrix(bdb_res)
+        for i in 1:length(guides)
+            compare = ddb_res2[i, :] .<= bdb_res2[i, :]
+            @test all(compare)
+            if !all(compare)
+                @info "Failed at guideS $i " * string(guides[i])
+                @info "dictDB result: " * string(ddb_res2[i, :])
+                @info "sketchDB result: " * string(bdb_res2[i, :])
+            end
+        end
+        
+        # Now check complete dictionary vs sketch
+        dDB = CRISPRofftargetHunter.load(joinpath(ddb_path, "dictDB.bin"))
+        bDB = CRISPRofftargetHunter.load(joinpath(bdb_path, "binDB.bin"))
+        conflict = 0
+        error = Vector()
+        for (key, value) in dDB.dict
+            svalue = CRISPRofftargetHunter.estimate(bDB, key)
+            @test value <= svalue
+            if svalue != value
+                conflict += 1
+                push!(error, svalue - value)
+            end
+        end
+        true_error_rate = conflict / length(dDB.dict)
+        @info "True error rate is: $true_error_rate"
+        @info "Maximum error: " * string(maximum(error))
+    end
+
 
     @testset "linearDB vs treeDB" begin
         tdb_path = joinpath(tdir, "treeDB")

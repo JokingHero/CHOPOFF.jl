@@ -4,9 +4,10 @@ struct DictDB
 end
 
 function add_guides!(dict::IdDict, guides::Vector{LongDNASeq})
+    ktype = valtype(dict)
     for value in guides
         value = unsigned(DNAMer(value))
-        dict[value] = get(dict, value, 0) + 1
+        dict[value] = safeadd(get(dict, value, convert(ktype, 0)), convert(ktype, 1))
     end
     return dict
 end

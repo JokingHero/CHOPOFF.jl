@@ -36,12 +36,14 @@ include("db_dict.jl")
 include("db_sketch.jl")
 include("db_linear.jl")
 include("db_tree.jl")
+include("db_bins.jl")
 
 export Motif # motif
 export build_linearDB, search_linearDB # db_linear
 export build_sketchDB, search_sketchDB # db_sketch
 export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
+export build_binDB, search_binDB
 
 ## Standalone binary generation
 function parse_commandline()
