@@ -40,7 +40,7 @@ function rows_not_in(len::Int, rows_in::Vector{Int})
     if len == length(rows_in_)
         return []
     end
-    deleteat!(all_rows, rows_in)
+    deleteat!(all_rows, rows_in_)
     return all_rows
 end
 

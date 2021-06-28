@@ -68,11 +68,11 @@ function pushguides!(
 
     query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd 
     pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
+    chrom_name_ = convert(dbi.chrom_type, findfirst(isequal(chrom_name), dbi.chrom))
 
-    # This can't be paralelized with Threads and lock
     if length(query) != 0
         chrom_max = lastindex(chrom)
-        for x in findall(query, chrom)
+        guides = ThreadsX.map(findall(query, chrom)) do x
             guide = LongDNASeq(chrom[x])
             guide = removepam(guide, pam_loci)
             # add extension
@@ -99,14 +99,17 @@ function pushguides!(
                 guide = guide * getExt3(chrom, chrom_max, last(x) + 1, dbi.motif.distance)
                 pos_ = first(x)
             end
+            pos_ = convert(dbi.pos_type, pos_)
+            loc = Loc(chrom_name_, pos_, !reverse_comp)
 
             gprefix = guide[1:prefix_len]
             gsuffix = guide[prefix_len+1:end]
-            chrom_name_ = convert(dbi.chrom_type, findfirst(isequal(chrom_name), dbi.chrom))
-            pos_ = convert(dbi.pos_type, pos_)
-            loc = Loc(chrom_name_, pos_, !reverse_comp)
-            prefix_idx = findfirst(x -> gprefix == x.prefix, output)
 
+            return (gprefix, gsuffix, loc)
+        end
+        
+        for (gprefix, gsuffix, loc) in guides
+            prefix_idx = findfirst(x -> gprefix == x.prefix, output)
             if prefix_idx !== nothing
                 if haskey(output[prefix_idx].suffix, gsuffix)
                     push!(output[prefix_idx].suffix[gsuffix], loc)
