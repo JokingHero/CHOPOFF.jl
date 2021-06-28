@@ -26,9 +26,9 @@ function build_binDB(
     genomepath::String, 
     motif::Motif,
     storagedir::String,
-    probability_of_error::Float64 = 0.001;
-    max_count::Int = 10,
-    dictDB::String = "")
+    dictDB::String = "";
+    probability_of_error::Float64 = 0.001,
+    max_count::Int = 10)
 
     dbi = DBInfo(genomepath, name, motif)
 
@@ -39,7 +39,8 @@ function build_binDB(
         dict = IdDict{UInt64, max_count_type}()
         gatherofftargets!(dict, dbi)
     else 
-        dict = load(joinpath(dictDB_path, "dictDB.bin"))
+        dict = load(joinpath(dictDB, "dictDB.bin"))
+        dict = dict.dict
         # TODO make sure dict type is max_count_type
     end
     max_count = convert(max_count_type, max_count)
