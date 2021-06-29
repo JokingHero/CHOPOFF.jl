@@ -10,15 +10,32 @@ struct SuffixDB
 end
 
 
-function to_suffix(prefix::LongSequence{DNAAlphabet{4}}, d::Dict)
-    guides = collect(keys(d))
-    loci = collect(values(d))
-    lengths = length.(loci)
-    loci = reduce(vcat, loci)
-    stops = cumsum(lengths)
-    starts = @. stops - lengths + 1
-    loci_range = LociRange.(starts, stops)
-    return SuffixDB(prefix, guides, loci_range, loci)
+function to_suffix(
+    prefix::LongSequence{DNAAlphabet{4}}, 
+    guides::Vector{LongSequence{DNAAlphabet{4}}}, 
+    loci::Vector{Loc})
+    order = sortperm(guides)
+    guides = guides[order]
+    loci = loci[order]
+    suffixes = Vector{LongSequence{DNAAlphabet{4}}}()
+    loci_range = Vector{LociRange}()
+    start = 1
+    stop = 1
+    current_guide = guides[1]
+    for i in 1:length(guides)
+        if guides[i] == current_guide
+            stop = i
+        else
+            push!(loci_range, LociRange(start, stop))
+            push!(suffixes, current_guide)
+            current_guide = guides[i]
+            start = i
+            stop = i
+        end
+    end
+    push!(loci_range, LociRange(start, stop))
+    push!(suffixes, current_guide)
+    return SuffixDB(prefix, suffixes, loci_range, loci)
 end
 
 
@@ -75,17 +92,19 @@ function build_linearDB(
     # step 2
     @info "Step 2: Constructing per prefix db."
     # Iterate over all prefixes and merge different chromosomes
-    for prefix in prefixes
-        merged = Dict()
+    ThreadsX.map(prefixes) do prefix
+        guides = Vector{LongDNASeq}()
+        loci = Vector{Loc}()
         for chrom in dbi.chrom
             p = joinpath(storagedir, string(prefix) * "_" * chrom * ".bin")
             if ispath(p)
                 pdb = load(p)
-                merge!(vcat, merged, pdb.suffix)
+                append!(guides, pdb.suffix)
+                append!(loci, pdb.loci)
                 rm(p)
             end
         end
-        sdb = to_suffix(prefix, merged)
+        sdb = to_suffix(prefix, guides, loci)
         save(sdb, joinpath(storagedir, string(prefix) * ".bin"))
     end
 
@@ -153,7 +172,6 @@ function search_prefix(
 
     if detail != ""
         close(detail_file)
-        @info "closing $prefix"
     end
     return res
 end

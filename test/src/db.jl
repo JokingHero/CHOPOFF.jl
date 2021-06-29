@@ -235,14 +235,6 @@ end
         @test nrow(tdb_res) == length(guides)
         @test all(tdb_res.guide .== guides)
         @test all(ldb_res.guide .== guides)
-        # index 11
-        # ACCTAATTTTGGGGGGTCGG 
-        # we miss 3 mismatch offtargets
-        # we fail to find
-        # ACCTAATTTTGGGGGGTCGG │ 
-        # ACCTAATTTTGGGGGGTCGG--- 
-        # ACCTAATTTTGGGGGGTCGGGGG 
-        # semirandom4 │ 47128 │ +
         failed = antijoin(ldb, tdb, on = [:guide, :distance, :chromosome, :start, :strand])
         @test nrow(failed) == 0
     end

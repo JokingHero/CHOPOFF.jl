@@ -12,7 +12,8 @@ Slow to save/load.
 "
 struct PrefixDB
     prefix::LongSequence{DNAAlphabet{4}}
-    suffix::Dict{LongSequence{DNAAlphabet{4}}, Vector{Loc}}
+    suffix::Vector{LongSequence{DNAAlphabet{4}}}
+    loci::Vector{Loc}
 end
 
 
@@ -58,8 +59,7 @@ Prefix is the length of our common part between guides!
 Guide reversal happens here too, so that alignment is more
 convienient.
 "
-function pushguides!(
-    output::Vector{PrefixDB},
+function gatherofftargets(
     dbi::DBInfo,
     chrom::K,
     chrom_name::String,
@@ -72,7 +72,7 @@ function pushguides!(
 
     if length(query) != 0
         chrom_max = lastindex(chrom)
-        guides = ThreadsX.map(findall(query, chrom)) do x
+        guides = Base.map(findall(query, chrom)) do x
             guide = LongDNASeq(chrom[x])
             guide = removepam(guide, pam_loci)
             # add extension
@@ -104,21 +104,17 @@ function pushguides!(
 
             gprefix = guide[1:prefix_len]
             gsuffix = guide[prefix_len+1:end]
-
             return (gprefix, gsuffix, loc)
         end
         
-        for (gprefix, gsuffix, loc) in guides
-            prefix_idx = findfirst(x -> gprefix == x.prefix, output)
-            if prefix_idx !== nothing
-                if haskey(output[prefix_idx].suffix, gsuffix)
-                    push!(output[prefix_idx].suffix[gsuffix], loc)
-                else
-                    output[prefix_idx].suffix[gsuffix] = [loc]
-                end
-            else
-                push!(output, PrefixDB(gprefix, Dict(gsuffix => [loc])))
-            end
+        gprefix = getindex.(guides, 1)
+        gsuffix = getindex.(guides, 2)
+        loc = getindex.(guides, 3)
+        uprefixes = unique(gprefix)
+
+        output = ThreadsX.map(uprefixes) do prefix
+            prefix_guides = findall(x -> x == prefix, gprefix)
+            return PrefixDB(prefix, gsuffix[prefix_guides], loc[prefix_guides])
         end
     end
     return output
@@ -127,14 +123,28 @@ end
 
 function do_linear_chrom(chrom_name::String, chrom::K, dbi::DBInfo, prefix_len::Int, storagedir::String) where K<:BioSequence
     @info "Working on $chrom_name"
-    output = Vector{PrefixDB}()
-    pushguides!(output, dbi, chrom, chrom_name, false, prefix_len)
-    pushguides!(output, dbi, chrom, chrom_name, true, prefix_len)
-    # save small files as they are too large to store them in memory
-    for pdb in output
+    output_fwd = gatherofftargets(dbi, chrom, chrom_name, false, prefix_len)
+    output_rve = gatherofftargets(dbi, chrom, chrom_name, true, prefix_len)
+    fwd = ThreadsX.collect(x.prefix for x in output_fwd)
+    rve = ThreadsX.collect(x.prefix for x in output_rve)
+    prefixes = unique(vcat(fwd, rve))
+    ThreadsX.map(prefixes) do prefix
+        fwd_idx = findfirst(x -> x == prefix, fwd)
+        rve_idx = findfirst(x -> x == prefix, rve)
+        if fwd_idx === nothing
+            suffixes = output_rve[rve_idx].suffix
+            loci = output_rve[rve_idx].loci
+        elseif rve_idx === nothing
+            suffixes = output_fwd[fwd_idx].suffix
+            loci = output_fwd[fwd_idx].loci
+        else
+            suffixes = vcat(output_fwd[fwd_idx].suffix, output_rve[rve_idx].suffix)
+            loci = vcat(output_fwd[fwd_idx].loci, output_rve[rve_idx].loci)
+        end
+        pdb = PrefixDB(prefix, suffixes, loci)
         save(pdb, joinpath(storagedir, string(pdb.prefix) * "_" * chrom_name * ".bin"))
     end
-    return ThreadsX.collect(x.prefix for x in output)
+    return prefixes
 end
 
 

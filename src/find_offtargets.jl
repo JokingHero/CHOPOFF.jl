@@ -93,8 +93,7 @@ end
 
 function gatherofftargets!(
     output::Any,
-    dbi::DBInfo;
-    prefix_len::Union{Int, Nothing} = nothing)
+    dbi::DBInfo)
 
     ref = open(dbi.filepath, "r")
     reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
@@ -103,14 +102,8 @@ function gatherofftargets!(
         record = reader[chrom_name] # this is possible only with index!
         @info "Working on $chrom_name"
         chrom = dbi.is_fa ? FASTA.sequence(record) : TwoBit.sequence(record)
-
-        if isnothing(prefix_len)
-            pushguides!(output, dbi, chrom, false)
-            pushguides!(output, dbi, chrom, true)
-        else
-            pushguides!(output, dbi, chrom, chrom_name, false, prefix_len)
-            pushguides!(output, dbi, chrom, chrom_name, true, prefix_len)
-        end
+        pushguides!(output, dbi, chrom, false)
+        pushguides!(output, dbi, chrom, true)
     end
 
     close(ref)

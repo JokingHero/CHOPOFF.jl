@@ -25,15 +25,15 @@ struct SuffixTreeDB
 end
 
 
-function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}}, d::Dict, ext::Int)
-    guides = collect(keys(d))
-    loci = collect(values(d))
-    lengths = length.(loci)
-    cs = cumsum(lengths)
-    loci = reduce(vcat, loci)
-    stops = cs
-    starts = stops .- lengths .+ 1
-    loci_range = LociRange.(starts, stops)
+function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}}, 
+    guides::Vector{LongSequence{DNAAlphabet{4}}}, 
+    loci::Vector{Loc}, ext::Int)
+    
+    db = to_suffix(prefix, guides, loci)
+    guides = db.suffix
+    loci_range = db.suffix_loci_idx
+    loci = db.loci
+
     # construct tree nodes
     # we want consecutive guides to be the ones that are splitting
     # this is the order we want for node array
@@ -138,16 +138,18 @@ function build_treeDB(
     @info "Step 2: Constructing per prefix db."
     # Iterate over all prefixes and merge different chromosomes
     for prefix in prefixes
-        merged = Dict()
+        guides = Vector{LongDNASeq}()
+        loci = Vector{Loc}()
         for chrom in dbi.chrom
             p = joinpath(storagedir, string(prefix) * "_" * chrom * ".bin")
             if ispath(p)
                 pdb = load(p)
-                merge!(vcat, merged, pdb.suffix)
+                append!(guides, pdb.suffix)
+                append!(loci, pdb.loci)
                 rm(p)
             end
         end
-        sdb = to_suffixtree(prefix, merged, motif.distance)
+        sdb = to_suffixtree(prefix, guides, loci, motif.distance)
         save(sdb, joinpath(storagedir, string(prefix) * ".bin"))
     end
 
