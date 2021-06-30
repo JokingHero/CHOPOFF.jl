@@ -23,7 +23,7 @@ TTN ... EXT
 CCN ... EXT
 "
 function getExt3(chrom::K, chrom_max::Int, ext_start::Int, dist::Int) where K <: BioSequence
-    ext_end = ext_start + dist
+    ext_end = ext_start + dist - 1
     if ext_start > chrom_max
         ext = LongDNASeq(repeat("-", dist))
     elseif ext_end > chrom_max
@@ -101,14 +101,14 @@ function gatherofftargets(
             # TTN ... EXT
             ext = last.(guides_pos) .+ 1
             ext = ThreadsX.map(x -> getExt3(chrom, chrom_max, x, dbi.motif.distance), ext)
-            guides = guides .* ext
+            guides .= guides .* ext
             guides_pos = first.(guides_pos)
         end
         guides_pos = convert.(dbi.pos_type, guides_pos)
         loc = Loc.(chrom_name_, guides_pos, !reverse_comp)
 
         gprefix = getindex.(guides, [1:prefix_len])
-        gsuffix = getindex.(guides, [prefix_len+1:length(guides[1])])
+        gsuffix = getindex.(guides, [(prefix_len + 1):length(guides[1])])
         uprefixes = unique(gprefix)
 
         output = ThreadsX.map(uprefixes) do prefix
