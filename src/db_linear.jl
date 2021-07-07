@@ -17,24 +17,7 @@ function to_suffix(
     order = sortperm(guides)
     guides = guides[order]
     loci = loci[order]
-    suffixes = Vector{LongSequence{DNAAlphabet{4}}}()
-    loci_range = Vector{LociRange}()
-    start = 1
-    stop = 1
-    current_guide = guides[1]
-    for i in 1:length(guides)
-        if guides[i] == current_guide
-            stop = i
-        else
-            push!(loci_range, LociRange(start, stop))
-            push!(suffixes, current_guide)
-            current_guide = guides[i]
-            start = i
-            stop = i
-        end
-    end
-    push!(loci_range, LociRange(start, stop))
-    push!(suffixes, current_guide)
+    (suffixes, loci_range) = ranges(guides)
     return SuffixDB(prefix, suffixes, loci_range, loci)
 end
 

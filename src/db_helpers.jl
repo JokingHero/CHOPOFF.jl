@@ -7,6 +7,32 @@ import Base.length
 @inline length(x::LociRange) = x.stop - x.start + 1
 
 "
+Input has to be sorted beforehand!!!
+"
+function ranges(guides::Vector{T}) where T <: Any
+    suffixes = Vector{T}()
+    loci_range = Vector{LociRange}()
+    start = 1
+    stop = 1
+    current_guide = guides[1]
+    for i in 1:length(guides)
+        if guides[i] == current_guide
+            stop = i
+        else
+            push!(loci_range, LociRange(start, stop))
+            push!(suffixes, current_guide)
+            current_guide = guides[i]
+            start = i
+            stop = i
+        end
+    end
+    push!(loci_range, LociRange(start, stop))
+    push!(suffixes, current_guide)
+    return (suffixes, loci_range)
+end
+
+
+"
 Temporary structure that is build per chromosome, per prefix.
 Slow to save/load.
 "

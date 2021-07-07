@@ -61,7 +61,8 @@ end
 
 
 add_guides!(vec::Vector{String}, guides::Vector{LongDNASeq}) = append!(vec, string.(guides))
-
+add_guides!(vec::Vector{LongDNASeq}, guides::Vector{LongDNASeq}) = append!(vec, guides)
+add_guides!(vec::Vector{UInt64}, guides::Vector{LongDNASeq}) = append!(vec, unsigned.(DNAMer.(guides)))
 
 "
 Will push guides found by the dbi.motif into the output as strings.
@@ -72,7 +73,11 @@ function pushguides!(
     output::T,
     dbi::DBInfo,
     chrom::K,
-    reverse_comp::Bool) where {T<:Union{IdDict, CountMinSketch, HyperLogLog, Vector{String}}, K<:BioSequence}
+    reverse_comp::Bool) where {
+        T<:Union{
+            IdDict, CountMinSketch, HyperLogLog, 
+            Vector{String}, Vector{LongDNASeq}, Vector{UInt64}}, 
+        K<:BioSequence}
     
     query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd
     pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd

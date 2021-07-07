@@ -12,6 +12,18 @@ function add_guides!(dict::IdDict, guides::Vector{LongDNASeq})
     return dict
 end
 
+
+function build_guide_dict(dbi::DBInfo, max_count::Int)
+    max_count_type = smallestutype(unsigned(max_count))
+    guides = Vector{UInt64}()
+    gatherofftargets!(guides, dbi)
+    guides = sort(guides)
+    guides, counts = ranges(guides)
+    counts = convert.(max_count_type, min.(length.(counts), max_count))
+    return IdDict{UInt64, max_count_type}(zip(guides, counts))
+end
+
+
 function build_dictDB(
     name::String, 
     genomepath::String, 
@@ -23,10 +35,8 @@ function build_dictDB(
 
     # first we measure how many unique guides there are
     @info "Building Dictionary..."
-    max_count_type = smallestutype(unsigned(max_count))
-    dict = IdDict{UInt64, max_count_type}()
-    gatherofftargets!(dict, dbi)
-    
+    dict = build_guide_dict(dbi, max_count)
+
     db = DictDB(dict, dbi)
     save(db, joinpath(storagedir, "dictDB.bin"))
     @info "Finished constructing dictDB in " * storagedir

@@ -11,6 +11,31 @@ of interest while allowing for arbitrary distance
 
 The goal is to make it fast and reliable.
 
+## TODO
+
+# Must do
+
+* prepare pipeline for benchmark of speed against hg38v34!!! (~1 week)
+* fix find_all function to not skip ending NNN (allow them) (1 d)
+* code review and cleanup (3 d)
+* VCF support (5 d)
+* test for EVERY function (2 d)
+* add end-to-end tests for bindDB and dictDB, friction tests too (1 d)
+* more guides for tests - currently we have 20 - we want large range of guides with different properties (1 d)
+* add tests for Cpf1 style PAMs (1 d)
+* add optimizations: @inbounds, @inline etc. (2 d)
+* add EARLY stopping!!! 
+* more testing against CRISPRitz (2 d - 2 weeks)
+* add interface for our standalone and main for binDB, dictDB etc. (1 d)
+* publish code and package!!! - make sure it works
+* finish writing paper!!!
+
+# Maybe
+
+* paralelize binDB! sketchDB (aromic arrays of some sort)?
+* implement faster, non-recurent version of comb_of_d
+
+
 ## License  
 
 Copyright (C) 2021  Kornel Labun

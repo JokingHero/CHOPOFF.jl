@@ -44,7 +44,8 @@ function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}},
     # \  \  \  \
     # 4  5  6  7
     #  \  \ \\ \
-    nodes = Vector{Any}([Pair.(guides, loci_range)])
+    # stop changing type and length of nodes
+    nodes = Vector{Any}([Pair.(guides, loci_range)]) 
     g_len = length(guides[1]) - ext
     i = 1
 
@@ -54,7 +55,7 @@ function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}},
         #@info "leaves: $leaves"
         parent = popat!(leaves, 1)
         #@info "parent: $parent"
-        d_to_p = Base.map(g -> levenshtein(g.first[1:g_len], parent.first, g_len), leaves)
+        d_to_p = ThreadsX.map(g -> levenshtein(g.first[1:g_len], parent.first, g_len), leaves)
         #@info "leaves: $d_to_p"
         if length(d_to_p) != 0
             radius = balance(d_to_p)
@@ -137,6 +138,7 @@ function build_treeDB(
     # step 2
     @info "Step 2: Constructing per prefix db."
     # Iterate over all prefixes and merge different chromosomes
+    i = 0
     for prefix in prefixes
         guides = Vector{LongDNASeq}()
         loci = Vector{Loc}()
@@ -151,6 +153,8 @@ function build_treeDB(
         end
         sdb = to_suffixtree(prefix, guides, loci, motif.distance)
         save(sdb, joinpath(storagedir, string(prefix) * ".bin"))
+        i += 1
+        @info "Done prefixes: " * string(round(i / length(prefixes); digits = 2) * 100)
     end
 
     linDB = TreeDB(dbi, prefixes)

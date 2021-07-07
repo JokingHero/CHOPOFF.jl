@@ -36,12 +36,15 @@ function build_binDB(
     max_count_type = smallestutype(unsigned(max_count))
     if dictDB == ""
         @info "Building Dictionary..."
-        dict = IdDict{UInt64, max_count_type}()
-        gatherofftargets!(dict, dbi)
+        dict = build_guide_dict(dbi, max_count)
     else 
         dict = load(joinpath(dictDB, "dictDB.bin"))
         dict = dict.dict
-        # TODO make sure dict type is max_count_type
+        ktype = valtype(dict)
+        if max_count > typemax(ktype)
+            throw("Dictionary supports only up to " * string(typemax(ktype)) * 
+                " max_count and current max_count is " * string(max_count))
+        end
     end
     max_count = convert(max_count_type, max_count)
 
