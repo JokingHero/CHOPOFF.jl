@@ -11,14 +11,13 @@ end
 
 
 function to_suffix(
-    prefix::LongSequence{DNAAlphabet{4}}, 
     guides::Vector{LongSequence{DNAAlphabet{4}}}, 
     loci::Vector{Loc})
     order = sortperm(guides)
     guides = guides[order]
     loci = loci[order]
-    (suffixes, loci_range) = ranges(guides)
-    return SuffixDB(prefix, suffixes, loci_range, loci)
+    (guides, loci_range) = ranges(guides)
+    return (guides, loci_range, loci)
 end
 
 
@@ -87,7 +86,8 @@ function build_linearDB(
                 rm(p)
             end
         end
-        sdb = to_suffix(prefix, guides, loci)
+        (guides, loci_range, loci) = to_suffix(guides, loci)
+        sdb = SuffixDB(prefix, guides, loci_range, loci)
         save(sdb, joinpath(storagedir, string(prefix) * ".bin"))
     end
 
