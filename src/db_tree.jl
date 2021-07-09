@@ -30,10 +30,6 @@ function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}},
     loci::Vector{Loc}, ext::Int)
     
     db = to_suffix(prefix, guides, loci)
-    guides = db.suffix
-    loci_range = db.suffix_loci_idx
-    loci = db.loci
-
     # construct tree nodes
     # we want consecutive guides to be the ones that are splitting
     # this is the order we want for node array
@@ -45,8 +41,8 @@ function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}},
     # 4  5  6  7
     #  \  \ \\ \
     # stop changing type and length of nodes
-    nodes = Vector{Any}([Pair.(guides, loci_range)]) 
-    g_len = length(guides[1]) - ext
+    nodes = Vector{Any}([Pair.(db.suffix, db.suffix_loci_idx)]) 
+    g_len = length(db.suffix[1]) - ext
     i = 1
 
     while !isnothing(i)
@@ -82,7 +78,7 @@ function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}},
         i = findfirst(x -> typeof(x) != Node, nodes)
     end
     nodes = Vector{Node}(nodes)
-    return SuffixTreeDB(prefix, nodes, loci)
+    return SuffixTreeDB(prefix, nodes, db.loci)
 end
 
 
