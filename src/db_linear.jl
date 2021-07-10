@@ -10,7 +10,7 @@ struct SuffixDB
 end
 
 
-function to_suffix(
+function unique_guides(
     guides::Vector{LongSequence{DNAAlphabet{4}}}, 
     loci::Vector{Loc})
     order = sortperm(guides)
@@ -86,7 +86,7 @@ function build_linearDB(
                 rm(p)
             end
         end
-        (guides, loci_range, loci) = to_suffix(guides, loci)
+        (guides, loci_range, loci) = unique_guides(guides, loci)
         sdb = SuffixDB(prefix, guides, loci_range, loci)
         save(sdb, joinpath(storagedir, string(prefix) * ".bin"))
     end

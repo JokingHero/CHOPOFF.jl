@@ -29,7 +29,7 @@ function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}},
     guides::Vector{LongSequence{DNAAlphabet{4}}}, 
     loci::Vector{Loc}, ext::Int)
     
-    (guides, loci_range, loci) = to_suffix(guides, loci)
+    (guides, loci_range, loci) = unique_guides(guides, loci)
     # construct tree nodes
     # we want consecutive guides to be the ones that are splitting
     # this is the order we want for node array
@@ -41,43 +41,47 @@ function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}},
     # 4  5  6  7
     #  \  \ \\ \
     # stop changing type and length of nodes
-    nodes = Vector{Any}([Pair.(guides, loci_range)]) 
+    n_guides = length(guides)
     g_len = length(guides[1]) - ext
-    i = 1
+    order = zeros(UInt32, n_guides) # of guides and loci_range
+    order[1] = 1 # we take the first guide as leading guide
+    order_idx = 1 # keep track of last filled value
+    inside = zeros(UInt32, n_guides)
+    outside = zeros(UInt32, n_guides)
+    radius = zeros(UInt8, n_guides)
+    parent = ones(UInt32, n_guides)
+    parent[1] = 0
 
-    while !isnothing(i)
-        # take leftmost from queue that is not a Node
-        leaves = nodes[i]
-        #@info "leaves: $leaves"
-        parent = popat!(leaves, 1)
-        #@info "parent: $parent"
-        d_to_p = ThreadsX.map(g -> levenshtein(g.first[1:g_len], parent.first, g_len), leaves)
-        #@info "leaves: $d_to_p"
+    for i in 1:n_guides # represents slot of the order, order[i] will be parent in this iteration
+        # Take all guides that have i'th guide as parent
+        #@info "i is: $i"
+        #@info "leaves of: " * string(order[i])
+        leaves_idx = ThreadsX.findall(isequal(i), parent)
+        d_to_p = ThreadsX.map(l -> levenshtein(guides[l][1:g_len], guides[order[i]], g_len), leaves_idx)
+        #@info "$d_to_p"
         if length(d_to_p) != 0
-            radius = balance(d_to_p)
-            #@info "radius: $radius"
-            inside = leaves[d_to_p .<= radius]
-            outside = leaves[d_to_p .> radius]
-            # add to the queue future left and right
-            if length(inside) > 0
-                push!(nodes, inside)
-                inside_idx = UInt32(length(nodes))
-            else
-                inside_idx = UInt32(0)
+            r = balance(d_to_p)
+            radius[i] = r
+            inside_idx = leaves_idx[d_to_p .<= r]
+            outside_idx = leaves_idx[d_to_p .> r]
+            if length(inside_idx) > 0
+                order_idx += 1
+                inside[i] = order_idx
+                order[order_idx] = pop!(inside_idx) # future parent
+                parent[inside_idx] .= order_idx # future children
             end
-            if length(outside) > 0
-                push!(nodes, outside)
-                outside_idx = UInt32(length(nodes))
-            else
-                outside_idx = UInt32(0)
+            if length(outside_idx) > 0
+                order_idx += 1
+                outside[i] = order_idx
+                order[order_idx] = pop!(outside_idx) # future parent
+                parent[outside_idx] .= order_idx # future children
             end
-            nodes[i] = Node(parent.first, parent.second, UInt8(radius), inside_idx, outside_idx)
-        else
-            nodes[i] = Node(parent.first, parent.second, UInt8(0), UInt32(0), UInt32(0))
         end
-        i = findfirst(x -> typeof(x) != Node, nodes)
     end
-    nodes = Vector{Node}(nodes)
+
+    guides = guides[order]
+    loci_range = loci_range[order]
+    nodes = ThreadsX.map(x -> Node(guides[x], loci_range[x], radius[x], inside[x], outside[x]), 1:n_guides)
     return SuffixTreeDB(prefix, nodes, loci)
 end
 
