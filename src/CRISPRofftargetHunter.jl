@@ -76,6 +76,13 @@ function parse_commandline()
             help = "sketchDB is extremally fast" * 
                 ", but it can only estimate number of off-targets" * 
                 ", however it can never under-estimate, it can only over-estimate."
+        "dictDB"
+            action = :command
+            help = "dictDB is a simple dictionary of all unique guides and their counts."
+        "binDB"
+            action = :command
+            help = "binDB is a binned bloom filter, it is very space efficient " * 
+                "and carries small error during estimations."
         "--name"
             help = "How will you shortly name this database?"
             arg_type = String
@@ -157,6 +164,29 @@ function parse_commandline()
             default = 255
     end
 
+    @add_arg_table! s["build"]["dictDB"] begin
+        "--max_count"
+            help = "Maximum count value for given off-target sequence. " * 
+                "Increasing this value will allow to keep more precise counts of often repeated guide sequences" * 
+                ", but increase the size of the database significantly."
+            arg_type = Int
+            default = 255
+    end
+
+    @add_arg_table! s["build"]["binDB"] begin
+        "--probability_of_error"
+            help = "Defines chance for error off-target counts. " * 
+                "Decreasing this value will increase the size of the sketchDB."
+            arg_type = Float64
+            default = 0.001
+        "--max_count"
+            help = "Maximum count value for given off-target sequence. " * 
+                "Increasing this value will allow to keep more precise counts of often repeated guide sequences" * 
+                ", but increase the size of the database significantly."
+            arg_type = Int
+            default = 10
+    end
+
     @add_arg_table! s["search"] begin
         "--distance"
             help = "Maximum edit distance to analyze. Must be less or equal to distance used when building db."
@@ -173,7 +203,7 @@ function parse_commandline()
         "type"
             help = "Type of the database: treeDB, sketchDB or linearDB."
             arg_type = String
-            range_tester = (x -> x == "sketchDB" || x == "treeDB" || x == "linearDB")
+            range_tester = (x -> x == "sketchDB" || x == "binDB" || x == "dictDB" || x == "treeDB" || x == "linearDB")
             required = true
         "guides"
             help = "File path to the guides, each row in the file contains a guide WITHOUT PAM."
@@ -213,10 +243,19 @@ function main()
         elseif args["%COMMAND%"] == "linearDB"
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
                 args["linearDB"]["prefix_length"])
-        else
+        elseif args["%COMMAND%"] == "sketchDB"
             build_sketchDB(args["name"], args["genome"], motif, args["output"], 
                 args["sketchDB"]["probability_of_error"], args["sketchDB"]["error_size"]; 
                 max_count = args["sketchDB"]["max_count"])
+        elseif args["%COMMAND%"] == "dictDB"
+            build_dictDB(args["name"], args["genome"], motif, args["output"]; 
+                max_count = args["sketchDB"]["max_count"])
+        elseif args["%COMMAND%"] == "binDB"
+            build_binDB(args["name"], args["genome"], motif, args["output"], 
+                args["sketchDB"]["probability_of_error"]; 
+                max_count = args["sketchDB"]["max_count"])
+        else
+            throw("Unsupported database type.")
         end
     elseif args["%COMMAND%"] == "search"
         args = args["search"]
@@ -225,8 +264,14 @@ function main()
             res = search_treeDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "linearDB"
             res = search_linearDB(args["database"], guides, args["distance"]; detail = args["detail"])
-        else
+        elseif args["type"] == "sketchDB"
             res = search_sketchDB(args["database"],  guides, args["distance"])
+        elseif args["type"] == "dictDB"
+            res = search_dictDB(args["database"],  guides, args["distance"])
+        elseif args["type"] == "binDB"
+            res = search_binDB(args["database"],  guides, args["distance"])
+        else
+            throw("Unsupported database type.")
         end
         CSV.write(args["output"], res)
     end
