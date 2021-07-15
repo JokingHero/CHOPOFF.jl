@@ -14,14 +14,14 @@ end
 
 function add_guides!(sketch::HyperLogLog, guides::Vector{LongDNASeq})
     for g in guides
-        push!(sketch, unsigned(DNAMer(g)))
+        push!(sketch, g)
     end
 end
 
 
 function add_guides!(sketch::CountMinSketch, guides::Vector{LongDNASeq})
     for g in guides
-        push!(sketch, unsigned(DNAMer(g)))
+        push!(sketch, g)
     end
 end
 
@@ -162,11 +162,11 @@ function search_sketchDB(
     # TODO check that seq is in line with motif
     res = zeros(Int, length(guides_), (dist + 1) * 3 - 2)
     for (i, s) in enumerate(guides_)
-        res[i, 1] += sdb.sketch[unsigned(DNAMer(s))] # 0 distance
+        res[i, 1] += sdb.sketch[s]
         for d in 1:dist
             norm_d, border_d = comb_of_d(string(s), d)
-            norm_d_res = ThreadsX.sum(sdb.sketch[unsigned(DNAMer(sd))] for sd in norm_d)
-            border_d_res = ThreadsX.sum(sdb.sketch[unsigned(DNAMer(sd))] for sd in border_d)
+            norm_d_res = ThreadsX.sum(sdb.sketch[LongDNASeq(sd)] for sd in norm_d)
+            border_d_res = ThreadsX.sum(sdb.sketch[LongDNASeq(sd)] for sd in border_d) 
             res[i, d + 1] = norm_d_res + border_d_res
             res[i, dist + d + 1] = norm_d_res
             res[i, dist * 2 + d + 1] = border_d_res

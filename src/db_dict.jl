@@ -6,7 +6,6 @@ end
 function add_guides!(dict::IdDict, guides::Vector{LongDNASeq})
     ktype = valtype(dict)
     for value in guides
-        value = unsigned(DNAMer(value))
         dict[value] = safeadd(get(dict, value, convert(ktype, 0)), convert(ktype, 1))
     end
     return dict
@@ -15,12 +14,12 @@ end
 
 function build_guide_dict(dbi::DBInfo, max_count::Int)
     max_count_type = smallestutype(unsigned(max_count))
-    guides = Vector{UInt64}()
+    guides = Vector{LongDNASeq}()
     gatherofftargets!(guides, dbi)
     guides = sort(guides)
     guides, counts = ranges(guides)
     counts = convert.(max_count_type, min.(length.(counts), max_count))
-    return IdDict{UInt64, max_count_type}(zip(guides, counts))
+    return IdDict{LongDNASeq, max_count_type}(zip(guides, counts))
 end
 
 
@@ -63,11 +62,11 @@ function search_dictDB(
     # TODO check that seq is in line with motif
     res = zeros(Int, length(guides_), (dist + 1) * 3 - 2)
     for (i, s) in enumerate(guides_)
-        res[i, 1] += get(sdb.dict, unsigned(DNAMer(s)), 0) # 0 distance
+        res[i, 1] += get(sdb.dict, s, 0) # 0 distance
         for d in 1:dist
             norm_d, border_d = comb_of_d(string(s), d)
-            norm_d_res = ThreadsX.sum(get(sdb.dict, unsigned(DNAMer(LongDNASeq(sd))), 0) for sd in norm_d)
-            border_d_res = ThreadsX.sum(get(sdb.dict, unsigned(DNAMer(LongDNASeq(sd))), 0) for sd in border_d)
+            norm_d_res = ThreadsX.sum(get(sdb.dict, LongDNASeq(sd), 0) for sd in norm_d)
+            border_d_res = ThreadsX.sum(get(sdb.dict, LongDNASeq(sd), 0) for sd in border_d)
             res[i, d + 1] = norm_d_res + border_d_res
             res[i, dist + d + 1] = norm_d_res
             res[i, dist * 2 + d + 1] = border_d_res

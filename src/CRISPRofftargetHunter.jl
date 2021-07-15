@@ -2,6 +2,7 @@ __precompile__(true)
 
 module CRISPRofftargetHunter
 
+using Dates: isequal
 using Base: Float32
 using ArgParse: command_actions
 

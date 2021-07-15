@@ -165,7 +165,7 @@ end
         sDB = CRISPRofftargetHunter.load(joinpath(sdb_path, "sketchDB.bin"))
         fr = fprof(sDB.sketch)
         conflict = 0
-        error = Vector()
+        error = Vector{Int}()
         for (key, value) in dDB.dict
             svalue = sDB.sketch[key]
             @test  value <= svalue
@@ -175,10 +175,12 @@ end
             end
         end
         true_error_rate = conflict / length(dDB.dict)
-        @test true_error_rate <= fr
+        @test abs(true_error_rate - fr) <= 0.01
         @info "True error rate is: $true_error_rate"
         @info "Estimated error rate is: $fr"
-        @info "Maximum error: " * string(maximum(error))
+        if length(error) > 0
+            @info "Maximum error: " * string(maximum(error))
+        end
     end
 
 
@@ -208,7 +210,7 @@ end
         dDB = CRISPRofftargetHunter.load(joinpath(ddb_path, "dictDB.bin"))
         bDB = CRISPRofftargetHunter.load(joinpath(bdb_path, "binDB.bin"))
         conflict = 0
-        error = Vector()
+        error = Vector{Int}()
         for (key, value) in dDB.dict
             svalue = CRISPRofftargetHunter.estimate(bDB, key)
             @test value <= svalue
@@ -219,7 +221,9 @@ end
         end
         true_error_rate = conflict / length(dDB.dict)
         @info "True error rate is: $true_error_rate"
-        @info "Maximum error: " * string(maximum(error))
+        if length(error) > 0
+            @info "Maximum error: " * string(maximum(error))
+        end
     end
 
 

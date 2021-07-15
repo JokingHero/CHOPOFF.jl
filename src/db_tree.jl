@@ -154,7 +154,7 @@ function build_treeDB(
         sdb = to_suffixtree(prefix, guides, loci, motif.distance)
         save(sdb, joinpath(storagedir, string(prefix) * ".bin"))
         i += 1
-        @info "Done prefixes: " * string(round(i / length(prefixes); digits = 2) * 100)
+        #@info "Done prefixes: " * string(round(i / length(prefixes); digits = 2) * 100)
     end
 
     linDB = TreeDB(dbi, prefixes)

@@ -5,7 +5,7 @@ struct BinDB{T<:Unsigned}
 end
 
 
-function estimate(db::BinDB, guide::UInt64)
+function estimate(db::BinDB, guide::LongDNASeq)
     for i in length(db.counts):-1:1
         if guide in db.bins[i]
             return db.counts[i]
@@ -15,9 +15,8 @@ function estimate(db::BinDB, guide::UInt64)
 end
 
 
-function estimate(db::BinDB, guide::Union{LongDNASeq, String})
-    guide = unsigned(DNAMer(guide))
-    return estimate(db, guide)
+function estimate(db::BinDB, guide::String)
+    return estimate(db, LongDNASeq(guide))
 end
 
 
@@ -86,9 +85,9 @@ function build_binDB(
 
     # use full db to estimate error rate!
     conflict = 0
-    error = Vector()
+    error = Vector{Int}()
     for (guide, real_count) in dict
-        est_count = CRISPRofftargetHunter.estimate(db, guide)
+        est_count = estimate(db, guide)
         if real_count >= max_count
             real_count = max_count
         end
@@ -98,11 +97,12 @@ function build_binDB(
         end
     end
     error_rate = conflict / length(dict)
-    mean_err = mean(error)
 
     @info "Finished constructing binDB in " * storagedir
     @info "Estimated probability of miscounting an element in the bins is " * string(round(error_rate; digits = 6))
-    @info "Mean error was " * string(mean_err)
+    if length(error) > 1
+        @info "Mean error was " * string(mmean(error))
+    end
     @info "Database is consuming: " * 
         string(round((filesize(joinpath(storagedir, "binDB.bin")) * 1e-6); digits = 3)) * 
         " mb of disk space."

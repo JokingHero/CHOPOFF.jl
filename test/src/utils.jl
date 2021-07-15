@@ -1,8 +1,10 @@
+using Base: UInt128
 using Test
 
 using BioSequences
 using CRISPRofftargetHunter: safeadd, smallestutype, base_to_idx, 
-    getseq, extension, levenshtein, comb_of_d1, comb_of_d, minkmersize, balance
+    getseq, extension, levenshtein, comb_of_d1, comb_of_d, minkmersize, balance,
+    locate_telomeres, findall
 using Combinatorics
 
 @testset "utils.jl" begin
@@ -58,5 +60,34 @@ using Combinatorics
                 @test Set(combd) == Set(all_comb_d)
             end
         end
+    end
+
+
+    @testset "locate_telomeres" begin
+        @test locate_telomeres(dna"NACTGN") == (2, 5)
+        @test locate_telomeres(dna"ACTGN") == (1, 4)
+        @test locate_telomeres(dna"NACTG") == (2, 5)
+        @test locate_telomeres(dna"ACTG") == (1, 4)
+        @test locate_telomeres(dna"ANGN") == (1, 3)
+    end
+
+    @testset "findall" begin
+        @test isempty(findall(dna"ACTG", dna"AANN"))
+        @test findall(dna"ACTG", dna"NNNG") == [UnitRange(1:4)]
+        @test findall(dna"AAANN", dna"ACTGAAAGACTG") == [UnitRange(5:9)]
+        @test findall(dna"AAANN", dna"ACTGAAAGA") == [UnitRange(5:9)]
+
+        @test findall(dna"AAANN", dna"ACTGAAAGA", 5) == [UnitRange(5:9)]
+        @test findall(dna"AAANN", dna"ACTGAAAGACTG", 5, 9) == [UnitRange(5:9)]
+        @test isempty(findall(dna"AAANN", dna"ACTGAAAGACTG", 6, 9))
+        @test isempty(findall(dna"AAANN", dna"ACTGAAAGACTG", 2, 8))
+    end
+
+    @testset "UInt128 conversion" begin
+        x = dna"AAANRAAATGCTACTG"
+        y = convert(UInt128, x)
+        @test x == convert(LongSequence{DNAAlphabet{4}}, y)
+        @test_throws String convert(UInt128, dna"A-A")
+        @test_throws String convert(UInt128, dna"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
     end
 end

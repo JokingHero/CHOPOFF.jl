@@ -15,19 +15,19 @@ The goal is to make it fast and reliable.
 
 # Must do
 
-* prepare pipeline for benchmark of speed against hg38v34!!! (~1 week)
-* fix find_all function to not skip ending NNN (allow them) (1 d)
-* code review and cleanup (3 d)
-* VCF support (5 d)
-* test for EVERY function (2 d)
+* fix ambiguity in guides for sketches!!!
 * add end-to-end tests for bindDB and dictDB, friction tests too (1 d)
+* add EARLY stopping!!! 
+* VCF support (5 d)
+* implement xor or ribbon filters with upgrade that allows 
+* prepare pipeline for benchmark of speed against hg38v34!!! (~1 week)
+* code review and cleanup (3 d)
+* test for EVERY function (2 d)
 * more guides for tests - currently we have 20 - we want large range of guides with different properties (1 d)
 * add tests for Cpf1 style PAMs (1 d)
 * add optimizations: @inbounds, @inline etc. (2 d)
-* add EARLY stopping!!! 
 * more testing against CRISPRitz (2 d - 2 weeks)
-* add interface for our standalone and main for binDB, dictDB etc. (1 d)
-* publish code and package!!! - make sure it works
+* publish code and package!!! - make sure it works - why forked code does not work?
 * finish writing paper!!!
 
 # Maybe

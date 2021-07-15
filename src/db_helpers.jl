@@ -98,7 +98,16 @@ function gatherofftargets(
 
     if length(query) != 0
         chrom_max = lastindex(chrom)
-        guides_pos = findall(query, chrom)
+        (seq_start, seq_stop) = locate_telomeres(chrom)
+        if reverse_comp ⊻ dbi.motif.extends5
+            seq_start -= dbi.motif.distance
+            seq_start = max(seq_start, 1)
+        else
+            seq_stop += dbi.motif.distance
+            seq_stop = min(seq_stop, length(chrom))
+        end
+
+        guides_pos = findall(query, chrom, seq_start, seq_stop)
         guides = ThreadsX.map(x -> removepam(chrom[x], pam_loci), guides_pos)
 
         # add extension

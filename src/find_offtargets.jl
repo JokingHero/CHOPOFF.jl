@@ -1,10 +1,30 @@
 "
-Find all instances of pat inside seq, disregard seq ambiguous bases.
+Find start and ends of the telomeres if present in the sequence, 
+return start:stop of nontelomeric sequence.
+
+e.g. NNNACTGNNN
+start = 4
+stop = 7
+"
+function locate_telomeres(seq::BioSequence, telomere_symbol = DNA_N)
+    stop = length(seq)
+    start = 1
+    @inbounds while  start <= stop && isequal(telomere_symbol, seq[start])
+        start += 1
+    end
+
+    @inbounds while stop > 0 && isequal(telomere_symbol, seq[stop])
+        stop -= 1
+    end
+
+    return (start, stop)
+end
+
+
+"
+Find all instances of pat inside seq, uses iscompatible for pattern matching.
 Restrict seq to subset of start:stop.
 "
-# TODO we might want to not disregard ambigous bases when they are on
-# the extension! - as this could potentially lose couple overlapping
-# endings NNNNN off-targets
 function Base.findall(pat::BioSequence, seq::BioSequence,
     start::Integer = 1, stop::Integer = lastindex(seq))
 
@@ -18,13 +38,11 @@ function Base.findall(pat::BioSequence, seq::BioSequence,
         return nothing
     end
 
-    while s ≤ stop_
-        if isambiguous(seq[s+m])
-            s += m
-        elseif iscompatible(pat[m], seq[s+m])
+    @inbounds while s ≤ stop_
+        if iscompatible(pat[m], seq[s+m])
             i = m - 1
-            while i > 0
-                if isambiguous(seq[s+i]) || !iscompatible(pat[i], seq[s+i])
+            @inbounds while i > 0
+                if !iscompatible(pat[i], seq[s+i])
                     break
                 end
                 i -= 1
@@ -62,7 +80,6 @@ end
 
 add_guides!(vec::Vector{String}, guides::Vector{LongDNASeq}) = append!(vec, string.(guides))
 add_guides!(vec::Vector{LongDNASeq}, guides::Vector{LongDNASeq}) = append!(vec, guides)
-add_guides!(vec::Vector{UInt64}, guides::Vector{LongDNASeq}) = append!(vec, unsigned.(DNAMer.(guides)))
 
 "
 Will push guides found by the dbi.motif into the output as strings.
@@ -76,14 +93,22 @@ function pushguides!(
     reverse_comp::Bool) where {
         T<:Union{
             IdDict, CountMinSketch, HyperLogLog, 
-            Vector{String}, Vector{LongDNASeq}, Vector{UInt64}}, 
+            Vector{String}, Vector{LongDNASeq}}, 
         K<:BioSequence}
     
     query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd
     pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
 
     if length(query) != 0
-        guides = ThreadsX.map(findall(query, chrom)) do x 
+        (seq_start, seq_stop) = locate_telomeres(chrom)
+        if reverse_comp ⊻ dbi.motif.extends5
+            seq_start -= dbi.motif.distance
+            seq_start = max(seq_start, 1)
+        else
+            seq_stop += dbi.motif.distance
+            seq_stop = min(seq_stop, lastindex(chrom))
+        end
+        guides = ThreadsX.map(findall(query, chrom, seq_start, seq_stop)) do x 
             guide = LongDNASeq(chrom[x])
             guide = removepam(guide, pam_loci)
             # we don't need extensions here

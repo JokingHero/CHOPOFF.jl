@@ -178,3 +178,36 @@ function balance(x::Vector{Int})
     balance = argmin(abs.([sum(counts[1:i]) - sum(counts[i:end]) for i = 1:length(counts)]))
     return uniq[argmin(abs.(uniq .- uniq[balance]))]
 end
+
+
+"
+Transform DNA to UInt128, usefull for hashing, and space saving.
+"
+function Base.convert(::Type{UInt128}, x::LongSequence{DNAAlphabet{4}})
+    gap_idx = findfirst(DNA_Gap, x)
+    x = BioSequences.encoded_data(x)
+    if !isnothing(gap_idx)
+        throw("DNA with gaps can't be converted!")
+    end
+    if length(x) == 2
+        return parse(UInt128, bitstring(x[2]) * bitstring(x[1]); base = 2)
+    elseif length(x) == 1
+        return parse(UInt128, bitstring(UInt64(0)) * bitstring(x[1]); base = 2)
+    else
+        throw("Too long DNA sequence, it has to be less than 31 of length.")
+    end
+end
+
+
+function Base.convert(::Type{LongSequence{DNAAlphabet{4}}}, x::UInt128)
+    x = bitstring(x)
+    x_seq = LongDNASeq("")
+    for i in 1:4:length(x)
+        xi = reinterpret(DNA, parse(UInt8, x[i:i + 3]; base = 2))
+        if xi != DNA_Gap
+            push!(x_seq, xi)
+        end
+    end
+    x_seq = reverse(x_seq)
+    return x_seq
+end
