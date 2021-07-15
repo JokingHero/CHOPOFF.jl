@@ -77,7 +77,14 @@ function build_binDB(
             real_count = max_count
         end
         idx = findfirst(x -> x == real_count, counts)
-        push!(bins[idx], guide)
+        if isambiguous(guide)
+            guide = expand_ambiguous(guide)
+            for g in guide
+                push!(bins[idx], g)
+            end
+        else
+            push!(bins[idx], guide)
+        end
     end
     
     db = BinDB(bins, counts, dbi)
@@ -151,6 +158,10 @@ function search_binDB(
     storagedir::String,
     guides::Vector{LongDNASeq},
     dist::Int = 1)
+
+    if any(isambiguous.(guides))
+        throw("Ambiguous bases are not allowed in guide queries.")
+    end
 
     bdb = load(joinpath(storagedir, "binDB.bin"))
     guides_ = copy(guides)

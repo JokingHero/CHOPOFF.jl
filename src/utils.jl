@@ -211,3 +211,45 @@ function Base.convert(::Type{LongSequence{DNAAlphabet{4}}}, x::UInt128)
     x_seq = reverse(x_seq)
     return x_seq
 end
+
+
+function BioSequences.isambiguous(x::LongDNASeq)
+    return n_ambiguous(x) > length(x)
+end
+
+
+const from_ambiguous = Dict(
+    DNA_N => [DNA_A, DNA_C, DNA_T, DNA_G],
+
+    DNA_B => [       DNA_C, DNA_T, DNA_G],
+    DNA_D => [DNA_A,        DNA_T, DNA_G],
+    DNA_V => [DNA_A, DNA_C,        DNA_G],
+    DNA_H => [DNA_A, DNA_C, DNA_T,      ],
+
+    DNA_K => [              DNA_T, DNA_G],
+    DNA_R => [DNA_A,               DNA_G],
+    DNA_M => [DNA_A, DNA_C,             ],
+    DNA_W => [DNA_A,        DNA_T,      ],
+    DNA_S => [       DNA_C,        DNA_G],
+    DNA_Y => [       DNA_C, DNA_T,      ],
+    )
+
+
+function expand_ambiguous(x::LongDNASeq)
+    amb_dna = Vector{Vector{DNA}}()
+    amb_idx = Vector{Int64}()
+    for (i, dna) in each(isambiguous, x)
+        push!(amb_idx, i)
+        push!(amb_dna, from_ambiguous[dna])
+    end
+    iter = Iterators.product(amb_dna...)
+    res = [copy(x) for i in 1:length(iter)]
+    i = 1
+    for comb in Iterators.product(amb_dna...)
+        for (idx, dna) in zip(amb_idx, comb)
+            res[i][idx] = dna
+        end
+        i += 1
+    end
+    return res
+end

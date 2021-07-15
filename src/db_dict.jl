@@ -3,10 +3,18 @@ struct DictDB
     dbi::DBInfo
 end
 
+
 function add_guides!(dict::IdDict, guides::Vector{LongDNASeq})
     ktype = valtype(dict)
     for value in guides
-        dict[value] = safeadd(get(dict, value, convert(ktype, 0)), convert(ktype, 1))
+        if isambiguous(value)
+            value = expand_ambiguous(value)
+            for v in value
+                dict[v] = safeadd(get(dict, v, convert(ktype, 0)), convert(ktype, 1))
+            end
+        else
+            dict[value] = safeadd(get(dict, value, convert(ktype, 0)), convert(ktype, 1))
+        end
     end
     return dict
 end
@@ -51,6 +59,10 @@ function search_dictDB(
     storagedir::String,
     guides::Vector{LongDNASeq},
     dist::Int = 1)
+
+    if any(isambiguous.(guides))
+        throw("Ambiguous bases are not allowed in guide queries.")
+    end
 
     sdb = load(joinpath(storagedir, "dictDB.bin"))
     guides_ = copy(guides)

@@ -19,6 +19,7 @@ The goal is to make it fast and reliable.
 * add end-to-end tests for bindDB and dictDB, friction tests too (1 d)
 * add EARLY stopping!!! 
 * VCF support (5 d)
+* from the back or from the front on the binDB?! (E claims front, me back)
 * implement xor or ribbon filters with upgrade that allows 
 * prepare pipeline for benchmark of speed against hg38v34!!! (~1 week)
 * code review and cleanup (3 d)

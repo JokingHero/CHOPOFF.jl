@@ -4,7 +4,7 @@ using Test
 using BioSequences
 using CRISPRofftargetHunter: safeadd, smallestutype, base_to_idx, 
     getseq, extension, levenshtein, comb_of_d1, comb_of_d, minkmersize, balance,
-    locate_telomeres, findall
+    locate_telomeres, findall, expand_ambiguous
 using Combinatorics
 
 @testset "utils.jl" begin
@@ -89,5 +89,11 @@ using Combinatorics
         @test x == convert(LongSequence{DNAAlphabet{4}}, y)
         @test_throws String convert(UInt128, dna"A-A")
         @test_throws String convert(UInt128, dna"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    end
+
+    @testset "expand_ambiguous" begin
+        @test expand_ambiguous(dna"ACTG") == [dna"ACTG"]
+        @test expand_ambiguous(dna"AR") == [dna"AA", dna"AG"]
+        @test expand_ambiguous(dna"WR") == [dna"AA", dna"TA", dna"AG", dna"TG"]
     end
 end

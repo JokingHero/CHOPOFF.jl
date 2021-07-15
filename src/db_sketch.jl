@@ -14,7 +14,14 @@ end
 
 function add_guides!(sketch::HyperLogLog, guides::Vector{LongDNASeq})
     for g in guides
-        push!(sketch, g)
+        if isambiguous(g)
+            g = expand_ambiguous(g)
+            for gi in g
+                push!(sketch, gi)
+            end
+        else
+            push!(sketch, g)
+        end
     end
 end
 
@@ -152,6 +159,10 @@ function search_sketchDB(
     guides::Vector{LongDNASeq},
     dist::Int = 1)
 
+    if any(isambiguous.(guides))
+        throw("Ambiguous bases are not allowed in guide queries.")
+    end
+
     sdb = load(joinpath(storagedir, "sketchDB.bin"))
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
@@ -166,7 +177,7 @@ function search_sketchDB(
         for d in 1:dist
             norm_d, border_d = comb_of_d(string(s), d)
             norm_d_res = ThreadsX.sum(sdb.sketch[LongDNASeq(sd)] for sd in norm_d)
-            border_d_res = ThreadsX.sum(sdb.sketch[LongDNASeq(sd)] for sd in border_d) 
+            border_d_res = ThreadsX.sum(sdb.sketch[LongDNASeq(sd)] for sd in border_d)
             res[i, d + 1] = norm_d_res + border_d_res
             res[i, dist + d + 1] = norm_d_res
             res[i, dist * 2 + d + 1] = border_d_res
