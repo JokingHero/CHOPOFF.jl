@@ -16,13 +16,16 @@ using BioSequences
 using Serialization
 using FASTX
 using TwoBit
-using Probably
 using DataFrames
 using Transducers
 using ThreadsX
 using PkgVersion
 using ArgParse
 using CSV
+
+include("sketches/hyperloglog.jl")
+include("sketches/cms.jl")
+include("sketches/bloom.jl")
 
 include("utils.jl")
 include("persistence.jl")
