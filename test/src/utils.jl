@@ -86,9 +86,16 @@ using Combinatorics
     @testset "UInt128 conversion" begin
         x = dna"AAANRAAATGCTACTG"
         y = convert(UInt128, x)
-        @test x == convert(LongSequence{DNAAlphabet{4}}, y)
+        @test x == convert(LongDNASeq, y)
+        x = LongDNASeq("GGAAATGCCCCGCGAACAGG")
+        @test convert(LongDNASeq, convert(UInt128, x)) == x
         @test_throws String convert(UInt128, dna"A-A")
         @test_throws String convert(UInt128, dna"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+
+        for i in 1:10000
+            x = getseq(ceil(Int, rand()*24), ['N', 'A', 'C', 'G', 'T'])
+            @test convert(LongDNASeq, convert(UInt128, x)) == x
+        end
     end
 
     @testset "expand_ambiguous" begin

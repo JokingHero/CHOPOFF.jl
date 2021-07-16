@@ -70,7 +70,6 @@ end
     ddb_path = joinpath(tdir, "dictDB")
     mkpath(ddb_path)
     build_dictDB("samirandom", genome, Motif("Cas9"), ddb_path)
-
     ddb_res = search_dictDB(ddb_path, guides, 2)
 
     @testset "linearDB against CRISPRitz" begin
@@ -166,8 +165,8 @@ end
         conflict = 0
         error = Vector{Int}()
         for (key, value) in dDB.dict
-            svalue = sDB.sketch[key]
-            @test  value <= svalue
+            svalue = sDB.sketch[convert(LongDNASeq, key)]
+            @test value <= svalue
             if svalue != value
                 conflict += 1
                 push!(error, svalue - value)
@@ -211,7 +210,7 @@ end
         conflict = 0
         error = Vector{Int}()
         for (key, value) in dDB.dict
-            svalue = CRISPRofftargetHunter.estimate(bDB, key)
+            svalue = CRISPRofftargetHunter.estimate(bDB, convert(LongDNASeq, key))
             @test value <= svalue
             if svalue != value
                 conflict += 1

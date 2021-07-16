@@ -47,7 +47,7 @@ function Base.show(io::IO, sketch::CountMinSketch{T}) where {T}
 end
 
 index(len, h) = reinterpret(Int, Core.Intrinsics.urem_int(h, reinterpret(UInt64, len))) + 1
-safeadd(x::T, y::T) where {T} = ifelse(x + y ≥ x, x + y, typemax(T))
+#safeadd(x::T, y::T) where {T} = ifelse(x + y ≥ x, x + y, typemax(T))
 
 @inline function increment!(sketch::CountMinSketch{T}, h::UInt64, table::Int, count::T) where {T}
     @inbounds existing = sketch.matrix[index(sketch.len, h), table]

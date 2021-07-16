@@ -12,7 +12,8 @@ function zerorate(sketch::CountMinSketch)
 end
 
 
-function add_guides!(sketch::HyperLogLog, guides::Vector{LongDNASeq})
+function add_guides!(sketch::HyperLogLog, guides::Vector{UInt128})
+    guides = convert.(LongDNASeq, guides)
     for g in guides
         if isambiguous(g)
             g = expand_ambiguous(g)
@@ -26,7 +27,8 @@ function add_guides!(sketch::HyperLogLog, guides::Vector{LongDNASeq})
 end
 
 
-function add_guides!(sketch::CountMinSketch, guides::Vector{LongDNASeq})
+function add_guides!(sketch::CountMinSketch, guides::Vector{UInt128})
+    guides = convert.(LongDNASeq, guides)
     for g in guides
         push!(sketch, g)
     end

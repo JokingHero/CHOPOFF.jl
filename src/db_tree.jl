@@ -6,7 +6,7 @@ to other Nodes that are inside and outside the
 radius.
 "
 struct Node
-    suffix::LongSequence{DNAAlphabet{4}}
+    suffix::LongDNASeq
     loci_idx::LociRange
     radius::UInt8
     inside::UInt32
@@ -19,14 +19,14 @@ Final SuffixVPtreeDB unit that contains all guides from
 all chromosomes that start with the `prefix` and their locations.
 "
 struct SuffixTreeDB
-    prefix::LongSequence{DNAAlphabet{4}}
+    prefix::LongDNASeq
     nodes::Vector{Node}
     loci::Vector{Loc}
 end
 
 
-function to_suffixtree(prefix::LongSequence{DNAAlphabet{4}}, 
-    guides::Vector{LongSequence{DNAAlphabet{4}}}, 
+function to_suffixtree(prefix::LongDNASeq, 
+    guides::Vector{LongDNASeq}, 
     loci::Vector{Loc}, ext::Int)
     
     (guides, loci_range, loci) = unique_guides(guides, loci)
@@ -88,7 +88,7 @@ end
 
 struct TreeDB
     dbi::DBInfo
-    prefixes::Set{LongSequence{DNAAlphabet{4}}}
+    prefixes::Set{LongDNASeq}
 end
 
 
@@ -165,7 +165,7 @@ end
 
 
 function search_prefixtree(
-    prefix::LongSequence{DNAAlphabet{4}},
+    prefix::LongDNASeq,
     dist::Int,
     dbi::DBInfo,
     detail::String,

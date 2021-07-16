@@ -60,7 +60,7 @@ function Base.findall(pat::BioSequence, seq::BioSequence,
 end
 
 
-function strandedguide(guide, reverse_comp::Bool, extends5::Bool)
+function strandedguide(guide::LongDNASeq, reverse_comp::Bool, extends5::Bool)
     if extends5 && reverse_comp
         # CCN ... EXT
         guide = complement(guide)
@@ -78,8 +78,9 @@ function strandedguide(guide, reverse_comp::Bool, extends5::Bool)
 end
 
 
-add_guides!(vec::Vector{String}, guides::Vector{LongDNASeq}) = append!(vec, string.(guides))
-add_guides!(vec::Vector{LongDNASeq}, guides::Vector{LongDNASeq}) = append!(vec, guides)
+add_guides!(vec::Vector{String}, guides::Vector{UInt128}) = append!(vec, string.(convert.(LongDNASeq, guides)))
+#add_guides!(vec::Vector{LongDNASeq}, guides::Vector{UInt128}) = append!(vec, convert.(LongDNASeq, guides))
+add_guides!(vec::Vector{UInt128}, guides::Vector{UInt128}) = append!(vec, guides)
 
 "
 Will push guides found by the dbi.motif into the output as strings.
@@ -93,7 +94,7 @@ function pushguides!(
     reverse_comp::Bool) where {
         T<:Union{
             IdDict, CountMinSketch, HyperLogLog, 
-            Vector{String}, Vector{LongDNASeq}}, 
+            Vector{String}, Vector{UInt128}}, 
         K<:BioSequence}
     
     query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd
@@ -110,10 +111,13 @@ function pushguides!(
         end
         guides = ThreadsX.map(findall(query, chrom, seq_start, seq_stop)) do x 
             guide = LongDNASeq(chrom[x])
+            if isambiguous(guide)
+                @info string(guide)
+            end
             guide = removepam(guide, pam_loci)
             # we don't need extensions here
             guide = strandedguide(guide, reverse_comp, dbi.motif.extends5)
-            guide
+            return convert(UInt128, guide)
         end
         add_guides!(output, guides)
     end

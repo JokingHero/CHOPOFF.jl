@@ -77,6 +77,7 @@ function build_binDB(
             real_count = max_count
         end
         idx = findfirst(x -> x == real_count, counts)
+        guide = convert(LongDNASeq, guide)
         if isambiguous(guide)
             guide = expand_ambiguous(guide)
             for g in guide
@@ -94,7 +95,7 @@ function build_binDB(
     conflict = 0
     error = Vector{Int}()
     for (guide, real_count) in dict
-        est_count = estimate(db, guide)
+        est_count = estimate(db, convert(LongDNASeq, guide))
         if real_count >= max_count
             real_count = max_count
         end

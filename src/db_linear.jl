@@ -3,15 +3,15 @@ Final SuffixDB unit that contains all guides from
 all chromosomes that start with the `prefix` and their locations.
 "
 struct SuffixDB
-    prefix::LongSequence{DNAAlphabet{4}}
-    suffix::Vector{LongSequence{DNAAlphabet{4}}}
+    prefix::LongDNASeq
+    suffix::Vector{LongDNASeq}
     suffix_loci_idx::Vector{LociRange}
     loci::Vector{Loc}
 end
 
 
 function unique_guides(
-    guides::Vector{LongSequence{DNAAlphabet{4}}}, 
+    guides::Vector{LongDNASeq}, 
     loci::Vector{Loc})
     order = sortperm(guides)
     guides = guides[order]
@@ -23,7 +23,7 @@ end
 
 struct LinearDB
     dbi::DBInfo
-    prefixes::Set{LongSequence{DNAAlphabet{4}}}
+    prefixes::Set{LongDNASeq}
 end
 
 
@@ -99,7 +99,7 @@ end
 
 
 function search_prefix(
-    prefix::LongSequence{DNAAlphabet{4}},
+    prefix::LongDNASeq,
     dist::Int,
     dbi::DBInfo,
     detail::String,

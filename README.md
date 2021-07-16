@@ -15,7 +15,6 @@ The goal is to make it fast and reliable.
 
 # Must do
 
-* fix ambiguity in guides for sketches!!!
 * add end-to-end tests for bindDB and dictDB, friction tests too (1 d)
 * add EARLY stopping!!! 
 * VCF support (5 d)

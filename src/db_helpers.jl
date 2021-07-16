@@ -37,8 +37,8 @@ Temporary structure that is build per chromosome, per prefix.
 Slow to save/load.
 "
 struct PrefixDB
-    prefix::LongSequence{DNAAlphabet{4}}
-    suffix::Vector{LongSequence{DNAAlphabet{4}}}
+    prefix::LongDNASeq
+    suffix::Vector{LongDNASeq}
     loci::Vector{Loc}
 end
 
