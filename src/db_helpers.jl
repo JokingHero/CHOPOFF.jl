@@ -107,7 +107,7 @@ function gatherofftargets(
             seq_stop = min(seq_stop, length(chrom))
         end
 
-        guides_pos = findall(query, chrom, seq_start, seq_stop)
+        guides_pos = findall(query, chrom, seq_start, seq_stop; ambig_max = dbi.motif.ambig_max)
         guides = ThreadsX.map(x -> removepam(chrom[x], pam_loci), guides_pos)
 
         # add extension

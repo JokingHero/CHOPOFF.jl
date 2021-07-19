@@ -14,7 +14,7 @@ end
 
 function add_guides!(sketch::HyperLogLog, guides::Vector{LongDNASeq})
     for g in guides
-        if isambiguous(g)
+        if n_ambiguous(g) > 0
             g = expand_ambiguous(g)
             for gi in g
                 push!(sketch, gi)
@@ -159,7 +159,7 @@ function search_sketchDB(
     guides::Vector{LongDNASeq},
     dist::Int = 1)
 
-    if any(isambiguous.(guides))
+    if any(n_ambiguous.(guides) .> 0)
         throw("Ambiguous bases are not allowed in guide queries.")
     end
 

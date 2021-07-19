@@ -210,11 +210,13 @@ end
         conflict = 0
         error = Vector{Int}()
         for (key, value) in dDB.dict
-            svalue = CRISPRofftargetHunter.estimate(bDB, key)
-            @test value <= svalue
-            if svalue != value
-                conflict += 1
-                push!(error, svalue - value)
+            if n_ambiguous(key) == 0
+                svalue = CRISPRofftargetHunter.estimate(bDB, key)
+                @test value <= svalue
+                if svalue != value
+                    conflict += 1
+                    push!(error, svalue - value)
+                end
             end
         end
         true_error_rate = conflict / length(dDB.dict)

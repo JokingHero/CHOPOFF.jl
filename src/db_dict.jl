@@ -18,7 +18,7 @@ end
 function add_guides!(dict::Dict, guides::Vector{LongDNASeq})
     ktype = valtype(dict)
     for value in guides
-        if isambiguous(value)
+        if n_ambiguous(guide) > 0
             value = expand_ambiguous(value)
             for v in value
                 dict[v] = safeadd(get(dict, v, convert(ktype, 0)), convert(ktype, 1))
@@ -60,7 +60,7 @@ function search_dictDB(
     guides::Vector{LongDNASeq},
     dist::Int = 1)
 
-    if any(isambiguous.(guides))
+    if any(n_ambiguous.(guides) .> 0)
         throw("Ambiguous bases are not allowed in guide queries.")
     end
 

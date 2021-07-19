@@ -81,6 +81,10 @@ using Combinatorics
         @test findall(dna"AAANN", dna"ACTGAAAGACTG", 5, 9) == [UnitRange(5:9)]
         @test isempty(findall(dna"AAANN", dna"ACTGAAAGACTG", 6, 9))
         @test isempty(findall(dna"AAANN", dna"ACTGAAAGACTG", 2, 8))
+
+        # ambig limit
+        @test length(findall(dna"AAA", dna"ACTGAAANACTG"; ambig_max = 1)) == 3
+        @test isempty(findall(dna"AAANN", dna"ACTGAAANACTG"; ambig_max = 0))
     end
 
     @testset "UInt128 conversion" begin

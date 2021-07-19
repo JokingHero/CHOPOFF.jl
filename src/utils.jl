@@ -218,11 +218,6 @@ end
 end
 
 
-function BioSequences.isambiguous(x::LongDNASeq)
-    return n_ambiguous(x) > length(x)
-end
-
-
 const from_ambiguous = Dict(
     DNA_N => [DNA_A, DNA_C, DNA_T, DNA_G],
 

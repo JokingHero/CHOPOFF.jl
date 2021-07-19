@@ -16,11 +16,8 @@ The goal is to make it fast and reliable.
 # Must do
 
 * add EARLY stopping!!! 
-* from the back or from the front on the binDB?! (E claims front, me back)
-
-* VCF support (5 d)
+* VCF support (5 d) 
 * Loci Range alternative where we have default value of just one UInt32, else we have UInt8/UInt16 as width! - will decrease the database sizes considerably because most of the guides are unique!
-* filter on ambigous bases during guide search! - 65535, 255
 
 * bloom filter paralelization?!
 * implement xor or ribbon filters with upgrade that allows 

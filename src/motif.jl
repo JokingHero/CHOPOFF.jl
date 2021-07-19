@@ -6,7 +6,8 @@
     forward_strand::Bool = true, 
     reverse_strand::Bool = true, 
     distance::Int = 4, 
-    extends5::Bool = true)`
+    extends5::Bool = true,
+    ambig_max::Int = 5)`
 
 `Motif(alias::String)`
 
@@ -36,7 +37,7 @@ what can be identified as an off-target.
 `extend5`  - Defines how off-targets will be aligned to the guides and where
              extra nucleotides will be added for alignment within distance. Whether
              to extend in the 5' and 3' direction. Cas9 is extend5 = true.
-
+`ambig_max`- How many ambiguous bases are allowed in the pattern?
 
 ```
 Example for Cas9 where we want to search for off-targets within distance of 4:
@@ -47,6 +48,7 @@ Example for Cas9 where we want to search for off-targets within distance of 4:
   reverse:  true
   distance: 4
   extend5:  true
+  ambig_max:5 
 ```
 
 Alignments will be performed from opposite to the extension direction (which is deifned by extend5).
@@ -54,7 +56,7 @@ Alignments will be performed from opposite to the extension direction (which is 
 # Examples
 ```julia-repl
 Motif('Cas9')
-Motif('Cas9', 'NNNNNNNNNNNNNNNNXXX', 'XXXXXXXXXXXXXXXXNGG'. true, true, 3, true)
+Motif('Cas9', 'NNNNNNNNNNNNNNNNXXX', 'XXXXXXXXXXXXXXXXNGG'. true, true, 3, true, 5)
 ```
 """
 struct Motif
@@ -65,6 +67,7 @@ struct Motif
     pam_loci_rve::UnitRange{<:Integer}
     distance::Int
     extends5::Bool
+    ambig_max::Int
 end
 
 function notX(s1, s2, x = 'X')
@@ -100,7 +103,7 @@ end
 function Motif(alias::String,
     fwdmotif::String, fwdpam::String,
     forward_strand::Bool = true, reverse_strand::Bool = true,
-    distance::Int = 4, extends5::Bool = true)
+    distance::Int = 4, extends5::Bool = true, ambig_max::Int = 5)
     if length(fwdmotif) != length(fwdpam)
         throw("fwd_motif and fwd_pam have to have the same length!")
     end
@@ -130,7 +133,7 @@ function Motif(alias::String,
         rve = LongDNASeq("")
     end
 
-    return Motif(alias, fwd, rve, pam_loci_fwd, pam_loci_rve, distance, extends5)
+    return Motif(alias, fwd, rve, pam_loci_fwd, pam_loci_rve, distance, extends5, ambig_max)
 end
 
 
@@ -179,10 +182,10 @@ end
 const motif_db = Dict(
     "Cas9" => Motif("Cas9",
                     "NNNNNNNNNNNNNNNNXXX",
-                    "XXXXXXXXXXXXXXXXNGG", true, true, 4, true),
+                    "XXXXXXXXXXXXXXXXNGG", true, true, 4, true, 5),
     "Cpf1" => Motif("Cas12a",
                     "XXXXNNNNNNNNNNNNNNNNNNNN",
-                    "TTTNXXXXXXXXXXXXXXXXXXXX", true, true, 4, false)
+                    "TTTNXXXXXXXXXXXXXXXXXXXX", true, true, 4, false, 5)
     )
 
 function Motif(alias::String)

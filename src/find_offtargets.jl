@@ -23,10 +23,10 @@ end
 
 "
 Find all instances of pat inside seq, uses iscompatible for pattern matching.
-Restrict seq to subset of start:stop.
+Restrict seq to subset of start:stop and allow maximum `ambig_max` ambiguous bases.
 "
-function Base.findall(pat::BioSequence, seq::BioSequence,
-    start::Integer = 1, stop::Integer = lastindex(seq))
+function Base.findall(pat::T, seq::T,
+    start::Int = 1, stop::Int = lastindex(seq); ambig_max::Int = length(pat)) where T <: BioSequence
 
     res = Vector{UnitRange{Int64}}()
     m = length(pat)
@@ -38,16 +38,25 @@ function Base.findall(pat::BioSequence, seq::BioSequence,
         return nothing
     end
 
+    ambig = 0
     @inbounds while s ≤ stop_
         if iscompatible(pat[m], seq[s+m])
             i = m - 1
+            if isambiguous(seq[s+m])
+                ambig = 1
+            else
+                ambig = 0
+            end
             @inbounds while i > 0
                 if !iscompatible(pat[i], seq[s+i])
                     break
                 end
+                if isambiguous(seq[s+i])
+                    ambig += 1
+                end
                 i -= 1
             end
-            if i == 0
+            if i == 0 && ambig <= ambig_max
                 push!(res, (s+1):(s+length(pat))) #found
             end
             s += 1
@@ -108,9 +117,9 @@ function pushguides!(
             seq_stop += dbi.motif.distance
             seq_stop = min(seq_stop, lastindex(chrom))
         end
-        guides = ThreadsX.map(findall(query, chrom, seq_start, seq_stop)) do x 
+        guides = ThreadsX.map(findall(query, chrom, seq_start, seq_stop; ambig_max = dbi.motif.ambig_max)) do x 
             guide = LongDNASeq(chrom[x])
-            if isambiguous(guide)
+            if n_ambiguous(guide) > 0
                 @info "Ambiguous: " * string(guide)
             end
             guide = removepam(guide, pam_loci)

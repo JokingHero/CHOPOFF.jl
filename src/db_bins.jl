@@ -77,7 +77,7 @@ function build_binDB(
             real_count = max_count
         end
         idx = findfirst(x -> x == real_count, counts)
-        if isambiguous(guide)
+        if n_ambiguous(guide) > 0
             guide = expand_ambiguous(guide)
             for g in guide
                 push!(bins[idx], g)
@@ -94,13 +94,15 @@ function build_binDB(
     conflict = 0
     error = Vector{Int}()
     for (guide, real_count) in dict
-        est_count = estimate(db, guide)
-        if real_count >= max_count
-            real_count = max_count
-        end
-        if  real_count != est_count
-            conflict += 1
-            push!(error, Int(est_count) - Int(real_count))
+        if n_ambiguous(guide) == 0
+            est_count = estimate(db, guide)
+            if real_count >= max_count
+                real_count = max_count
+            end
+            if  real_count != est_count
+                conflict += 1
+                push!(error, Int(est_count) - Int(real_count))
+            end
         end
     end
     error_rate = conflict / length(dict)
@@ -161,7 +163,7 @@ function search_binDB(
     guides::Vector{LongDNASeq},
     dist::Int = 1)
 
-    if any(isambiguous.(guides))
+    if any(n_ambiguous.(guides) .> 0)
         throw("Ambiguous bases are not allowed in guide queries.")
     end
 
