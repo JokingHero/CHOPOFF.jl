@@ -4,7 +4,7 @@ using Test
 using BioSequences
 using CRISPRofftargetHunter: safeadd, smallestutype, base_to_idx, 
     getseq, extension, levenshtein, comb_of_d1, comb_of_d, minkmersize, balance,
-    locate_telomeres, findall, expand_ambiguous
+    locate_telomeres, findall, expand_ambiguous, convert
 using Combinatorics
 
 @testset "utils.jl" begin

@@ -165,7 +165,7 @@ end
         conflict = 0
         error = Vector{Int}()
         for (key, value) in dDB.dict
-            svalue = sDB.sketch[convert(LongDNASeq, key)]
+            svalue = sDB.sketch[key]
             @test value <= svalue
             if svalue != value
                 conflict += 1
@@ -210,7 +210,7 @@ end
         conflict = 0
         error = Vector{Int}()
         for (key, value) in dDB.dict
-            svalue = CRISPRofftargetHunter.estimate(bDB, convert(LongDNASeq, key))
+            svalue = CRISPRofftargetHunter.estimate(bDB, key)
             @test value <= svalue
             if svalue != value
                 conflict += 1

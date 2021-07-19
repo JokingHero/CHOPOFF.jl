@@ -15,10 +15,14 @@ The goal is to make it fast and reliable.
 
 # Must do
 
-* add end-to-end tests for bindDB and dictDB, friction tests too (1 d)
 * add EARLY stopping!!! 
-* VCF support (5 d)
 * from the back or from the front on the binDB?! (E claims front, me back)
+
+* VCF support (5 d)
+* Loci Range alternative where we have default value of just one UInt32, else we have UInt8/UInt16 as width! - will decrease the database sizes considerably because most of the guides are unique!
+* filter on ambigous bases during guide search! - 65535, 255
+
+* bloom filter paralelization?!
 * implement xor or ribbon filters with upgrade that allows 
 * prepare pipeline for benchmark of speed against hg38v34!!! (~1 week)
 * code review and cleanup (3 d)
@@ -27,7 +31,7 @@ The goal is to make it fast and reliable.
 * add tests for Cpf1 style PAMs (1 d)
 * add optimizations: @inbounds, @inline etc. (2 d)
 * more testing against CRISPRitz (2 d - 2 weeks)
-* publish code and package!!! - make sure it works - why forked code does not work?
+* publish code and package!
 * finish writing paper!!!
 
 # Maybe

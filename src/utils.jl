@@ -203,16 +203,17 @@ function Base.convert(::Type{UInt128}, x::LongDNASeq)
 end
 
 
-function Base.convert(::Type{LongDNASeq}, x::UInt128)
+@inline function Base.convert(::Type{LongDNASeq}, x::UInt128)
     x = bitstring(x)
     x_seq = LongDNASeq("")
-    for i in 1:4:length(x)
+    @inbounds for i in reverse(1:4:length(x))
         xi = reinterpret(DNA, parse(UInt8, x[i:i + 3]; base = 2))
         if xi != DNA_Gap
             push!(x_seq, xi)
+        else
+            break # GAP is not allowed
         end
     end
-    x_seq = reverse(x_seq)
     return x_seq
 end
 
