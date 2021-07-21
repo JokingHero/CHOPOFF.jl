@@ -71,12 +71,14 @@ function build_binDB(
         push!(bins, BloomFilter(params.m, params.k))
     end
     counts = [x.first for x in counts]
+    len_noPAM = length_noPAM(dbi.motif)
 
     for (guide, real_count) in dict
         if real_count > max_count
             real_count = max_count
         end
         idx = findfirst(x -> x == real_count, counts)
+        guide = LongDNASeq(guide, len_noPAM)
         if n_ambiguous(guide) > 0
             guide = expand_ambiguous(guide)
             for g in guide
@@ -93,7 +95,9 @@ function build_binDB(
     # use full db to estimate error rate!
     conflict = 0
     error = Vector{Int}()
+    len_noPAM = length_noPAM(dbi.motif)
     for (guide, real_count) in dict
+        guide = LongDNASeq(guide, len_noPAM)
         if n_ambiguous(guide) == 0
             est_count = estimate(db, guide)
             if real_count >= max_count

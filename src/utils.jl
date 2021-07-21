@@ -203,6 +203,7 @@ function Base.convert(::Type{UInt128}, x::LongDNASeq)
 end
 
 
+# Slow!
 @inline function Base.convert(::Type{LongDNASeq}, x::UInt128)
     x = bitstring(x)
     x_seq = LongDNASeq("")
@@ -215,6 +216,13 @@ end
         end
     end
     return x_seq
+end
+
+
+@inline function BioSequences.LongDNASeq(x::UInt128, len::Int)
+    y = LongDNASeq(len)
+    y.data = [convert(UInt64, (x << 64) >> 64), convert(UInt64, x >> 64)]
+    return y
 end
 
 
@@ -252,4 +260,42 @@ function expand_ambiguous(x::LongDNASeq)
         i += 1
     end
     return res
+end
+
+
+function order_by_hamming_and_prefix(guides::Vector{DNAMer{20}}, i::Int64 = 1)
+    guides_len = length(guides)
+    final_order = zeros(Int64, guides_len)
+    is_done = zeros(Bool, guides_len)
+    all_done = 1
+    final_order[all_done] = i
+    
+    while all_done < guides_len
+        is_done[i] = 1
+        g = guides[i]
+        g_h = ThreadsX.map(1:guides_len) do x 
+            if is_done[x]
+                return 0
+            else
+                return CRISPRofftargetHunter.hamming(guides[x], g)
+            end
+        end
+    
+        g_h_min = Vector{Int64}()
+        for w in 1:length(g)
+            g_h_min = ThreadsX.findall(x -> x == w, g_h)
+            if length(g_h_min) > 0 
+                break
+            end
+        end
+    
+        prefix_len = ThreadsX.map(x -> CRISPRofftargetHunter.commonprefix(x, g), guides[g_h_min])
+        max_pl = ThreadsX.maximum(prefix_len)
+        i = g_h_min[ThreadsX.findfirst(x -> x == max_pl, prefix_len)]
+        all_done += 1
+        final_order[all_done] = i
+        @info string(all_done)
+    end
+    
+    return final_order
 end

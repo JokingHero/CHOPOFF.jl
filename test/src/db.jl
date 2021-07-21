@@ -61,16 +61,24 @@ end
     ldb = DataFrame(CSV.File(detail_path))
 
     # make and run default sketchDB
-    sdb_path = joinpath(tdir, "sketchDB")
-    mkpath(sdb_path)
-    build_sketchDB("samirandom", genome, Motif("Cas9"), sdb_path)
-    sdb_res = search_sketchDB(sdb_path, guides, 2)
+    #sdb_path = joinpath(tdir, "sketchDB")
+    #mkpath(sdb_path)
+    #build_sketchDB("samirandom", genome, Motif("Cas9"), sdb_path)
+    #sdb_res = search_sketchDB(sdb_path, guides, 2)
 
     # make and run default dictDB
     ddb_path = joinpath(tdir, "dictDB")
     mkpath(ddb_path)
     build_dictDB("samirandom", genome, Motif("Cas9"), ddb_path)
     ddb_res = search_dictDB(ddb_path, guides, 2)
+
+    # make and run default binhDB
+    bdb_path = joinpath(tdir, "binDB")
+    mkpath(bdb_path)
+    build_binDB("samirandom", genome, Motif("Cas9"), bdb_path)
+    bdb_res = search_binDB(bdb_path, guides, 2)
+
+    len_noPAM = CRISPRofftargetHunter.length_noPAM(Motif("Cas9"))
 
     @testset "linearDB against CRISPRitz" begin
         ## Files
@@ -125,23 +133,24 @@ end
         end
     end
 
-    @testset "linearDB vs sketchDB" begin
-        @test nrow(sdb_res) == length(guides)
-        @test all(sdb_res.guide .== guides)
+    @testset "linearDB vs binDB" begin
+        @test nrow(bdb_res) == length(guides)
+        @test all(bdb_res.guide .== guides)
         @test all(ldb_res.guide .== guides)
         ldb_res2 = Matrix(ldb_res[:, 1:3])
-        sdb_res2 = Matrix(sdb_res[:, 1:3])
+        bdb_res2 = Matrix(bdb_res[:, 1:3])
         for i in 1:length(guides)
-            compare = ldb_res2[i, :] .<= sdb_res2[i, :]
+            compare = ldb_res2[i, :] .<= bdb_res2[i, :]
             @test all(compare)
             if !all(compare)
                 @info "Failed at guideS $i " * string(guides[i])
                 @info "linearDB result: " * string(ldb_res2[i, :])
-                @info "sketchDB result: " * string(sdb_res2[i, :])
+                @info "sketchDB result: " * string(bdb_res2[i, :])
             end
         end
     end
-
+    
+    #=
     @testset "sketchDB vs dictDB" begin
         @test nrow(sdb_res) == nrow(ddb_res)
         @test all(sdb_res.guide .== guides)
@@ -165,11 +174,14 @@ end
         conflict = 0
         error = Vector{Int}()
         for (key, value) in dDB.dict
-            svalue = sDB.sketch[key]
-            @test value <= svalue
-            if svalue != value
-                conflict += 1
-                push!(error, svalue - value)
+            key = LongDNASeq(key, len_noPAM)
+            if n_ambiguous(key) == 0
+                svalue = sDB.sketch[key]
+                @test value <= svalue
+                if svalue != value
+                    conflict += 1
+                    push!(error, svalue - value)
+                end
             end
         end
         true_error_rate = conflict / length(dDB.dict)
@@ -180,15 +192,9 @@ end
             @info "Maximum error: " * string(maximum(error))
         end
     end
-
+    =#
 
     @testset "binDB vs dictDB" begin
-        # make and run default sketchDB
-        bdb_path = joinpath(tdir, "binDB")
-        mkpath(bdb_path)
-        build_binDB("samirandom", genome, Motif("Cas9"), bdb_path)
-
-        bdb_res = search_binDB(bdb_path, guides, 2)
         @test nrow(bdb_res) == nrow(ddb_res)
         @test all(bdb_res.guide .== guides)
         @test all(ddb_res.guide .== guides)
@@ -210,6 +216,7 @@ end
         conflict = 0
         error = Vector{Int}()
         for (key, value) in dDB.dict
+            key = LongDNASeq(key, len_noPAM)
             if n_ambiguous(key) == 0
                 svalue = CRISPRofftargetHunter.estimate(bDB, key)
                 @test value <= svalue

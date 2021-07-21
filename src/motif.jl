@@ -70,6 +70,7 @@ struct Motif
     ambig_max::Int
 end
 
+
 function notX(s1, s2, x = 'X')
     if s1 != x
         return s1
@@ -81,6 +82,7 @@ function notX(s1, s2, x = 'X')
         throw("Both letters are X.")
     end
 end
+
 
 function combinestrings(rule::Function, s1::String, s2::String)
     if (length(s1) != length(s2))
@@ -182,12 +184,13 @@ end
 const motif_db = Dict(
     "Cas9" => Motif("Cas9",
                     "NNNNNNNNNNNNNNNNXXX",
-                    "XXXXXXXXXXXXXXXXNGG", true, true, 4, true, 5),
+                    "XXXXXXXXXXXXXXXXNGG", true, true, 4, true, 0),
     "Cpf1" => Motif("Cas12a",
                     "XXXXNNNNNNNNNNNNNNNNNNNN",
-                    "TTTNXXXXXXXXXXXXXXXXXXXX", true, true, 4, false, 5)
+                    "TTTNXXXXXXXXXXXXXXXXXXXX", true, true, 4, false, 0)
     )
 
+    
 function Motif(alias::String)
     return motif_db[alias]
 end

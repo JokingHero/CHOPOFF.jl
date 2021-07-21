@@ -99,6 +99,7 @@ using Combinatorics
         for i in 1:10000
             x = getseq(ceil(Int, rand()*24), ['N', 'A', 'C', 'G', 'T'])
             @test convert(LongDNASeq, convert(UInt128, x)) == x
+            @test LongDNASeq(convert(UInt128, x), length(x)) == x
         end
     end
 
