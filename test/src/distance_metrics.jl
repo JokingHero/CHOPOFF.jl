@@ -1,6 +1,7 @@
 using Test
 
-using CRISPRofftargetHunter: isinclusive, commonprefix, hamming, levenshtein, pa_sa, align, getseq
+using CRISPRofftargetHunter: isinclusive, commonprefix, hamming, getseq,
+    levenshtein, pa_sa, align, prefix_align, suffix_align!, suffix_align
 using BioSequences
 
 @testset "distance_metrics.jl" begin
@@ -207,5 +208,45 @@ using BioSequences
             @test levenshtein(g, ref, k[i]) == aln.dist
             @test aln.dist == pa_sa(g, ref, k[i] + prefix_len[i], k[i]).dist
         end
+    end
+
+
+    @testset "prefix_ and suffix_! alignment" begin
+
+        function mutate_suffix!(suffix::LongDNASeq, changes::Int = 3)
+            min = length(suffix)
+            for i in changes
+                idx = Int(ceil(rand() * length(suffix)))
+                suffix[idx] = getseq(1)[1]
+                if min > idx
+                    min = idx
+                end
+            end
+            return min
+        end
+
+        guide = getseq() 
+        prefix_len = 7
+        d = 4
+        ref = copy(guide)
+        prefix = ref[1:prefix_len]
+        suffix = ref[prefix_len+1:end]
+
+        # prefix - ref = 0D 
+        # suffix - ref = 0D 
+        pa = prefix_align(guide, prefix, length(suffix), d)
+        pa_old = prefix_align(guide, prefix, length(suffix), d)
+        
+        aln = suffix_align(suffix, pa_old)
+        aln_ = suffix_align!(suffix, pa) # this will progresively mutate pa
+        @test aln == aln_
+        @test pa_old != pa
+
+        # mutate suffix to have 2 changes
+        change_at = mutate_suffix!(suffix, 2)
+        aln = suffix_align(suffix, pa_old)
+        aln_ = suffix_align!(suffix, pa, change_at)
+        @test aln == aln_
+        
     end
 end

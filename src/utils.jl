@@ -181,6 +181,8 @@ end
 
 
 "
+Instead of this there is also BigMER!
+
 Transform DNA to UInt128, usefull for hashing, and space saving.
 We zero bits that are beyond sequence length. No clue why these bits are set.
 "
@@ -226,7 +228,7 @@ end
 end
 
 
-const from_ambiguous = Dict(
+const FROM_AMBIGUOUS = IdDict(
     DNA_N => [DNA_A, DNA_C, DNA_T, DNA_G],
 
     DNA_B => [       DNA_C, DNA_T, DNA_G],
@@ -248,7 +250,7 @@ function expand_ambiguous(x::LongDNASeq)
     amb_idx = Vector{Int64}()
     for (i, dna) in each(isambiguous, x)
         push!(amb_idx, i)
-        push!(amb_dna, from_ambiguous[dna])
+        push!(amb_dna, FROM_AMBIGUOUS[dna])
     end
     iter = Iterators.product(amb_dna...)
     res = [copy(x) for i in 1:length(iter)]
@@ -263,6 +265,11 @@ function expand_ambiguous(x::LongDNASeq)
 end
 
 
+"
+This simplistic strategy seems to compress around 50% more compared to
+super fast sort. Selection of the starting index does not seem to influence
+the compression greatly.
+"
 function order_by_hamming_and_prefix(guides::Vector{DNAMer{20}}, i::Int64 = 1)
     guides_len = length(guides)
     final_order = zeros(Int64, guides_len)
@@ -290,8 +297,7 @@ function order_by_hamming_and_prefix(guides::Vector{DNAMer{20}}, i::Int64 = 1)
         end
     
         prefix_len = ThreadsX.map(x -> CRISPRofftargetHunter.commonprefix(x, g), guides[g_h_min])
-        max_pl = ThreadsX.maximum(prefix_len)
-        i = g_h_min[ThreadsX.findfirst(x -> x == max_pl, prefix_len)]
+        i = g_h_min[argmax(prefix_len)]
         all_done += 1
         final_order[all_done] = i
         @info string(all_done)

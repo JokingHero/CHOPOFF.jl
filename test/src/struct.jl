@@ -12,7 +12,7 @@ using BioSequences
         @test length_noPAM(cas9) == 20
         @test length_noPAM(cpf1) == 24
         @test removepam(dna"ACTNN", 1:3) == dna"NN"
-        @test combinestrings(notX, "XXXACT", "ACTXXX") == "ACTACT"
+        @test combinestrings("XXXACT", "ACTXXX") == "ACTACT"
     end
 
 

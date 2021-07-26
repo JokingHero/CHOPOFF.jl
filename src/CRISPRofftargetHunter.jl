@@ -39,12 +39,13 @@ include("db_helpers.jl")
 include("db_dict.jl")
 include("db_sketch.jl")
 include("db_linear.jl")
+include("db_compressed.jl")
 include("db_tree.jl")
 include("db_bins.jl")
 
 export Motif # motif
 export build_linearDB, search_linearDB # db_linear
-export build_sketchDB, search_sketchDB # db_sketch
+export build_compactDB, search_compactDB
 export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 export build_binDB, search_binDB
@@ -248,9 +249,9 @@ function main()
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
                 args["linearDB"]["prefix_length"])
         elseif args["%COMMAND%"] == "sketchDB"
-            build_sketchDB(args["name"], args["genome"], motif, args["output"], 
-                args["sketchDB"]["probability_of_error"], args["sketchDB"]["error_size"]; 
-                max_count = args["sketchDB"]["max_count"])
+            #build_sketchDB(args["name"], args["genome"], motif, args["output"], 
+            #    args["sketchDB"]["probability_of_error"], args["sketchDB"]["error_size"]; 
+            #    max_count = args["sketchDB"]["max_count"])
         elseif args["%COMMAND%"] == "dictDB"
             build_dictDB(args["name"], args["genome"], motif, args["output"]; 
                 max_count = args["sketchDB"]["max_count"])
@@ -269,7 +270,7 @@ function main()
         elseif args["type"] == "linearDB"
             res = search_linearDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "sketchDB"
-            res = search_sketchDB(args["database"],  guides, args["distance"])
+            #res = search_sketchDB(args["database"],  guides, args["distance"])
         elseif args["type"] == "dictDB"
             res = search_dictDB(args["database"],  guides, args["distance"])
         elseif args["type"] == "binDB"

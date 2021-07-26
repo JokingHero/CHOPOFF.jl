@@ -1,10 +1,11 @@
-struct LociRange
-    start::UInt32
-    stop::UInt32
+const LociRange = UnitRange{UInt32}
+
+
+function recalculate_ranges(x::Vector{LociRange})
+    x = cumsum(length.(x))
+    return LociRange.(vcat(1, x[1:end-1] .+ 1), x)
 end
 
-import Base.length
-@inline length(x::LociRange) = x.stop - x.start + 1
 
 "
 Input has to be sorted beforehand!!!
@@ -108,6 +109,7 @@ function gatherofftargets(
         end
 
         guides_pos = findall(query, chrom, seq_start, seq_stop; ambig_max = dbi.motif.ambig_max)
+        # TODO here do bed overlap filter
         guides = ThreadsX.map(x -> removepam(chrom[x], pam_loci), guides_pos)
 
         # add extension

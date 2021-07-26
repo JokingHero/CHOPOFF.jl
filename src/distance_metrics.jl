@@ -506,6 +506,112 @@ end
 
 
 "
+Mutating pA constantly, restarts alignment from `start_from`.
+"
+function suffix_align!(
+    suffix::K,
+    pA::PrefixAlignment,
+    start_from::Int = 1,
+    ismatch::Function = iscompatible) where {K <: BioSequence}
+
+    # we initialize all array with the top values
+    v = pA.v
+    align = pA.align
+    j_start_max = max(1, pA.guide_len - pA.k)
+    j_end = min(pA.k + pA.prefix_len + start_from - 1, pA.guide_len)
+
+    # we will keep track of the smallest distance in the last column
+    v_min_row = pA.guide_len
+    v_min_col = pA.v_min_col
+    v_min_col_idx = pA.v_min_col_idx
+    if !pA.isfinal
+        @inbounds for l in start_from:pA.suffix_len
+            i = l + pA.prefix_len
+            v_min_row = pA.guide_len # minimum score for each row
+            j_start = max(1, i - pA.k)
+            if j_start > j_start_max
+                j_start = j_start_max
+            end
+            if j_end < pA.guide_len 
+                j_end += 1
+            end
+
+            # sets top_left and left at the begining of the iteration
+            v[i + 1, j_start] = i
+            # going top is gap in the guide
+            align[i + 1, j_start] = g_
+            @inbounds for j = j_start:j_end
+                if !ismatch(suffix[l], pA.guide[j])
+                    # mismatch when all options equal
+                    # top_left < top
+                    if v[i, j] < v[i, j + 1]
+                        # top_left < left
+                        if v[i, j] < v[i + 1, j] # mismatch
+                            v[i + 1, j + 1] = v[i, j] + 1
+                            align[i + 1, j + 1] = nogap
+                        else # gap in ref
+                            v[i + 1, j + 1] = v[i + 1, j] + 1
+                            align[i + 1, j + 1] = ref_
+                        end
+                    else
+                        # top < left
+                        if v[i, j + 1] < v[i + 1, j] # gap in guide
+                            v[i + 1, j + 1] = v[i, j + 1] + 1
+                            align[i + 1, j + 1] = g_
+                        else # gap in ref
+                            v[i + 1, j + 1] = v[i + 1, j] + 1
+                            align[i + 1, j + 1] = ref_
+                        end
+                    end
+                else # match
+                    v[i + 1, j + 1] = v[i, j]
+                    align[i + 1, j + 1] = nogap
+                end
+
+                if v[i + 1, j + 1] < v_min_row
+                    v_min_row = v[i + 1, j + 1]
+                end
+
+                # we calculate for last column
+                if j == pA.guide_len && v[i + 1, end] < v_min_col
+                    v_min_col = v[i + 1, end]
+                    v_min_col_idx = i + 1
+                end
+            end
+            # v_min_row keeps smallest value for this row
+            # we don't return anything yet as 
+            # the smallest is in the last column not row!
+            v_min_row > pA.k && break
+        end
+    end
+    if v_min_col > pA.k
+        return Aln("", "", pA.k + 1)
+    end
+
+    j = pA.guide_len + 1 # j along guide, i along reference
+    aln_g, aln_ref = "", ""
+    ref = string(pA.prefix) * string(suffix)
+    while v_min_col_idx > 1 || j > 1
+        if align[v_min_col_idx, j] == nogap
+            aln_g *= string(pA.guide[j - 1])
+            aln_ref *= string(ref[v_min_col_idx - 1])
+            v_min_col_idx -= 1
+            j -= 1
+        elseif align[v_min_col_idx, j] == g_
+            aln_g *= "-"
+            aln_ref *= string(ref[v_min_col_idx - 1])
+            v_min_col_idx -= 1
+        else
+            aln_g *= string(pA.guide[j - 1])
+            aln_ref *= "-"
+            j -= 1
+        end
+    end
+    return Aln(reverse(aln_g), reverse(aln_ref), v_min_col)
+end
+
+
+"
 Created for testing purposes, performs prefix alignment followed
 by suffix alignment.
 "

@@ -84,7 +84,7 @@ function notX(s1, s2, x = 'X')
 end
 
 
-function combinestrings(rule::Function, s1::String, s2::String)
+function combinestrings(s1::String, s2::String, rule::Function = notX)
     if (length(s1) != length(s2))
         error("Unequal lengths.")
     end
@@ -116,7 +116,7 @@ function Motif(alias::String,
         fwdmotif = fwdmotif * repeat("N", distance)
         fwdpam = fwdpam * repeat("X", distance)
     end
-    merge = combinestrings(notX, fwdmotif, fwdpam)
+    merge = combinestrings(fwdmotif, fwdpam)
 
     if forward_strand
         # where is PAM located?
