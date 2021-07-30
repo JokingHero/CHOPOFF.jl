@@ -507,6 +507,7 @@ end
 
 "
 Mutating pA constantly, restarts alignment from `start_from`.
+`start_from` should be relative to the suffix.
 "
 function suffix_align!(
     suffix::K,
@@ -517,13 +518,14 @@ function suffix_align!(
     # we initialize all array with the top values
     v = pA.v
     align = pA.align
+    
     j_start_max = max(1, pA.guide_len - pA.k)
-    j_end = min(pA.k + pA.prefix_len + start_from - 1, pA.guide_len)
+    ref_start_from = pA.prefix_len + start_from
+    j_end = min(pA.k + ref_start_from - 1, pA.guide_len)
 
     # we will keep track of the smallest distance in the last column
     v_min_row = pA.guide_len
-    v_min_col = pA.v_min_col
-    v_min_col_idx = pA.v_min_col_idx
+    v_min_col, v_min_col_idx = findmin(v[1:ref_start_from, end])
     if !pA.isfinal
         @inbounds for l in start_from:pA.suffix_len
             i = l + pA.prefix_len

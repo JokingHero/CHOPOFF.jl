@@ -225,28 +225,37 @@ using BioSequences
             return min
         end
 
-        guide = getseq() 
-        prefix_len = 7
-        d = 4
-        ref = copy(guide)
-        prefix = ref[1:prefix_len]
-        suffix = ref[prefix_len+1:end]
+        for i in 1:10000
 
-        # prefix - ref = 0D 
-        # suffix - ref = 0D 
-        pa = prefix_align(guide, prefix, length(suffix), d)
-        pa_old = prefix_align(guide, prefix, length(suffix), d)
-        
-        aln = suffix_align(suffix, pa_old)
-        aln_ = suffix_align!(suffix, pa) # this will progresively mutate pa
-        @test aln == aln_
-        @test pa_old != pa
-
-        # mutate suffix to have 2 changes
-        change_at = mutate_suffix!(suffix, 2)
-        aln = suffix_align(suffix, pa_old)
-        aln_ = suffix_align!(suffix, pa, change_at)
-        @test aln == aln_
-        
+            guide = getseq()
+            prefix_len = 7
+            d = 4
+            ref = copy(guide)
+            prefix = ref[1:prefix_len]
+            suffix = ref[prefix_len+1:end]
+    
+            # prefix - ref = 0D 
+            # suffix - ref = 0D 
+            pa = prefix_align(guide, prefix, length(suffix), d)
+            pa_old = prefix_align(guide, prefix, length(suffix), d)
+            
+            aln = suffix_align(suffix, pa_old)
+            aln_ = suffix_align!(suffix, pa) # this will progresively mutate pa
+            @test aln == aln_
+            @test pa_old != pa
+    
+            # mutate suffix to have changes
+            while aln_.dist != 5
+                change_at = mutate_suffix!(suffix, ceil(Int, rand() * 4))
+                aln = suffix_align(suffix, pa_old)
+                aln_ = suffix_align!(suffix, pa, change_at)
+                @test aln == aln_
+                if aln != aln_
+                    @show "$suffix"
+                    @show "$guide" 
+                    break
+                end
+            end
+        end
     end
 end
