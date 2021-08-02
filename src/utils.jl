@@ -228,6 +228,11 @@ end
 end
 
 
+function isambig(x::LongDNASeq)
+    return count(isambiguous, x) > 0
+end
+
+
 const FROM_AMBIGUOUS = IdDict(
     DNA_N => [DNA_A, DNA_C, DNA_T, DNA_G],
 
@@ -270,7 +275,7 @@ This simplistic strategy seems to compress around 50% more compared to
 super fast sort. Selection of the starting index does not seem to influence
 the compression greatly.
 "
-function order_by_hamming_and_prefix(guides::Vector{DNAMer{20}}, i::Int64 = 1)
+function order_by_hamming_and_prefix(guides::Vector{LongDNASeq}, i::Int64 = 1)
     guides_len = length(guides)
     final_order = zeros(Int64, guides_len)
     is_done = zeros(Bool, guides_len)
@@ -300,7 +305,6 @@ function order_by_hamming_and_prefix(guides::Vector{DNAMer{20}}, i::Int64 = 1)
         i = g_h_min[argmax(prefix_len)]
         all_done += 1
         final_order[all_done] = i
-        @info string(all_done)
     end
     
     return final_order

@@ -5,6 +5,7 @@ module CRISPRofftargetHunter
 using Dates: isequal
 using Base: Float32
 using ArgParse: command_actions
+using BioSymbols: isambiguous
 
 using CRC32c
 using Dates
@@ -45,7 +46,7 @@ include("db_bins.jl")
 
 export Motif # motif
 export build_linearDB, search_linearDB # db_linear
-export build_compactDB, search_compactDB
+export build_compactDB, search_compactDB # db_compressed
 export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 export build_binDB, search_binDB

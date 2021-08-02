@@ -105,7 +105,7 @@ end
 function Motif(alias::String,
     fwdmotif::String, fwdpam::String,
     forward_strand::Bool = true, reverse_strand::Bool = true,
-    distance::Int = 4, extends5::Bool = true, ambig_max::Int = 5)
+    distance::Int = 4, extends5::Bool = true, ambig_max::Int = 4)
     if length(fwdmotif) != length(fwdpam)
         throw("fwd_motif and fwd_pam have to have the same length!")
     end

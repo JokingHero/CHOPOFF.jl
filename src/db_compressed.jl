@@ -60,7 +60,7 @@ end
 function guide_diff(p::LongDNASeq, n::LongDNASeq)
     diff = Vector{UInt8}()
     @inbounds for (i, g) in enumerate(p)
-        if !ismatch(g, n[i])
+        if !iscompatible(g, n[i]) # TODO?!
             push!(diff, encode_seq_diff(i, n[i]))
         end
     end
@@ -143,15 +143,15 @@ function build_compactDB(
                 rm(p)
             end
         end
-        # ambig suffixes
-        ambig_idx = ThreadsX.findall(x -> n_ambigous(x) > 0, guides)
+        # ambig suffixes & ambig extensions
+        ambig_idx = ThreadsX.findall(isambig, guides)
         ambig_suffixes = guides[ambig_idx]
         ambig_loci = loci[ambig_idx]
         deleteat!(guides, ambig_idx)
         deleteat!(loci, ambig_idx)
         # repeated guides with count >= 255
         (guides, loci_range, loci) = unique_guides(guides, loci)
-        overflow_idx = ThreadsX.findall(x -> length(x) >= 255)
+        overflow_idx = ThreadsX.findall(x -> length(x) >= 255, loci_range)
         overflow_suffixes = guides[overflow_idx]
         deleteat!(guides, overflow_idx)
         overflow_loci_range = loci_range[overflow_idx]
@@ -184,9 +184,9 @@ end
 
 
 function write_detail(
-    detail_file::IOStream, offtargets::Vector{Loc}, dbi::DBInfo, 
-    guide_stranded::LongDNASeq, aln_guide::LongDNASeq, 
-    aln_ref::LongDNASeq, aln_dist::Int)
+    detail_file::IOStream, offtargets::Vector{T}, dbi::DBInfo, 
+    guide_stranded::LongDNASeq, aln_guide::String, 
+    aln_ref::String, aln_dist::Int) where T <: Loc
     if dbi.motif.extends5
         guide_stranded = reverse(guide_stranded)
         aln_guide = reverse(aln_guide)
@@ -217,6 +217,10 @@ function search_compact_prefix!(
         detail_file = open(detail_path, "w")
     end
 
+    if prefix == dna"CTGCCCT"
+        @show "here"
+    end
+
     # prefix alignment against all the guides
     suffix_len = length_noPAM(dbi.motif) + dbi.motif.distance - length(prefix)
     prefix_aln = Base.map(g -> prefix_align(g, prefix, suffix_len, dist), guides)
@@ -243,6 +247,27 @@ function search_compact_prefix!(
                     if detail != ""
                         write_detail(
                             detail_file, db.overflow_loci[sl_idx], dbi, 
+                            prefix_aln[i].guide, suffix_aln.guide, 
+                            suffix_aln.ref, suffix_aln.dist)
+                    end
+                end
+            end
+        end
+    end
+
+    # check ambig guides # add VCF here?
+    for (j, suffix) in enumerate(db.ambig_suffixes)
+        for i in 1:length(guides)
+            if !isfinal[i] && !is_early_stopped[i]
+                suffix_aln = suffix_align(suffix, prefix_aln[i])
+                if suffix_aln.dist <= dist
+                    res[i, suffix_aln.dist + 1] += 1
+                    if res[i, suffix_aln.dist + 1] >= early_stop[suffix_aln.dist + 1]
+                        is_early_stopped[i] <- true
+                    end
+                    if detail != ""
+                        write_detail(
+                            detail_file, [db.ambig_loci[j]], dbi, 
                             prefix_aln[i].guide, suffix_aln.guide, 
                             suffix_aln.ref, suffix_aln.dist)
                     end
@@ -281,8 +306,6 @@ function search_compact_prefix!(
         idx_loci_start += db.suffix_loci_count[j]
     end
 
-    # TODO vcf guides
-
     if detail != ""
         close(detail_file)
     end
@@ -318,7 +341,7 @@ function search_compactDB(
     storagedir::String, 
     guides::Vector{LongDNASeq}, 
     dist::Int = 4,
-    early_stop::Vector{Int} = zeros(Int, dist); 
+    early_stop::Vector{Int} = repeat([250], dist + 1); 
     detail::String = "")
 
     ldb = load(joinpath(storagedir, "linearDB.bin"))
@@ -335,7 +358,7 @@ function search_compactDB(
     end
 
     res = zeros(Int, length(guides_), dist + 1)
-    is_early_stopped = ones(Bool, length(guides))
+    is_early_stopped = zeros(Bool, length(guides))
     for p in prefixes
         search_compact_prefix!(
             res, is_early_stopped, p, dist, early_stop, 
@@ -363,6 +386,6 @@ function search_compactDB(
     rename!(res, col_d)
     res.guide = guides
     res.early_stopped = is_early_stopped
-    sort!(res, [order(Symbol("early_stopped"), rev = true), col_d])
+    sort!(res, vcat(order(Symbol("early_stopped"), rev = true), col_d))
     return res
 end
