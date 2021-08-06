@@ -23,6 +23,7 @@ using ThreadsX
 using PkgVersion
 using ArgParse
 using CSV
+using ProgressMeter
 
 include("sketches/hyperloglog.jl")
 include("sketches/cms.jl")

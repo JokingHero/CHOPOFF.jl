@@ -131,7 +131,7 @@ function build_compactDB(
     # step 2
     @info "Step 2: Constructing per prefix compactDB."
     # Iterate over all prefixes and merge different chromosomes
-    ThreadsX.map(prefixes) do prefix
+    @showprogress 60 for prefix in prefixes
         guides = Vector{LongDNASeq}()
         loci = Vector{Loc}()
         for chrom in dbi.chrom
@@ -215,10 +215,6 @@ function search_compact_prefix!(
     if detail != ""
         detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
         detail_file = open(detail_path, "w")
-    end
-
-    if prefix == dna"CTGCCCT"
-        @show "here"
     end
 
     # prefix alignment against all the guides
