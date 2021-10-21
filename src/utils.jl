@@ -221,10 +221,19 @@ end
 end
 
 
+function Base.convert(::Type{UInt64}, x::LongDNASeq)
+    return BioSequences.encoded_data(DNAMer(x))
+end
+
+
 @inline function BioSequences.LongDNASeq(x::UInt128, len::Int)
     y = LongDNASeq(len)
     y.data = [convert(UInt64, (x << 64) >> 64), convert(UInt64, x >> 64)]
     return y
+end
+
+@inline function BioSequences.LongDNASeq(x::UInt64, len::Int)
+    return LongDNASeq(DNAMer{len}(x))
 end
 
 

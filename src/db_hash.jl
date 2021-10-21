@@ -1,13 +1,18 @@
-struct BinDB{T<:Unsigned}
-    bins::Vector{BloomFilter}
-    counts::Vector{T}
+struct HashDB{T<:Unsigned}
     dbi::DBInfo
+    bins_d0::Vector{Union{BinaryFuseFilter{UInt8}, Nothing}}
+    bins_d1::Vector{Union{BinaryFuseFilter{UInt8}, Nothing}}
+    bins_d2::Vector{Union{BinaryFuseFilter{UInt8}, Nothing}}
+    ambig::AmbigIdx # if length = 0 then no ambig found
+    #vcf::Vector{AmbigIdx}
+    #vcf_names::Vector{String}
+    counts::Vector{T}
 end
 
 
-function estimate(db::BinDB, guide::LongDNASeq)
+function estimate(db::HashDB, guide::LongDNASeq) # TODO add direction
     for i in length(db.counts):-1:1
-        if guide in db.bins[i]
+        if convert(UInt64, guide) in db.bins[i]
             return db.counts[i]
         end
     end
@@ -15,82 +20,55 @@ function estimate(db::BinDB, guide::LongDNASeq)
 end
 
 
-function estimate(db::BinDB, guide::String)
+function estimate(db::HashDB, guide::String)
     return estimate(db, LongDNASeq(guide))
 end
 
 
-function build_binDB(
+function build_hashDB(
     name::String, 
     genomepath::String, 
     motif::Motif,
     storagedir::String,
     dictDB::String = "";
-    probability_of_error::Float64 = 0.001,
+    seed::UInt64 = UInt64(0x726b2b9d438b9d4d),
+    max_iterations::Int = 10,
     max_count::Int = 10)
 
+    # assume we will allow search within distance of 2
+    # extend motif to include 2 additional bases in the tail
     dbi = DBInfo(genomepath, name, motif)
-
-    # first we measure how many unique guides there are
-    max_count_type = smallestutype(unsigned(max_count))
-    if dictDB == ""
-        @info "Building Dictionary..."
-        dict = build_guide_dict(dbi, max_count, UInt128)
-    else 
-        dict = load(joinpath(dictDB, "dictDB.bin"))
-        dict = dict.dict
-        ktype = valtype(dict)
-        if max_count > typemax(ktype)
-            throw("Dictionary supports only up to " * string(typemax(ktype)) * 
-                " max_count and current max_count is " * string(max_count))
-        end
-    end
-    max_count = convert(max_count_type, max_count)
-
-    counts = IdDict{UInt8, Int}()
-    for v in values(dict)
-        if v >= max_count
-            counts[max_count] = get(counts, max_count, 0) + 1
-        else
-            counts[v] = get(counts, v, 0) + 1
-        end
-    end
-
-    # we sort size of the key from smallest to biggest
-    order = sortperm(collect(keys(counts)))
-    counts = collect(counts)
-    counts = counts[order]
-
-    # now for every single count we build BloomFilters
-    bins = Vector{BloomFilter}()
-    for c in counts
-        params = constrain(
-            BloomFilter, 
-            fpr = probability_of_error, 
-            capacity = c.second)
-        push!(bins, BloomFilter(params.m, params.k))
-    end
-    counts = [x.first for x in counts]
-    len_noPAM = length_noPAM(dbi.motif)
-
-    for (guide, real_count) in dict
-        if real_count > max_count
-            real_count = max_count
-        end
-        idx = findfirst(x -> x == real_count, counts)
-        guide = LongDNASeq(guide, len_noPAM)
-        if n_ambiguous(guide) > 0
-            guide = expand_ambiguous(guide)
-            for g in guide
-                push!(bins[idx], g)
-            end
-        else
-            push!(bins[idx], guide)
-        end
-    end
+    if motif.distance > 2
+        throw("Only distance below 3 is supported!")
     
-    db = BinDB(bins, counts, dbi)
-    save(db, joinpath(storagedir, "binDB.bin"))
+    # gather all unique off-targets
+    max_count_type = smallestutype(unsigned(max_count))
+    guides = Vector{guide_type}()
+    gatherofftargets!(guides, dbi)
+    guides = sort(guides)
+    guides, counts = ranges(guides)
+    counts = convert.(max_count_type, min.(length.(counts), max_count))
+
+
+
+    max_count = convert(max_count_type, max_count)
+    dict_counts = collect(values(dict))
+    dict_guides = collect(keys(dict))
+
+    bins = Vector{BinaryFuseFilter{UInt8}}()
+    counts = Vector{max_count_type}()
+    for count in 1:max_count
+        idx = findall(x -> x == count, dict_counts)
+        if length(idx) != 0
+            push!(counts, convert(max_count_type, count))
+            push!(bins, 
+                BinaryFuseFilter{UInt8}(dict_guides[idx]; seed = seed, max_iterations = max_iterations))
+        end
+    end
+
+    # TODO ambiguous
+    db = nothing #HashDB(dbi, bins, counts)
+    save(db, joinpath(storagedir, "hashDB.bin"))
 
     # use full db to estimate error rate!
     conflict = 0
@@ -111,22 +89,22 @@ function build_binDB(
     end
     error_rate = conflict / length(dict)
 
-    @info "Finished constructing binDB in " * storagedir * " consuming "  * 
-        string(round((filesize(joinpath(storagedir, "binDB.bin")) * 1e-6); digits = 3)) * 
+    @info "Finished constructing hashDB in " * storagedir * " consuming "  * 
+        string(round((filesize(joinpath(storagedir, "hashDB.bin")) * 1e-6); digits = 3)) * 
         " mb of disk space."
     @info "Estimated probability of miscounting an element in the bins is " * string(round(error_rate; digits = 6))
     if length(error) > 1
         @info "Mean error was " * string(mean(error))
     end
     @info "Database is consuming: " * 
-        string(round((filesize(joinpath(storagedir, "binDB.bin")) * 1e-6); digits = 3)) * 
+        string(round((filesize(joinpath(storagedir, "hashDB.bin")) * 1e-6); digits = 3)) * 
         " mb of disk space."
     return storagedir
 end
 
 
 """
-`search_binDB(
+`search_hashDB(
     storagedir::String,
     guides::Vector{LongDNASeq},
     dist::Int = 1)`
@@ -162,7 +140,7 @@ DB1, DB2, ... DB`distance` - same as above, but these values are representing "b
 genomic extension is not known and only asummed the worse case. These values are assuming worst case, 
 and therefore are overestimating extensively with increasing `distance`.
 """
-function search_binDB(
+function search_hashDB(
     storagedir::String,
     guides::Vector{LongDNASeq},
     dist::Int = 1)
@@ -171,7 +149,7 @@ function search_binDB(
         throw("Ambiguous bases are not allowed in guide queries.")
     end
 
-    bdb = load(joinpath(storagedir, "binDB.bin"))
+    bdb = load(joinpath(storagedir, "hashDB.bin"))
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
     if bdb.dbi.motif.extends5

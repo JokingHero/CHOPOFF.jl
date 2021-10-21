@@ -90,6 +90,7 @@ end
 add_guides!(vec::Vector{String}, guides::Vector{LongDNASeq}) = append!(vec, string.(guides))
 add_guides!(vec::Vector{DNAMer{20}}, guides::Vector{LongDNASeq}) = append!(vec, DNAMer{20}.(guides))
 add_guides!(vec::Vector{UInt128}, guides::Vector{UInt128}) = append!(vec, guides)
+add_guides!(vec::Vector{UInt64}, guides::Vector{UInt64}) = append!(vec, guides)
 
 "
 Will push guides found by the dbi.motif into the output as strings.
@@ -103,12 +104,13 @@ function pushguides!(
     reverse_comp::Bool, ambig::Int) where {
         T<:Union{
             CountMinSketch, HyperLogLog, Vector{String}, Vector{DNAMer{20}},
-            Vector{UInt128}}, 
+            Vector{UInt128}, Vector{UInt64}}, 
         K<:BioSequence}
     
     query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd
     pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
     as_UInt128 = output isa Vector{UInt128}
+    as_UInt64 = output isa Vector{UInt64}
 
     if length(query) != 0
         (seq_start, seq_stop) = locate_telomeres(chrom)
@@ -129,6 +131,9 @@ function pushguides!(
             guide = strandedguide(guide, reverse_comp, dbi.motif.extends5)
             if as_UInt128
                 return convert(UInt128, guide)
+            end
+            if as_UInt64 # TODO ambigous will crash this
+                return convert(UInt64, guide)
             end
             return guide
         end

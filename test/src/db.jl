@@ -6,7 +6,7 @@ using CSV
 using DataFrames
 
 ## SET WD when debugging
-# cd("test")
+cd("test")
 
 ## CRISPRitz compare functions - we test with up to 4 distance
 function asguide(x::String)
@@ -77,6 +77,12 @@ end
     mkpath(bdb_path)
     build_binDB("samirandom", genome, Motif("Cas9"), bdb_path)
     bdb_res = search_binDB(bdb_path, guides, 2)
+
+    # make and run default hashDB
+    hdb_path = joinpath(tdir, "hashDB")
+    mkpath(hdb_path)
+    build_hashDB("samirandom", genome, Motif("Cas9"), hdb_path)
+    hdb_res = search_hashDB(hdb_path, guides, 2)
 
     len_noPAM = CRISPRofftargetHunter.length_noPAM(Motif("Cas9"))
 
@@ -151,6 +157,24 @@ end
         end
     end
 
+
+    @testset "linearDB vs hashDB" begin
+        @test nrow(hdb_res) == length(guides)
+        @test all(hdb_res.guide .== guides)
+        @test all(ldb_res.guide .== guides)
+        ldb_res2 = Matrix(ldb_res[:, 1:3])
+        hdb_res2 = Matrix(hdb_res[:, 1:3])
+        for i in 1:length(guides)
+            compare = ldb_res2[i, :] .<= hdb_res2[i, :]
+            @test all(compare)
+            if !all(compare)
+                @info "Failed at guideS $i " * string(guides[i])
+                @info "linearDB result: " * string(ldb_res2[i, :])
+                @info "sketchDB result: " * string(hdb_res2[i, :])
+            end
+        end
+    end
+
     
     #=
     @testset "sketchDB vs dictDB" begin
@@ -216,6 +240,46 @@ end
         # Now check complete dictionary vs sketch
         dDB = CRISPRofftargetHunter.load(joinpath(ddb_path, "dictDB.bin"))
         bDB = CRISPRofftargetHunter.load(joinpath(bdb_path, "binDB.bin"))
+        conflict = 0
+        error = Vector{Int}()
+        for (key, value) in dDB.dict
+            key = LongDNASeq(key, len_noPAM)
+            if n_ambiguous(key) == 0
+                svalue = CRISPRofftargetHunter.estimate(bDB, key)
+                @test value <= svalue
+                if svalue != value
+                    conflict += 1
+                    push!(error, svalue - value)
+                end
+            end
+        end
+        true_error_rate = conflict / length(dDB.dict)
+        @info "True error rate is: $true_error_rate"
+        if length(error) > 0
+            @info "Maximum error: " * string(maximum(error))
+        end
+    end
+
+
+    @testset "hashDB vs dictDB" begin
+        @test nrow(hdb_res) == nrow(ddb_res)
+        @test all(hdb_res.guide .== guides)
+        @test all(ddb_res.guide .== guides)
+        ddb_res2 = Matrix(ddb_res)
+        hdb_res2 = Matrix(hdb_res)
+        for i in 1:length(guides)
+            compare = ddb_res2[i, :] .<= hdb_res2[i, :]
+            @test all(compare)
+            if !all(compare)
+                @info "Failed at guideS $i " * string(guides[i])
+                @info "dictDB result: " * string(ddb_res2[i, :])
+                @info "hashDB result: " * string(hdb_res2[i, :])
+            end
+        end
+        
+        # Now check complete dictionary vs sketch
+        dDB = CRISPRofftargetHunter.load(joinpath(ddb_path, "dictDB.bin"))
+        bDB = CRISPRofftargetHunter.load(joinpath(hdb_path, "hashDB.bin"))
         conflict = 0
         error = Vector{Int}()
         for (key, value) in dDB.dict

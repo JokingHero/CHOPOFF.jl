@@ -31,7 +31,7 @@ Lazy mode mapping.
 Yield arbitrary range 1-n.
 Bias against larger values.
 "
-function modulo_range(h::UInt32, n::UInt32)
+function modulo_range(h::K, n::K)  where K <: Unsigned
     return h % n
 end
 
@@ -88,13 +88,57 @@ end
 # read in all guides
 db_path = joinpath("/home/ai/", "tests_hg38v34")
 guides = CRISPRofftargetHunter.load(joinpath(db_path, "uniq_guides_as_MER20.bin"))
+open("guides.txt", "w") do f
+    # Make sure we write 64bit integer in little-endian byte order
+    for i in guides
+        write(f, string(BioSequences.encoded_data(i)) * "\n")
+    end
+end
+
+
 #guides2 = ThreadsX.map(LongDNASeq, guides)
 n = length(guides)
-table_height = ceil(UInt32, 1.23*n)
+table_height = ceil(UInt32, 1.23 * n)
 
-h1 = ThreadsX.map(x -> fnv_hash(x, rand(UInt32), table_height), guides)
-h12 = ThreadsX.map(x -> fnv_hash(x, rand(UInt32), table_height), guides)
-h13 = ThreadsX.map(x -> fnv_hash(x, rand(UInt32), table_height), guides)
+s1 = rand(UInt32)
+s2 = rand(UInt32)
+s3 = rand(UInt32)
+
+# simulate 3 selects
+h1 = ThreadsX.map(x -> fnv_hash(x, s1, table_height), guides)
+h12 = ThreadsX.map(x -> fnv_hash(x, s2, table_height), guides)
+h13 = ThreadsX.map(x -> fnv_hash(x, s3, table_height), guides)
+
+
+# simulate first hash for selection where, 3 followup hashes for 
+# selection in the neighbourhood w
+function window_hash(direction::Bool, origin::UInt32, shift::UInt32, table_height::UInt32)
+    if direction 
+        if (origin + shift) < table_height 
+            return (origin + shift)
+        end
+        return (origin - shift)
+    else 
+        if ((origin - shift) > 1) 
+            return (origin - shift)
+        end
+        return (origin + shift)
+    end
+end
+
+w = UInt32(101) # use some prime number
+hw = ThreadsX.map(x -> fnv_hash(x, rand(UInt32), table_height), guides) # window
+d1 = rand(Bool, length(guides)) # directionality
+h1 = ThreadsX.map(x -> fnv_hash(x, rand(UInt32), w), guides)
+d12 = rand(Bool, length(guides))
+h12 = ThreadsX.map(x -> fnv_hash(x, rand(UInt32), w), guides)
+d13 = rand(Bool, length(guides))
+h13 = ThreadsX.map(x -> fnv_hash(x, rand(UInt32), w), guides)
+
+hw1 = ThreadsX.map(x -> window_hash(d1[x], hw[x], h1[x], table_height), 1:length(guides))
+hw2 = ThreadsX.map(x -> window_hash(d12[x], hw[x], h12[x], table_height), 1:length(guides))
+hw3 = ThreadsX.map(x -> window_hash(d13[x], hw[x], h13[x], table_height), 1:length(guides))
+
 
 h2 = ThreadsX.map(x -> murmur_hash(x, 1, table_height), guides)
 
@@ -118,7 +162,16 @@ function judge(h, table_height)
         "  Max:  " * string(maximum(c1))
 end
 
+judge(hw1, table_height)
+# "ES: 0.4435771475607137  Median: 1.0  Mean:  1.461133411341778  Max:  10"
+h = vcat(hw1, hw2, hw3)
+hw1 = 0
+hw2 = 0
+hw3 = 0
+judge(h, table_height)
+
 judge(h1, table_height)
+# "ES: 0.44  Median: 1.0  Mean:  1.46  Max:  10"
 judge(h12, table_height)
 judge(h13, table_height)
 
@@ -135,5 +188,6 @@ judge(h2, table_height)
 judge(h3, table_height)
 # "ES: 0.44  Median: 1.0  Mean:  1.46  Max:  10
 judge(h4, table_height)
-# 
+
+
 

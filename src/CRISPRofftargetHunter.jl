@@ -7,6 +7,9 @@ using Base: Float32
 using ArgParse: command_actions
 using BioSymbols: isambiguous
 
+using FastFilter
+using StaticArrays
+
 using CRC32c
 using Dates
 using Statistics
@@ -28,6 +31,7 @@ using ProgressMeter
 include("sketches/hyperloglog.jl")
 include("sketches/cms.jl")
 include("sketches/bloom.jl")
+include("ambig_index.jl")
 
 include("utils.jl")
 include("persistence.jl")
@@ -44,13 +48,16 @@ include("db_linear.jl")
 include("db_compressed.jl")
 include("db_tree.jl")
 include("db_bins.jl")
+include("db_hash.jl")
 
 export Motif # motif
 export build_linearDB, search_linearDB # db_linear
 export build_compactDB, search_compactDB # db_compressed
 export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
-export build_binDB, search_binDB
+export build_binDB, search_binDB # db_bins
+export build_hashDB, search_hashDB # db_hash
+
 
 ## Standalone binary generation
 function parse_commandline()

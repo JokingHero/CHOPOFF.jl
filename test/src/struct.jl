@@ -1,7 +1,8 @@
 using Test
 
 using CRISPRofftargetHunter: DBInfo, Loc, decode, 
-    Motif, length_noPAM, removepam, combinestrings, notX
+    Motif, length_noPAM, removepam, combinestrings, notX,
+    AmbigIdx, findbits
 using BioSequences
 
 @testset "structures" begin
@@ -22,5 +23,19 @@ using BioSequences
         @test length(dbi.chrom) == 8
         loc = Loc{dbi.chrom_type, dbi.pos_type}(1, 10, true)
         @test "semirandom1,10,+" == decode(loc, dbi)
+    end
+
+
+    @testset "AmbigIdx" begin
+        guides = [dna"ACTG", dna"NNAC", dna"GGAA", dna"GGAA"]
+        annot = [
+            Vector{String}(["rs131", "rs1"]), Vector{String}(), 
+            Vector{String}(), Vector{String}()]
+        idx = AmbigIdx(guides, annot)
+        @test sum(findbits(dna"AAAC", idx)) == 1
+        @test sum(findbits(dna"GGAA", idx)) == 2
+        @test sum(findbits(dna"GCAA", idx)) == 0
+        @test sum(findbits(dna"GGA", idx)) == 3
+        @test idx.annot[findbits(dna"ACTG", idx)][1] == Vector{String}(["rs131", "rs1"])
     end
 end

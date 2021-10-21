@@ -4,14 +4,14 @@ struct DictDB
 end
 
 
-function build_guide_dict(dbi::DBInfo, max_count::Int)
+function build_guide_dict(dbi::DBInfo, max_count::Int, guide_type::Type{T}) where T <: Union{UInt64, UInt128}
     max_count_type = smallestutype(unsigned(max_count))
-    guides = Vector{UInt128}()
+    guides = Vector{guide_type}()
     gatherofftargets!(guides, dbi)
     guides = sort(guides)
     guides, counts = ranges(guides)
     counts = convert.(max_count_type, min.(length.(counts), max_count))
-    return IdDict{UInt128, max_count_type}(zip(guides, counts))
+    return IdDict{guide_type, max_count_type}(zip(guides, counts))
 end
 
 
@@ -26,7 +26,7 @@ function build_dictDB(
 
     # first we measure how many unique guides there are
     @info "Building Dictionary..."
-    dict = build_guide_dict(dbi, max_count)
+    dict = build_guide_dict(dbi, max_count, UInt128)
 
     db = DictDB(dict, dbi)
     save(db, joinpath(storagedir, "dictDB.bin"))
