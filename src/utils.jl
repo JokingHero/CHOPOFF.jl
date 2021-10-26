@@ -103,6 +103,46 @@ function comb_of_d1(s::String, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
 end
 
 
+# Same as above but does not truncate to the size of the original string!
+function comb_of_d1_extended(s::String, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
+    s_ = collect(s)
+    allcomb = Set{String}()
+    idx_in_s = combinations(1:length(s), 1)
+    alphabet_ = vcat(alphabet, ['-'])
+    for i in idx_in_s
+        for j in alphabet_
+            if s_[i[1]] != j
+                if j == '-'
+                    scopy_new = copy(s_)
+                    deleteat!(scopy_new, i[1])
+                    for k in alphabet
+                        # gap in the s -> we insert base at the index and truncate to the size
+                        scopy_s_ = copy(s_)
+                        insert!(scopy_s_, i[1], k)
+                        push!(allcomb, join(scopy_s_))
+                        # gap in the new string -> we delete base at the index and add base at the end
+                        scopy_new_ = copy(scopy_new)
+                        append!(scopy_new_, k)
+                        push!(allcomb, join(scopy_new_))
+                        # same as above, but add base at the begining
+                        scopy_new_ = copy(scopy_new)
+                        prepend!(scopy_new_, k)
+                        push!(allcomb, join(scopy_new_))
+                    end
+                else
+                    scopy = copy(s_)
+                    scopy[i[1]] = j
+                    push!(allcomb, join(scopy))
+                    deleteat!(scopy, i[1])
+                    push!(allcomb, join(scopy))
+                end
+            end
+        end
+    end
+    return allcomb
+end
+
+
 "
 0 - is not within distance d
 1 - is within distance d

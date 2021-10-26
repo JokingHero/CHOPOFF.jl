@@ -1,9 +1,10 @@
 struct HashDB{T<:Unsigned}
     dbi::DBInfo
-    bins_d0::Vector{Union{BinaryFuseFilter{UInt8}, Nothing}}
-    bins_d1::Vector{Union{BinaryFuseFilter{UInt8}, Nothing}}
-    bins_d2::Vector{Union{BinaryFuseFilter{UInt8}, Nothing}}
-    ambig::AmbigIdx # if length = 0 then no ambig found
+    bins::Vector{BinaryFuseFilter{UInt8}}
+    #bins_d0::Vector{Union{BinaryFuseFilter{UInt8}, Nothing}}
+    #bins_d1::Vector{Union{BinaryFuseFilter{UInt8}, Nothing}}
+    #bins_d2::Vector{Union{BinaryFuseFilter{UInt8}, Nothing}}
+    #ambig::AmbigIdx # if length = 0 then no ambig found
     #vcf::Vector{AmbigIdx}
     #vcf_names::Vector{String}
     counts::Vector{T}
@@ -40,20 +41,16 @@ function build_hashDB(
     dbi = DBInfo(genomepath, name, motif)
     if motif.distance > 2
         throw("Only distance below 3 is supported!")
+    end
     
     # gather all unique off-targets
     max_count_type = smallestutype(unsigned(max_count))
-    guides = Vector{guide_type}()
+    max_count = convert(max_count_type, max_count)
+    guides = Vector{UInt64}()
     gatherofftargets!(guides, dbi)
     guides = sort(guides)
-    guides, counts = ranges(guides)
-    counts = convert.(max_count_type, min.(length.(counts), max_count))
-
-
-
-    max_count = convert(max_count_type, max_count)
-    dict_counts = collect(values(dict))
-    dict_guides = collect(keys(dict))
+    dict_guides, dict_counts = ranges(guides)
+    dict_counts = convert.(max_count_type, min.(length.(dict_counts), max_count))
 
     bins = Vector{BinaryFuseFilter{UInt8}}()
     counts = Vector{max_count_type}()
@@ -67,14 +64,14 @@ function build_hashDB(
     end
 
     # TODO ambiguous
-    db = nothing #HashDB(dbi, bins, counts)
+    db = HashDB(dbi, bins, counts)
     save(db, joinpath(storagedir, "hashDB.bin"))
 
     # use full db to estimate error rate!
     conflict = 0
     error = Vector{Int}()
     len_noPAM = length_noPAM(dbi.motif)
-    for (guide, real_count) in dict
+    for (guide, real_count) in zip(dict_guides, dict_counts)
         guide = LongDNASeq(guide, len_noPAM)
         if n_ambiguous(guide) == 0
             est_count = estimate(db, guide)
@@ -87,7 +84,7 @@ function build_hashDB(
             end
         end
     end
-    error_rate = conflict / length(dict)
+    error_rate = conflict / length(dict_guides)
 
     @info "Finished constructing hashDB in " * storagedir * " consuming "  * 
         string(round((filesize(joinpath(storagedir, "hashDB.bin")) * 1e-6); digits = 3)) * 

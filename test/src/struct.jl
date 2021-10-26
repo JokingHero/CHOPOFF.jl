@@ -7,10 +7,13 @@ using BioSequences
 
 @testset "structures" begin
 
-    cas9 = Motif("Cas9")
+    cas9 = Motif(
+        "Cas9",
+        "NNNNNNNNNNNNNNNNNNNNXXX",
+        "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 4, true, 0)
     cpf1 = Motif("Cpf1")
     @testset "Motif" begin
-        @test length_noPAM(cas9) == 20
+        @test length_noPAM(cas9) == 24
         @test length_noPAM(cpf1) == 24
         @test removepam(dna"ACTNN", 1:3) == dna"NN"
         @test combinestrings("XXXACT", "ACTXXX") == "ACTACT"

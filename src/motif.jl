@@ -42,8 +42,8 @@ what can be identified as an off-target.
 ```
 Example for Cas9 where we want to search for off-targets within distance of 4:
   alias:    Cas9
-  fwdmotif: NNNNNNNNNNNNNNNNXXX
-  fwdpam:   XXXXXXXXXXXXXXXXNGG
+  fwdmotif: NNNNNNNNNNNNNNNNNNNNXXX
+  fwdpam:   XXXXXXXXXXXXXXXXXXXXNGG
   forward:  true
   reverse:  true
   distance: 4
@@ -56,7 +56,7 @@ Alignments will be performed from opposite to the extension direction (which is 
 # Examples
 ```julia-repl
 Motif('Cas9')
-Motif('Cas9', 'NNNNNNNNNNNNNNNNXXX', 'XXXXXXXXXXXXXXXXNGG'. true, true, 3, true, 5)
+Motif('Cas9', 'NNNNNNNNNNNNNNNNNNNNXXX', 'XXXXXXXXXXXXXXXXXXXXNGG'. true, true, 3, true, 5)
 ```
 """
 struct Motif
@@ -183,8 +183,8 @@ end
 # TODO add more motifs
 const motif_db = Dict(
     "Cas9" => Motif("Cas9",
-                    "NNNNNNNNNNNNNNNNXXX",
-                    "XXXXXXXXXXXXXXXXNGG", true, true, 4, true, 0),
+                    "NNNNNNNNNNNNNNNNNNNNXXX",
+                    "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 4, true, 0),
     "Cpf1" => Motif("Cas12a",
                     "XXXXNNNNNNNNNNNNNNNNNNNN",
                     "TTTNXXXXXXXXXXXXXXXXXXXX", true, true, 4, false, 0)
