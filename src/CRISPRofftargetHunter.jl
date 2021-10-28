@@ -58,6 +58,7 @@ export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 export build_binDB, search_binDB # db_bins
 export build_hashDB, search_hashDB # db_hash
+export build_sketchDB, search_sketchDB # db_sketch 
 export build_noHashDB, search_noHashDB # db_large_nohash
 
 

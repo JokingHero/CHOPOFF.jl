@@ -128,8 +128,7 @@ end
 """
 `search_binDB(
     storagedir::String,
-    guides::Vector{LongDNASeq},
-    dist::Int = 1)`
+    guides::Vector{LongDNASeq})`
 
 Results are estimations of offtarget counts in the genome.
 
@@ -164,8 +163,7 @@ and therefore are overestimating extensively with increasing `distance`.
 """
 function search_binDB(
     storagedir::String,
-    guides::Vector{LongDNASeq},
-    dist::Int = 1)
+    guides::Vector{LongDNASeq})
 
     if any(n_ambiguous.(guides) .> 0)
         throw("Ambiguous bases are not allowed in guide queries.")
@@ -179,9 +177,11 @@ function search_binDB(
     end
 
     # TODO check that seq is in line with motif
-    res = zeros(Int, length(guides_), (dist + 1) * 3 - 2)
+    res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
         res[i, 1] += estimate(bdb, s) # 0 distance
+        
+        #=
         for d in 1:dist
             norm_d, border_d = comb_of_d(string(s), d)
             norm_d_res = ThreadsX.sum(estimate(bdb, sd) for sd in norm_d)
@@ -190,12 +190,17 @@ function search_binDB(
             res[i, dist + d + 1] = norm_d_res
             res[i, dist * 2 + d + 1] = border_d_res
         end
+        =#
+
+        norm_d, border_d = comb_of_d1(s)
+        border_d = [x[1:end-1] for x in border_d]
+        norm_d = collect(Set(vcat(collect(norm_d), border_d)))
+        res[i, 2] = ThreadsX.sum(estimate(bdb, x) for x in norm_d)
     end
 
     res = DataFrame(res, :auto)
-    col_d = [Symbol("D$i") for i in 0:dist]
-    all_col_d = vcat(col_d, [Symbol("DN$i") for i in 1:dist], [Symbol("DB$i") for i in 1:dist])
-    rename!(res, all_col_d)
+    col_d = [Symbol("D$i") for i in 0:1]
+    rename!(res, col_d)
     res.guide = guides
     sort!(res, col_d)
     return res

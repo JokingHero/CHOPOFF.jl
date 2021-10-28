@@ -103,7 +103,45 @@ function comb_of_d1(s::String, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
 end
 
 
-# Same as above but does not truncate to the size of the original string!
+# this is only working for distance 1, and it ignores
+# bulges on the reference, as these can be also covered by mismatches 
+function comb_of_d1(s::LongDNASeq)
+    alphabet = [DNA_A, DNA_C, DNA_T, DNA_G] # we can't deal with ambig at this moment here
+    allcomb = Set{LongDNASeq}()
+    allcomb1 = Set{LongDNASeq}()
+    for (i, si)  in enumerate(s)
+        for ai in alphabet
+            if isequal(si, ai) # skip a base and add all combinations
+                s_ = copy(s)
+                deleteat!(s_, i)
+                push!(s_, DNA_A) 
+                push!(allcomb, copy(s_))
+                s_[end] = DNA_C
+                push!(allcomb, copy(s_))
+                s_[end] = DNA_T
+                push!(allcomb, copy(s_))
+                s_[end] = DNA_G
+                push!(allcomb, copy(s_))
+            else 
+                # make all possible 1 mismatch
+                s_ = copy(s)
+                s_[i] = ai
+                push!(allcomb, s_)
+            end
+            # bulge on the reference! - size +1
+            s_ = copy(s)
+            insert!(s_, i, ai)
+            push!(allcomb1, s_)
+        end
+    end
+    # filter redundant cases that are covered by mismatch
+    allcomb1 = collect(allcomb1)
+    allcomb1 = filter(x -> !(x[1:end-1] in allcomb), allcomb1)
+    return setdiff(allcomb, Set([s])), allcomb1
+end
+
+
+# same as above, but not truncating longer distances!
 function comb_of_d1_extended(s::String, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
     s_ = collect(s)
     allcomb = Set{String}()
@@ -124,7 +162,7 @@ function comb_of_d1_extended(s::String, alphabet::Vector{Char} = ['A', 'C', 'T',
                         scopy_new_ = copy(scopy_new)
                         append!(scopy_new_, k)
                         push!(allcomb, join(scopy_new_))
-                        # same as above, but add base at the begining
+                        # same as above but add base at the begining
                         scopy_new_ = copy(scopy_new)
                         prepend!(scopy_new_, k)
                         push!(allcomb, join(scopy_new_))
@@ -134,6 +172,42 @@ function comb_of_d1_extended(s::String, alphabet::Vector{Char} = ['A', 'C', 'T',
                     scopy[i[1]] = j
                     push!(allcomb, join(scopy))
                     deleteat!(scopy, i[1])
+                    push!(allcomb, join(scopy))
+                end
+            end
+        end
+    end
+    return allcomb
+end
+
+
+# This is returning all length(s) + 1 size possible off-targets
+# from the perspective of the reference
+function comb_of_d1_extended_ref(s::String, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
+    s_ = collect(s)
+    allcomb = Set{String}()
+    idx_in_s = 1:length(s_)
+    bulge_guide = collect(permutations(alphabet, 2))
+    # bulge_guide = filter(x -> s_[end] != x[1], bulge_guide)
+    alphabet_ = vcat(alphabet, ['-'])
+    for i in idx_in_s
+        for j in alphabet_
+            if s_[i] != j
+                if j == '-'
+                    scopy = copy(s_)
+                    deleteat!(scopy, i) # bulge on the guide
+                    for k in bulge_guide
+                        push!(allcomb, join(vcat(scopy, k)))
+                    end
+                else
+                    scopy = copy(s_)
+                    scopy[i] = j # mismatch + extension on the reference
+                    for k in alphabet
+                        push!(allcomb, join(vcat(scopy, k)))
+                    end
+
+                    scopy = copy(s_)
+                    insert!(scopy, i, j) # bulge on the reference
                     push!(allcomb, join(scopy))
                 end
             end

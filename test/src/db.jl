@@ -6,7 +6,7 @@ using CSV
 using DataFrames
 
 ## SET WD when debugging
- #cd("test")
+# cd("test")
 
 ## CRISPRitz compare functions - we test with up to 4 distance
 function asguide(x::String)
@@ -43,8 +43,8 @@ function rows_not_in(len::Int, rows_in::Vector{Int})
     return all_rows
 end
 
-@testset "databases" begin
 
+@testset "databases" begin
     genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
         "test", "sample_data", "genome", "semirandom.fa")
     guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
@@ -63,10 +63,15 @@ end
     ldb = DataFrame(CSV.File(detail_path))
 
     # make and run default sketchDB
-    #sdb_path = joinpath(tdir, "sketchDB")
-    #mkpath(sdb_path)
-    #build_sketchDB("samirandom", genome, Motif("Cas9"), sdb_path)
-    #sdb_res = search_sketchDB(sdb_path, guides, 2)
+    #=
+    sdb_path = joinpath(tdir, "sketchDB")
+    mkpath(sdb_path)
+    build_sketchDB(
+        "samirandom", genome, 
+        Motif("Cas9", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 0, true, 0), 
+        sdb_path)
+    sdb_res = search_sketchDB(sdb_path, guides, 2)
+    =#
 
     # make and run default dictDB
     ddb_path = joinpath(tdir, "dictDB")
@@ -84,18 +89,16 @@ end
         "samirandom", genome, 
         Motif("Cas9", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 0, true, 0), 
         bdb_path)
-    bdb_res = search_binDB(bdb_path, guides, 2)
+    bdb_res = search_binDB(bdb_path, guides)
 
-    #=
     # make and run default hashDB
     hdb_path = joinpath(tdir, "hashDB")
     mkpath(hdb_path)
     build_hashDB(
         "samirandom", genome, 
-        Motif("Cas9", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 2, true, 0), 
+        Motif("Cas9", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 1, true, 0), 
         hdb_path)
-    hdb_res = search_hashDB(hdb_path, guides, 2)
-    =#
+    hdb_res = search_hashDB(hdb_path, guides, false) # same as right!
 
     # make and run default noHashDB
     nhdb_path = joinpath(tdir, "noHashDB")
@@ -166,8 +169,8 @@ end
         @test nrow(bdb_res) == length(guides)
         @test all(bdb_res.guide .== guides)
         @test all(ldb_res.guide .== guides)
-        ldb_res2 = Matrix(ldb_res[:, 1:3])
-        bdb_res2 = Matrix(bdb_res[:, 1:3])
+        ldb_res2 = Matrix(ldb_res[:, 1:2])
+        bdb_res2 = Matrix(bdb_res[:, 1:2])
         for i in 1:length(guides)
             compare = ldb_res2[i, :] .<= bdb_res2[i, :]
             @test all(compare)
@@ -180,13 +183,12 @@ end
     end
 
 
-    #=
     @testset "linearDB vs hashDB" begin
         @test nrow(hdb_res) == length(guides)
         @test all(hdb_res.guide .== guides)
         @test all(ldb_res.guide .== guides)
-        ldb_res2 = Matrix(ldb_res[:, 1:3])
-        hdb_res2 = Matrix(hdb_res[:, 1:3])
+        ldb_res2 = Matrix(ldb_res[:, 1:2])
+        hdb_res2 = Matrix(hdb_res[:, 1:2])
         for i in 1:length(guides)
             compare = ldb_res2[i, :] .<= hdb_res2[i, :]
             @test all(compare)
@@ -197,7 +199,6 @@ end
             end
         end
     end
-    =#
 
 
     @testset "linearDB vs noHashDB" begin
@@ -269,7 +270,7 @@ end
         ddb_res2 = Matrix(ddb_res)
         bdb_res2 = Matrix(bdb_res)
         for i in 1:length(guides)
-            compare = ddb_res2[i, :] .<= bdb_res2[i, :]
+            compare = ddb_res2[i, 1:2] .<= bdb_res2[i, 1:2]
             @test all(compare)
             if !all(compare)
                 @info "Failed at guideS $i " * string(guides[i])
@@ -361,7 +362,6 @@ end
         @test nrow(failed) == 0
     end
     
-
 
     @testset "linearDB vs compactDB" begin
         cdb_path = joinpath(tdir, "compactDB")

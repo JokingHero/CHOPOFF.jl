@@ -85,7 +85,7 @@ function build_sketchDB(
     storagedir::String,
     probability_of_error::Float64 = 0.001,
     error_size::Int = 3;
-    max_count::Int = 255)
+    max_count::Int = 10)
 
     dbi = DBInfo(genomepath, name, motif)
 

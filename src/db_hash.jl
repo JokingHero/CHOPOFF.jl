@@ -1,28 +1,76 @@
 struct HashDB{T<:Unsigned}
     dbi::DBInfo
-    bins::Vector{BinaryFuseFilter{UInt8}}
-    #bins_d0::Vector{Union{BinaryFuseFilter{UInt8}, Nothing}}
-    #bins_d1::Vector{Union{BinaryFuseFilter{UInt8}, Nothing}}
-    #bins_d2::Vector{Union{BinaryFuseFilter{UInt8}, Nothing}}
+    bins_d0::Vector{BinaryFuseFilter{UInt8}}
+    counts_d0::Vector{T}
+    bins_d1::Vector{BinaryFuseFilter{UInt8}}
+    counts_d1::Vector{T}
     #ambig::AmbigIdx # if length = 0 then no ambig found
     #vcf::Vector{AmbigIdx}
     #vcf_names::Vector{String}
-    counts::Vector{T}
 end
 
 
-function estimate(db::HashDB, guide::LongDNASeq) # TODO add direction
-    for i in length(db.counts):-1:1
-        if convert(UInt64, guide) in db.bins[i]
-            return db.counts[i]
+function get_count_idx(bins::Vector{BinaryFuseFilter{UInt8}}, guide::UInt64, right::Bool)
+    direction = right ? (1:length(bins)) : (length(bins):-1:1)
+    for i in direction
+        if guide in bins[i]
+            return i
         end
     end
-    return 0
+    return nothing
 end
 
 
-function estimate(db::HashDB, guide::String)
-    return estimate(db, LongDNASeq(guide))
+function guides_to_bins(
+    guides::Vector{UInt64}, seed::UInt64, max_iterations::Int, max_count::Int)
+    max_count_type = smallestutype(unsigned(max_count))
+    max_count = convert(max_count_type, max_count)
+    guides = sort(guides)
+    guides, counts = ranges(guides)
+    counts = convert.(max_count_type, min.(length.(counts), max_count))
+
+    bins = Vector{BinaryFuseFilter{UInt8}}()
+    bins_counts = Vector{max_count_type}()
+    for count in 1:max_count
+        idx = ThreadsX.findall(x -> x == count, counts)
+        if length(idx) != 0
+            push!(bins_counts, convert(max_count_type, count))
+            push!(bins, BinaryFuseFilter{UInt8}(guides[idx]; seed = seed, max_iterations = max_iterations))
+        end
+    end
+    # now order from smallest to largest
+    order = sortperm(bins_counts)
+    bins = bins[order]
+    bins_counts = bins_counts[order]
+
+    # use full db to estimate error rate!
+    error_right = Vector{Int}()
+    error_left = Vector{Int}()
+    for (guide, real_count) in zip(guides, counts)
+        est_count_right = get_count_idx(bins, guide, true)
+        if isnothing(est_count_right) 
+            throw("All guides should be inside!")
+        else
+            est_count_right = bins_counts[est_count_right]
+        end
+        est_count_left = get_count_idx(bins, guide, false)
+        if isnothing(est_count_left) 
+            throw("All guides should be inside!")
+        else
+            est_count_left = bins_counts[est_count_left]
+        end
+
+        if  real_count != est_count_right
+            push!(error_right, Int(est_count_right) - Int(real_count))
+        end
+
+        if  real_count != est_count_left
+            push!(error_left, Int(est_count_left) - Int(real_count))
+        end
+    end
+    error_rate_left = length(error_left) / length(guides)
+    error_rate_right = length(error_right) / length(guides)
+    return bins, bins_counts, error_rate_left, error_rate_right
 end
 
 
@@ -30,72 +78,41 @@ function build_hashDB(
     name::String, 
     genomepath::String, 
     motif::Motif,
-    storagedir::String,
-    dictDB::String = "";
+    storagedir::String;
     seed::UInt64 = UInt64(0x726b2b9d438b9d4d),
     max_iterations::Int = 10,
     max_count::Int = 10)
 
-    # assume we will allow search within distance of 2
-    # extend motif to include 2 additional bases in the tail
     dbi = DBInfo(genomepath, name, motif)
-    if motif.distance > 2
-        throw("Only distance below 3 is supported!")
+    if motif.distance != 1
+        throw("Only distance 1 is supported!")
     end
     
     # gather all unique off-targets
-    max_count_type = smallestutype(unsigned(max_count))
-    max_count = convert(max_count_type, max_count)
     guides = Vector{UInt64}()
-    gatherofftargets!(guides, dbi)
-    guides = sort(guides)
-    dict_guides, dict_counts = ranges(guides)
-    dict_counts = convert.(max_count_type, min.(length.(dict_counts), max_count))
+    gatherofftargets!(guides, dbi) 
 
-    bins = Vector{BinaryFuseFilter{UInt8}}()
-    counts = Vector{max_count_type}()
-    for count in 1:max_count
-        idx = findall(x -> x == count, dict_counts)
-        if length(idx) != 0
-            push!(counts, convert(max_count_type, count))
-            push!(bins, 
-                BinaryFuseFilter{UInt8}(dict_guides[idx]; seed = seed, max_iterations = max_iterations))
-        end
-    end
+    # guides are here of length 21
+    bins_d1, counts_d1, error_d1_right, error_d1_left = 
+        guides_to_bins(guides, seed, max_iterations, max_count)
+
+    # now D0
+    guides = guides .>> 2 # removes extension
+    bins_d0, counts_d0, error_d0_right, error_d0_left = 
+    guides_to_bins(guides, seed, max_iterations, max_count)
 
     # TODO ambiguous
-    db = HashDB(dbi, bins, counts)
+    db = HashDB(dbi, bins_d0, counts_d0, bins_d1, counts_d1)
     save(db, joinpath(storagedir, "hashDB.bin"))
-
-    # use full db to estimate error rate!
-    conflict = 0
-    error = Vector{Int}()
-    len_noPAM = length_noPAM(dbi.motif)
-    for (guide, real_count) in zip(dict_guides, dict_counts)
-        guide = LongDNASeq(guide, len_noPAM)
-        if n_ambiguous(guide) == 0
-            est_count = estimate(db, guide)
-            if real_count >= max_count
-                real_count = max_count
-            end
-            if  real_count != est_count
-                conflict += 1
-                push!(error, Int(est_count) - Int(real_count))
-            end
-        end
-    end
-    error_rate = conflict / length(dict_guides)
 
     @info "Finished constructing hashDB in " * storagedir * " consuming "  * 
         string(round((filesize(joinpath(storagedir, "hashDB.bin")) * 1e-6); digits = 3)) * 
         " mb of disk space."
-    @info "Estimated probability of miscounting an element in the bins is " * string(round(error_rate; digits = 6))
-    if length(error) > 1
-        @info "Mean error was " * string(mean(error))
-    end
-    @info "Database is consuming: " * 
-        string(round((filesize(joinpath(storagedir, "hashDB.bin")) * 1e-6); digits = 3)) * 
-        " mb of disk space."
+    @info "Estimated probability of miscounting an elements in the bins is: " * 
+        "\nRight: D0 " * string(round(error_d0_right; digits = 6)) * 
+        " D1 " * string(round(error_d1_right; digits = 6)) * 
+        "\nLeft: D0 " * string(round(error_d0_left; digits = 6)) * 
+        " D1 " * string(round(error_d1_left; digits = 6))
     return storagedir
 end
 
@@ -140,37 +157,69 @@ and therefore are overestimating extensively with increasing `distance`.
 function search_hashDB(
     storagedir::String,
     guides::Vector{LongDNASeq},
-    dist::Int = 1)
+    right::Bool)
 
     if any(n_ambiguous.(guides) .> 0)
         throw("Ambiguous bases are not allowed in guide queries.")
     end
 
-    bdb = load(joinpath(storagedir, "hashDB.bin"))
+    db = load(joinpath(storagedir, "hashDB.bin"))
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
-    if bdb.dbi.motif.extends5
+    if db.dbi.motif.extends5
         guides_ = reverse.(guides_)
     end
 
     # TODO check that seq is in line with motif
-    res = zeros(Int, length(guides_), (dist + 1) * 3 - 2)
+    res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
-        res[i, 1] += estimate(bdb, s) # 0 distance
-        for d in 1:dist
-            norm_d, border_d = comb_of_d(string(s), d)
-            norm_d_res = ThreadsX.sum(estimate(bdb, sd) for sd in norm_d)
-            border_d_res = ThreadsX.sum(estimate(bdb, sd) for sd in border_d)
-            res[i, d + 1] = norm_d_res + border_d_res
-            res[i, dist + d + 1] = norm_d_res
-            res[i, dist * 2 + d + 1] = border_d_res
+        # 0 distance
+        idx = get_count_idx(db.bins_d0, convert(UInt64, s), right)
+        if !isnothing(idx)
+            res[i, 1] += db.counts_d0[idx]
+        end
+
+        #=
+        # this is using old method, border_d is always empty for distance 1
+        # 1 distance
+        norm_d, border_d = comb_of_d(string(s), 1)
+        for s in norm_d
+            idx = get_count_idx(db.bins_d0, convert(UInt64, LongDNASeq(s)), right)
+            if !isnothing(idx)
+                res[i, 2] += db.counts_d0[idx]
+            end
+        end
+
+        for s in border_d
+            idx = get_count_idx(db.bins_d0, convert(UInt64, LongDNASeq(s)), right)
+            if !isnothing(idx)
+                res[i, 2] += db.counts_d0[idx]
+            end
+        end
+        =#
+        
+        norm, border = comb_of_d1(s)
+        for comb in convert.(UInt64, norm)
+            idx = get_count_idx(db.bins_d0, comb, right)
+            if !isnothing(idx)
+                res[i, 2] += db.counts_d0[idx]
+            end
+        end
+        
+        for comb in convert.(UInt64, border)
+            idx = get_count_idx(db.bins_d1, comb, right)
+            if !isnothing(idx)
+                idx0 = get_count_idx(db.bins_d0, comb >> 2, right)
+                if !isnothing(idx0)
+                    res[i, 2] += db.counts_d1[idx]
+                end
+            end
         end
     end
 
     res = DataFrame(res, :auto)
-    col_d = [Symbol("D$i") for i in 0:dist]
-    all_col_d = vcat(col_d, [Symbol("DN$i") for i in 1:dist], [Symbol("DB$i") for i in 1:dist])
-    rename!(res, all_col_d)
+    col_d = [Symbol("D$i") for i in 0:1]
+    rename!(res, col_d)
     res.guide = guides
     sort!(res, col_d)
     return res

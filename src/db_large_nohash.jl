@@ -66,7 +66,7 @@ function search_noHashDB(
     end
 
     # TODO check that seq is in line with motif
-    res = zeros(Int, length(guides_), (2))
+    res = zeros(Int, length(guides_), 2)
     len_noPAM = length_noPAM(sdb.dbi.motif)
     for (i, s) in enumerate(guides_)
         idx0 = ThreadsX.findfirst(x -> is_equal(x, convert(UInt64, s), 2), sdb.guides)
