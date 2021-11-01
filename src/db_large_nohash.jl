@@ -2,7 +2,7 @@ struct NoHashDB
     dbi::DBInfo
     guides::Vector{UInt64}
     counts::Vector{UInt8}
-    #ambig::AmbigIdx
+    ambig::Union{AmbigIdx, Nothing}
 end
 
 
@@ -12,7 +12,7 @@ function get_guides_by_counts(dbi::DBInfo)
     guides = sort(guides)
     guides, counts = ranges(guides)
     counts = convert.(UInt8, min.(length.(counts), 255))
-    return guides, counts
+    return guides, counts, ambig
 end
 
 
@@ -32,9 +32,10 @@ function build_noHashDB(
 
     # first we measure how many unique guides there are
     @info "Building Dictionary..."
-    guides, counts = get_guides_by_counts(dbi)
+    guides, counts, ambig = get_guides_by_counts(dbi)
+    ambig = length(ambig) > 0 ? AmbigIdx(ambig, nothing) : nothing
 
-    db = NoHashDB(dbi, guides, counts)
+    db = NoHashDB(dbi, guides, counts, ambig)
     save(db, joinpath(storagedir, "noHashDB.bin"))
     @info "Finished constructing noHashDB in " * storagedir
     @info "Database size is:" *
@@ -70,6 +71,7 @@ function search_noHashDB(
     len_noPAM = length_noPAM(sdb.dbi.motif)
     for (i, s) in enumerate(guides_)
         idx0 = ThreadsX.findfirst(x -> is_equal(x, convert(UInt64, s), 2), sdb.guides)
+        res[i, 1] += isnothing(sdb.ambig) ? 0 : sum(findbits(s, sdb.ambig))
         if !isnothing(idx0)
             res[i, 1] += sdb.counts[idx0] # 0 distance
         end
@@ -86,6 +88,9 @@ function search_noHashDB(
         
         idx1 = collect(idx1)
         res[i, 2] = sum(sdb.counts[idx1])
+        if !isnothing(sdb.ambig)
+            res[i, 2] += sum(reduce(|, map(x -> findbits(x, sdb.ambig), d1_combs)))
+        end
     end
 
     res = DataFrame(res, :auto)

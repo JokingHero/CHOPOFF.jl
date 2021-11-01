@@ -4,9 +4,7 @@ struct HashDB{T<:Unsigned}
     counts_d0::Vector{T}
     bins_d1::Vector{BinaryFuseFilter{UInt8}}
     counts_d1::Vector{T}
-    #ambig::AmbigIdx # if length = 0 then no ambig found
-    #vcf::Vector{AmbigIdx}
-    #vcf_names::Vector{String}
+    ambig::Union{AmbigIdx, Nothing}
 end
 
 
@@ -90,7 +88,8 @@ function build_hashDB(
     
     # gather all unique off-targets
     guides = Vector{UInt64}()
-    gatherofftargets!(guides, dbi) 
+    ambig = gatherofftargets!(guides, dbi)
+    ambig = length(ambig) > 0 ? AmbigIdx(ambig, nothing) : nothing
 
     # guides are here of length 21
     bins_d1, counts_d1, error_d1_right, error_d1_left = 
@@ -99,10 +98,9 @@ function build_hashDB(
     # now D0
     guides = guides .>> 2 # removes extension
     bins_d0, counts_d0, error_d0_right, error_d0_left = 
-    guides_to_bins(guides, seed, max_iterations, max_count)
+        guides_to_bins(guides, seed, max_iterations, max_count)
 
-    # TODO ambiguous
-    db = HashDB(dbi, bins_d0, counts_d0, bins_d1, counts_d1)
+    db = HashDB(dbi, bins_d0, counts_d0, bins_d1, counts_d1, ambig)
     save(db, joinpath(storagedir, "hashDB.bin"))
 
     @info "Finished constructing hashDB in " * storagedir * " consuming "  * 
@@ -174,29 +172,11 @@ function search_hashDB(
     res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
         # 0 distance
+        res[i, 1] += isnothing(db.ambig) ? 0 : sum(findbits(s, db.ambig))
         idx = get_count_idx(db.bins_d0, convert(UInt64, s), right)
         if !isnothing(idx)
             res[i, 1] += db.counts_d0[idx]
         end
-
-        #=
-        # this is using old method, border_d is always empty for distance 1
-        # 1 distance
-        norm_d, border_d = comb_of_d(string(s), 1)
-        for s in norm_d
-            idx = get_count_idx(db.bins_d0, convert(UInt64, LongDNASeq(s)), right)
-            if !isnothing(idx)
-                res[i, 2] += db.counts_d0[idx]
-            end
-        end
-
-        for s in border_d
-            idx = get_count_idx(db.bins_d0, convert(UInt64, LongDNASeq(s)), right)
-            if !isnothing(idx)
-                res[i, 2] += db.counts_d0[idx]
-            end
-        end
-        =#
         
         norm, border = comb_of_d1(s)
         for comb in convert.(UInt64, norm)
@@ -214,6 +194,10 @@ function search_hashDB(
                     res[i, 2] += db.counts_d1[idx]
                 end
             end
+        end
+
+        if !isnothing(db.ambig)
+            res[i, 2] += sum(reduce(|, map(x -> findbits(x, db.ambig), vcat(norm, border))))
         end
     end
 

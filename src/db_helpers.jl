@@ -109,7 +109,6 @@ function gatherofftargets(
         end
 
         guides_pos = findall(query, chrom, seq_start, seq_stop; ambig_max = dbi.motif.ambig_max)
-        # TODO here do bed overlap filter
         guides = ThreadsX.map(x -> removepam(chrom[x], pam_loci), guides_pos)
 
         # add extension

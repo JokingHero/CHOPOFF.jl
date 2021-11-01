@@ -7,7 +7,7 @@ end
 function build_guide_dict(dbi::DBInfo, max_count::Int, guide_type::Type{T}) where T <: Union{UInt64, UInt128}
     max_count_type = smallestutype(unsigned(max_count))
     guides = Vector{guide_type}()
-    gatherofftargets!(guides, dbi)
+    gatherofftargets!(guides, dbi) # we ignore ambig
     guides = sort(guides)
     guides, counts = ranges(guides)
     counts = convert.(max_count_type, min.(length.(counts), max_count))

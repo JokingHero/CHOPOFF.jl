@@ -3,17 +3,21 @@
 # of some guide are inside.
 struct AmbigIdx
     ambig::SMatrix
-    annot::Vector{Vector{String}} # can be empty
+    annot::Union{Vector{Vector{String}}, Nothing}
 end
 
 
-function AmbigIdx(guides::Vector{<: BioSequence}, annot::Vector{Vector{String}})
+function AmbigIdx(guides::Vector{<: BioSequence}, annot::Union{Vector{Vector{String}}, Nothing})
     K = length(guides)
     T = length(guides[1])
     order = sortperm(guides)
     guides = vcat(collect.(guides[order])...)
     guides = SMatrix{T, K}(guides)
-    return AmbigIdx(guides, annot[order])
+    if !isnothing(annot)
+        return AmbigIdx(guides, annot[order])
+    else
+        return AmbigIdx(guides, annot)
+    end
 end
 
 
@@ -33,5 +37,3 @@ function findbits(guide::LongDNASeq, idx::AmbigIdx)
     end
     return bits
 end
-
-

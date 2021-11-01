@@ -99,14 +99,15 @@ Guides do not contain PAM sequence here.
 "
 function pushguides!(
     output::T,
+    ambig::Vector{LongDNASeq},
     dbi::DBInfo,
     chrom::K,
-    reverse_comp::Bool, ambig::Int) where {
+    reverse_comp::Bool) where {
         T<:Union{
-            CountMinSketch, HyperLogLog, Vector{String}, Vector{DNAMer{20}},
+            Vector{String}, Vector{DNAMer{20}},
             Vector{UInt128}, Vector{UInt64}}, 
         K<:BioSequence}
-    
+
     query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd
     pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
     as_UInt128 = output isa Vector{UInt128}
@@ -123,23 +124,28 @@ function pushguides!(
         end
         guides = ThreadsX.map(findall(query, chrom, seq_start, seq_stop; ambig_max = dbi.motif.ambig_max)) do x 
             guide = LongDNASeq(chrom[x])
-            if n_ambiguous(guide) > 0
-                ambig += 1
-            end
             guide = removepam(guide, pam_loci)
-            # we don't need extensions here
             guide = strandedguide(guide, reverse_comp, dbi.motif.extends5)
-            if as_UInt128
-                return convert(UInt128, guide)
-            end
-            if as_UInt64 # TODO ambigous will crash this
-                return convert(UInt64, guide)
-            end
             return guide
         end
+
+        if dbi.motif.ambig_max > 0
+            idx = ThreadsX.map(x -> n_ambiguous(x) > 0, guides)
+            push!(ambig, guides[idx])
+            guides = guides[.!idx]
+        end
+
+        if as_UInt128
+            guides = convert.(UInt128, guides)
+        end
+
+        if as_UInt64
+            guides = convert.(UInt64, guides)
+        end
+
         add_guides!(output, guides)
     end
-    return ambig
+    return
 end
 
 
@@ -149,16 +155,15 @@ function gatherofftargets!(
 
     ref = open(dbi.filepath, "r")
     reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
-    ambig = 0
+    ambig = Vector{LongDNASeq}()
     for chrom_name in dbi.chrom
         record = reader[chrom_name] # this is possible only with index!
         @info "Working on $chrom_name"
         chrom = dbi.is_fa ? FASTA.sequence(record) : TwoBit.sequence(record)
-        ambig = pushguides!(output, dbi, chrom, false, ambig)
-        ambig = pushguides!(output, dbi, chrom, true, ambig)
+        pushguides!(output, ambig, dbi, chrom, false)
+        pushguides!(output, ambig, dbi, chrom, true)
     end
 
     close(ref)
-    @info "Ambiguous: " * string(ambig)
-    return
+    return ambig
 end

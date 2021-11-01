@@ -7,14 +7,14 @@ filepath - path used to access genome
 genomechecksum - checksum of that file
 genome - user name of the genome
 chrom - vector of chromosome names
-snpfilepath - path to the file with snp annotations, or ''
+vcf_filepath - path to the file with snp annotations, or ''
 "
 struct DBInfo
     name::String
     date::DateTime
     filepath::String
     genomechecksum::UInt32
-    snpfilepath::String
+    vcf_filepath::String
     chrom::Vector{String}
     chrom_type::DataType
     pos_type::DataType

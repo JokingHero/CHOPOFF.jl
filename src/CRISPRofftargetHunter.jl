@@ -28,8 +28,6 @@ using ArgParse
 using CSV
 using ProgressMeter
 
-include("sketches/hyperloglog.jl")
-include("sketches/cms.jl")
 include("sketches/bloom.jl")
 include("ambig_index.jl")
 
@@ -43,7 +41,6 @@ include("db_info.jl")
 include("find_offtargets.jl")
 include("db_helpers.jl")
 include("db_dict.jl")
-include("db_sketch.jl")
 include("db_linear.jl")
 include("db_compressed.jl")
 include("db_tree.jl")
@@ -58,7 +55,6 @@ export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 export build_binDB, search_binDB # db_bins
 export build_hashDB, search_hashDB # db_hash
-export build_sketchDB, search_sketchDB # db_sketch 
 export build_noHashDB, search_noHashDB # db_large_nohash
 
 
@@ -286,7 +282,7 @@ function main()
         elseif args["type"] == "dictDB"
             res = search_dictDB(args["database"],  guides, args["distance"])
         elseif args["type"] == "binDB"
-            res = search_binDB(args["database"],  guides, args["distance"])
+            res = search_binDB(args["database"],  guides)
         else
             throw("Unsupported database type.")
         end
