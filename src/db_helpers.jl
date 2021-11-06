@@ -67,7 +67,7 @@ Extract 5' extension of the guide:
 EXT ... NAA
 EXT ... NGG
 "
-function getExt5(chrom::K, ext_end::Int, dist::Int)  where K <: BioSequence
+function getExt5(chrom::K, ext_end::Int, dist::Int) where K <: BioSequence
     ext_start = ext_end - dist + 1
     if ext_end < 1
         ext = LongDNASeq(repeat("-", dist))
@@ -81,6 +81,65 @@ function getExt5(chrom::K, ext_end::Int, dist::Int)  where K <: BioSequence
 end
 
 
+function add_extension(
+    guides::Vector{LongDNASeq},
+    guides_pos::Vector{UnitRange{Int64}},
+    dbi::DBInfo,
+    chrom::K,
+    reverse_comp::Bool) where K <: BioSequence
+
+    chrom_max = lastindex(chrom)
+    if dbi.motif.extends5 && reverse_comp
+        # CCN ... EXT
+        ext = last.(guides_pos) .+ 1
+        ext = ThreadsX.map(x -> getExt3(chrom, chrom_max, x, dbi.motif.distance), ext)
+        guides .= complement.(guides .* ext)
+        guides_pos = first.(guides_pos)
+        # becomes GGN ... EXT
+    elseif dbi.motif.extends5 && !reverse_comp 
+        # EXT ... NGG
+        ext = first.(guides_pos) .- 1
+        ext = ThreadsX.map(x -> getExt5(chrom, x, dbi.motif.distance), ext)
+        guides .= reverse.(ext .* guides)
+        guides_pos = last.(guides_pos)
+        # becomes GGN ... EXT
+    elseif !dbi.motif.extends5 && reverse_comp 
+        # EXT ... NAA
+        ext = first.(guides_pos) .- 1
+        ext = ThreadsX.map(x -> getExt5(chrom, x, dbi.motif.distance), ext)
+        guides .= reverse_complement.(ext .* guides)
+        guides_pos = last.(guides_pos)
+        # becomes TTA ... EXT
+    else #!dbi.motif.extends5 && !reverse_comp
+        # TTN ... EXT
+        ext = last.(guides_pos) .+ 1
+        ext = ThreadsX.map(x -> getExt3(chrom, chrom_max, x, dbi.motif.distance), ext)
+        guides .= guides .* ext
+        guides_pos = first.(guides_pos)
+    end
+    return guides, guides_pos
+end
+
+
+function findguides(
+    dbi::DBInfo,
+    chrom::K,
+    reverse_comp::Bool) where {K<:BioSequence}
+
+    query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd
+    (seq_start, seq_stop) = locate_telomeres(chrom)
+    if reverse_comp ⊻ dbi.motif.extends5
+        seq_start -= dbi.motif.distance
+        seq_start = max(seq_start, 1)
+    else
+        seq_stop += dbi.motif.distance
+        seq_stop = min(seq_stop, length(chrom))
+    end
+    return findall(query, chrom, seq_start, seq_stop; ambig_max = dbi.motif.ambig_max)
+end
+
+
+
 "
 Prefix is the length of our common part between guides!
 Guide reversal happens here too, so that alignment is more
@@ -92,54 +151,14 @@ function gatherofftargets(
     chrom_name::String,
     reverse_comp::Bool,
     prefix_len::Int) where {K<:BioSequence}
-
-    query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd 
+ 
     pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
     chrom_name_ = convert(dbi.chrom_type, findfirst(isequal(chrom_name), dbi.chrom))
 
-    if length(query) != 0
-        chrom_max = lastindex(chrom)
-        (seq_start, seq_stop) = locate_telomeres(chrom)
-        if reverse_comp ⊻ dbi.motif.extends5
-            seq_start -= dbi.motif.distance
-            seq_start = max(seq_start, 1)
-        else
-            seq_stop += dbi.motif.distance
-            seq_stop = min(seq_stop, length(chrom))
-        end
-
-        guides_pos = findall(query, chrom, seq_start, seq_stop; ambig_max = dbi.motif.ambig_max)
+    if length(dbi.motif) != 0
+        guides_pos = findguides(dbi, chrom, reverse_comp)
         guides = ThreadsX.map(x -> removepam(chrom[x], pam_loci), guides_pos)
-
-        # add extension
-        if dbi.motif.extends5 && reverse_comp
-            # CCN ... EXT
-            ext = last.(guides_pos) .+ 1
-            ext = ThreadsX.map(x -> getExt3(chrom, chrom_max, x, dbi.motif.distance), ext)
-            guides .= complement.(guides .* ext)
-            guides_pos = first.(guides_pos)
-            # becomes GGN ... EXT
-        elseif dbi.motif.extends5 && !reverse_comp 
-            # EXT ... NGG
-            ext = first.(guides_pos) .- 1
-            ext = ThreadsX.map(x -> getExt5(chrom, x, dbi.motif.distance), ext)
-            guides .= reverse.(ext .* guides)
-            guides_pos = last.(guides_pos)
-            # becomes GGN ... EXT
-        elseif !dbi.motif.extends5 && reverse_comp 
-            # EXT ... NAA
-            ext = first.(guides_pos) .- 1
-            ext = ThreadsX.map(x -> getExt5(chrom, x, dbi.motif.distance), ext)
-            guides .= reverse_complement.(ext .* guides)
-            guides_pos = last.(guides_pos)
-            # becomes TTA ... EXT
-        else #!dbi.motif.extends5 && !reverse_comp
-            # TTN ... EXT
-            ext = last.(guides_pos) .+ 1
-            ext = ThreadsX.map(x -> getExt3(chrom, chrom_max, x, dbi.motif.distance), ext)
-            guides .= guides .* ext
-            guides_pos = first.(guides_pos)
-        end
+        guides, guides_pos = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
         guides_pos = convert.(dbi.pos_type, guides_pos)
         loc = Loc.(chrom_name_, guides_pos, !reverse_comp)
 

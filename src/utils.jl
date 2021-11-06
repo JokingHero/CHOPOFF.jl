@@ -356,6 +356,31 @@ function isambig(x::LongDNASeq)
 end
 
 
+# assumes elements are sorted A->C->G->T
+const TO_AMBIGUOUS = IdDict(
+    "ACGT" => DNA_N,
+
+    "CGT" => DNA_B,
+    "AGT" => DNA_D,
+    "ACG" => DNA_V,
+    "ACT" => DNA_H,
+
+    "GT" => DNA_K,
+    "AG" => DNA_R,
+    "AC" => DNA_M,
+    "AT" => DNA_W,
+    "CG" => DNA_S,
+    "CT" => DNA_Y,
+
+    "A" => DNA_A,
+    "C" => DNA_C,
+    "G" => DNA_G,
+    "T" => DNA_T,
+
+    "N" => DNA_N,
+    )
+
+
 const FROM_AMBIGUOUS = IdDict(
     DNA_N => [DNA_A, DNA_C, DNA_T, DNA_G],
 

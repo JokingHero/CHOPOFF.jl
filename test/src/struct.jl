@@ -7,14 +7,11 @@ using BioSequences
 
 @testset "structures" begin
 
-    cas9 = Motif(
-        "Cas9",
-        "NNNNNNNNNNNNNNNNNNNNXXX",
-        "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 4, true, 0)
+    cas9 = Motif("Cas9")
     cpf1 = Motif("Cpf1")
     @testset "Motif" begin
-        @test length_noPAM(cas9) == 24
-        @test length_noPAM(cpf1) == 24
+        @test length_noPAM(cas9) == 20
+        @test length_noPAM(cpf1) == 20
         @test removepam(dna"ACTNN", 1:3) == dna"NN"
         @test combinestrings("XXXACT", "ACTXXX") == "ACTACT"
     end
@@ -31,14 +28,12 @@ using BioSequences
 
     @testset "AmbigIdx" begin
         guides = [dna"ACTG", dna"NNAC", dna"GGAA", dna"GGAA"]
-        annot = [
-            Vector{String}(["rs131", "rs1"]), Vector{String}(), 
-            Vector{String}(), Vector{String}()]
+        annot = ["rs131;rs1", "1", "2", "3"]
         idx = AmbigIdx(guides, annot)
         @test sum(findbits(dna"AAAC", idx)) == 1
         @test sum(findbits(dna"GGAA", idx)) == 2
         @test sum(findbits(dna"GCAA", idx)) == 0
         @test sum(findbits(dna"GGA", idx)) == 3
-        @test idx.annot[findbits(dna"ACTG", idx)][1] == Vector{String}(["rs131", "rs1"])
+        @test idx.annot[findbits(dna"ACTG", idx)][1] == "rs131;rs1"
     end
 end

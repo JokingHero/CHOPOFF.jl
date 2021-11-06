@@ -1,0 +1,32 @@
+##fileformat=VCFv4.2
+##FILTER=<ID=PASS,Description="All filters passed">
+##contig=<ID=semirandom1,length=108326>
+##contig=<ID=semirandom2,length=108326>
+##ALT=<ID=*,Description="Represents allele(s) other than observed.">
+##INFO=<ID=INDEL,Number=0,Type=Flag,Description="Indicates that the variant is an INDEL.">
+##INFO=<ID=IDV,Number=1,Type=Integer,Description="Maximum number of reads supporting an indel">
+##INFO=<ID=IMF,Number=1,Type=Float,Description="Maximum fraction of reads supporting an indel">
+##INFO=<ID=DP,Number=1,Type=Integer,Description="Raw read depth">
+##INFO=<ID=VDB,Number=1,Type=Float,Description="Variant Distance Bias for filtering splice-site artefacts in RNA-seq data (bigger is better)",Version="3">
+##INFO=<ID=RPB,Number=1,Type=Float,Description="Mann-Whitney U test of Read Position Bias (bigger is better)">
+##INFO=<ID=MQB,Number=1,Type=Float,Description="Mann-Whitney U test of Mapping Quality Bias (bigger is better)">
+##INFO=<ID=BQB,Number=1,Type=Float,Description="Mann-Whitney U test of Base Quality Bias (bigger is better)">
+##INFO=<ID=MQSB,Number=1,Type=Float,Description="Mann-Whitney U test of Mapping Quality vs Strand Bias (bigger is better)">
+##INFO=<ID=SGB,Number=1,Type=Float,Description="Segregation based metric.">
+##INFO=<ID=MQ0F,Number=1,Type=Float,Description="Fraction of MQ0 reads (smaller is better)">
+##FORMAT=<ID=PL,Number=G,Type=Integer,Description="List of Phred-scaled genotype likelihoods">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##INFO=<ID=ICB,Number=1,Type=Float,Description="Inbreeding Coefficient Binomial test (bigger is better)">
+##INFO=<ID=HOB,Number=1,Type=Float,Description="Bias in the number of HOMs number (smaller is better)">
+##INFO=<ID=AC,Number=A,Type=Integer,Description="Allele count in genotypes for each ALT allele, in the same order as listed">
+##INFO=<ID=AN,Number=1,Type=Integer,Description="Total number of alleles in called genotypes">
+##INFO=<ID=DP4,Number=4,Type=Integer,Description="Number of high-quality ref-forward , ref-reverse, alt-forward and alt-reverse bases">
+##INFO=<ID=MQ,Number=1,Type=Integer,Description="Average mapping quality">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT
+semirandom1	148	.	A	A,G,T	4.3815	PASS	DP=31;VDB=0.0058656;SGB=-0.556411;RPB=0.00652406;MQB=1;BQB=0.584008;MQ0F=0;ICB=1;HOB=0.5;AC=1;AN=2;DP4=26,0,4,0;MQ=50	GT:PL	0/1:38,0,154
+semirandom1	149	.	A	A,AG,AGG	32.1709	PASS	DP=42;VDB=9.50611e-05;SGB=-0.636426;RPB=0.000203468;MQB=1;BQB=0.152231;MQ0F=0;ICB=1;HOB=0.5;AC=1;AN=2;DP4=0,34,0,7;MQ=50	GT:PL	0/1:67,0,151
+semirandom1	180	.	C	.	27.9284	PASS	DP=52;VDB=9.42695e-06;SGB=-0.662043;RPB=1.83874e-05;MQB=1;BQB=0.152433;MQ0F=0;ICB=1;HOB=0.5;AC=1;AN=2;DP4=0,42,0,9;MQ=50	GT:PL	0/1:63,0,145
+semirandom1	300	.	TCAG	T	7.1492	PASS	DP=9;VDB=0.02;SGB=-0.453602;RPB=0;MQB=1;BQB=0.833333;MQ0F=0;ICB=1;HOB=0.5;AC=1;AN=2;DP4=6,0,2,0;MQ=50	GT:PL	0/1:40,0,116
+semirandom2	190	.	T	NGG	47.9965	PASS	DP=23;VDB=0.00231828;SGB=-0.590765;RPB=0.00391289;MQB=1;BQB=0.524522;MQ0F=0;ICB=1;HOB=0.5;AC=1;AN=2;DP4=0,17,0,5;MQ=50	GT:PL	0/1:82,0,167
+semirandom2	193	.	C	GGA	8.99921	PASS	DP=1;SGB=-0.379885;MQ0F=0;AC=2;AN=2;DP4=0,0,1,0;MQ=50	GT:PL	1/1:38,3,0
+semirandom2	350	.	T	G,C	7.30814	PASS	DP=1;SGB=-0.379885;MQ0F=0;AC=2;AN=2;DP4=0,0,1,0;MQ=50	GT:PL	1/1:36,3,0

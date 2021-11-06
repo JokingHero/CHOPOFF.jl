@@ -54,6 +54,26 @@ end
     # guide ACTCAATCATGTTTCCCGTC is on the border - depending on the motif definition
     # it can/can't be found by different methods
 
+     # make and run default vcfDB
+     vcf_path = joinpath(tdir, "vcfDB")
+     vcf = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
+         "test", "sample_data", "artificial.vcf")
+     mkpath(vcf_path)
+     build_vcfDB(
+         "samirandom", genome, vcf,
+         Motif("Cas9"; distance = 1, ambig_max = 0),
+         vcf_path)
+     vcf_res = search_vcfDB(vcf_path, guides)
+ 
+     @testset "vcfDB result is same as in saved file" begin
+         ar_file = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
+            "test", "sample_data", "artificial_results.csv")
+         ar = DataFrame(CSV.File(ar_file))
+         @test nrow(vcf_res) == length(guides)
+         @test all(vcf_res.guide .== guides)
+         @test all(Matrix(vcf_res[:, 1:2]) == Matrix(ar[:, 1:2]))
+     end
+
     # make and run default linearDB
     ldb_path = joinpath(tdir, "linearDB")
     mkpath(ldb_path)
@@ -62,23 +82,12 @@ end
     ldb_res = search_linearDB(ldb_path, guides, 3; detail = detail_path)
     ldb = DataFrame(CSV.File(detail_path))
 
-    # make and run default sketchDB
-    #=
-    sdb_path = joinpath(tdir, "sketchDB")
-    mkpath(sdb_path)
-    build_sketchDB(
-        "samirandom", genome, 
-        Motif("Cas9", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 0, true, 0), 
-        sdb_path)
-    sdb_res = search_sketchDB(sdb_path, guides, 2)
-    =#
-
     # make and run default dictDB
     ddb_path = joinpath(tdir, "dictDB")
     mkpath(ddb_path)
     build_dictDB(
         "samirandom", genome, 
-        Motif("Cas9", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 0, true, 0), 
+        Motif("Cas9"; distance = 0, ambig_max = 0),
         ddb_path)
     ddb_res = search_dictDB(ddb_path, guides, 2)
 
@@ -87,7 +96,7 @@ end
     mkpath(bdb_path)
     build_binDB(
         "samirandom", genome, 
-        Motif("Cas9", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 0, true, 0), 
+        Motif("Cas9"; distance = 0, ambig_max = 0), 
         bdb_path)
     bdb_res = search_binDB(bdb_path, guides)
 
@@ -96,20 +105,21 @@ end
     mkpath(hdb_path)
     build_hashDB(
         "samirandom", genome, 
-        Motif("Cas9", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 1, true, 0), 
+        Motif("Cas9"; distance = 1, ambig_max = 0), 
         hdb_path)
-    hdb_res = search_hashDB(hdb_path, guides, false) # same as right!
+    hdb_res = search_hashDB(hdb_path, guides, false)
 
     # make and run default noHashDB
     nhdb_path = joinpath(tdir, "noHashDB")
     mkpath(nhdb_path)
     build_noHashDB(
         "samirandom", genome, 
-        Motif("Cas9", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 1, true, 0), 
+        Motif("Cas9"; distance = 1, ambig_max = 0),
         nhdb_path)
     nhdb_res = search_noHashDB(nhdb_path, guides)
 
     len_noPAM = CRISPRofftargetHunter.length_noPAM(Motif("Cas9"))
+
 
     @testset "linearDB against CRISPRitz" begin
         ## Files
@@ -218,50 +228,6 @@ end
         end
     end
 
-    
-    #=
-    @testset "sketchDB vs dictDB" begin
-        @test nrow(sdb_res) == nrow(ddb_res)
-        @test all(sdb_res.guide .== guides)
-        @test all(ddb_res.guide .== guides)
-        ddb_res2 = Matrix(ddb_res)
-        sdb_res2 = Matrix(sdb_res)
-        for i in 1:length(guides)
-            compare = ddb_res2[i, :] .<= sdb_res2[i, :]
-            @test all(compare)
-            if !all(compare)
-                @info "Failed at guideS $i " * string(guides[i])
-                @info "dictDB result: " * string(ddb_res2[i, :])
-                @info "sketchDB result: " * string(sdb_res2[i, :])
-            end
-        end
-        
-        # Now check complete dictionary vs sketch
-        dDB = CRISPRofftargetHunter.load(joinpath(ddb_path, "dictDB.bin"))
-        sDB = CRISPRofftargetHunter.load(joinpath(sdb_path, "sketchDB.bin"))
-        fr = CRISPRofftargetHunter.fprof(sDB.sketch)
-        conflict = 0
-        error = Vector{Int}()
-        for (key, value) in dDB.dict
-            key = LongDNASeq(key, len_noPAM)
-            if n_ambiguous(key) == 0
-                svalue = sDB.sketch[key]
-                @test value <= svalue
-                if svalue != value
-                    conflict += 1
-                    push!(error, svalue - value)
-                end
-            end
-        end
-        true_error_rate = conflict / length(dDB.dict)
-        @test abs(true_error_rate - fr) <= 0.01
-        @info "True error rate is: $true_error_rate"
-        @info "Estimated error rate is: $fr"
-        if length(error) > 0
-            @info "Maximum error: " * string(maximum(error))
-        end
-    end
-    =#
 
     @testset "binDB vs dictDB" begin
         @test nrow(bdb_res) == nrow(ddb_res)
@@ -275,7 +241,7 @@ end
             if !all(compare)
                 @info "Failed at guideS $i " * string(guides[i])
                 @info "dictDB result: " * string(ddb_res2[i, :])
-                @info "sketchDB result: " * string(bdb_res2[i, :])
+                @info "binDB result: " * string(bdb_res2[i, :])
             end
         end
         

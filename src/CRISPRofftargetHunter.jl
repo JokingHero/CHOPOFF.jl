@@ -27,6 +27,8 @@ using PkgVersion
 using ArgParse
 using CSV
 using ProgressMeter
+using VariantCallFormat
+using CodecZlib
 
 include("sketches/bloom.jl")
 include("ambig_index.jl")
@@ -47,6 +49,7 @@ include("db_tree.jl")
 include("db_bins.jl")
 include("db_hash.jl")
 include("db_large_nohash.jl")
+include("db_vcf.jl")
 
 export Motif # motif
 export build_linearDB, search_linearDB # db_linear
@@ -56,6 +59,7 @@ export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 export build_binDB, search_binDB # db_bins
 export build_hashDB, search_hashDB # db_hash
 export build_noHashDB, search_noHashDB # db_large_nohash
+export build_vcfDB, search_vcfDB # db_vcf
 
 
 ## Standalone binary generation

@@ -92,6 +92,7 @@ add_guides!(vec::Vector{DNAMer{20}}, guides::Vector{LongDNASeq}) = append!(vec, 
 add_guides!(vec::Vector{UInt128}, guides::Vector{UInt128}) = append!(vec, guides)
 add_guides!(vec::Vector{UInt64}, guides::Vector{UInt64}) = append!(vec, guides)
 
+
 "
 Will push guides found by the dbi.motif into the output as strings.
 Guides are as is for forward strand and reverse complemented when on reverse strand.
@@ -108,26 +109,18 @@ function pushguides!(
             Vector{UInt128}, Vector{UInt64}}, 
         K<:BioSequence}
 
-    query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd
     pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
     as_UInt128 = output isa Vector{UInt128}
     as_UInt64 = output isa Vector{UInt64}
 
-    if length(query) != 0
-        (seq_start, seq_stop) = locate_telomeres(chrom)
-        if reverse_comp ⊻ dbi.motif.extends5
-            seq_start -= dbi.motif.distance
-            seq_start = max(seq_start, 1)
-        else
-            seq_stop += dbi.motif.distance
-            seq_stop = min(seq_stop, lastindex(chrom))
-        end
-        guides = ThreadsX.map(findall(query, chrom, seq_start, seq_stop; ambig_max = dbi.motif.ambig_max)) do x 
+    if length(dbi.motif) != 0
+        guides_pos = findguides(dbi, chrom, reverse_comp)
+        guides = ThreadsX.map(guides_pos) do x 
             guide = LongDNASeq(chrom[x])
             guide = removepam(guide, pam_loci)
-            guide = strandedguide(guide, reverse_comp, dbi.motif.extends5)
             return guide
         end
+        guides, guides_pos = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
 
         if dbi.motif.ambig_max > 0
             idx = ThreadsX.map(x -> n_ambiguous(x) > 0, guides)
@@ -166,4 +159,28 @@ function gatherofftargets!(
 
     close(ref)
     return ambig
+end
+
+
+function gatherofftargets(
+    seq::LongDNASeq,
+    dbi::DBInfo)
+
+    guides_pos_fwd = findguides(dbi, seq, false)
+    guides_fwd = ThreadsX.map(guides_pos_fwd) do x 
+        guide = LongDNASeq(seq[x])
+        guide = removepam(guide, dbi.motif.pam_loci_fwd)
+        return guide
+    end
+    guides_fwd, guides_pos = add_extension(guides_fwd, guides_pos_fwd, dbi, seq, false)
+
+    guides_pos_rve = findguides(dbi, seq, true)
+    guides_rve = ThreadsX.map(guides_pos_rve) do x 
+        guide = LongDNASeq(seq[x])
+        guide = removepam(guide, dbi.motif.pam_loci_rve)
+        return guide
+    end
+    guides_rve, guides_pos = add_extension(guides_rve, guides_pos_rve, dbi, seq, true)
+
+    return vcat(guides_fwd, guides_rve), vcat(guides_pos_fwd, guides_pos_rve)
 end

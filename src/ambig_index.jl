@@ -3,11 +3,11 @@
 # of some guide are inside.
 struct AmbigIdx
     ambig::SMatrix
-    annot::Union{Vector{Vector{String}}, Nothing}
+    annot::Union{Vector{String}, Nothing}
 end
 
 
-function AmbigIdx(guides::Vector{<: BioSequence}, annot::Union{Vector{Vector{String}}, Nothing})
+function AmbigIdx(guides::Vector{<: BioSequence}, annot::Union{Vector{String}, Nothing})
     K = length(guides)
     T = length(guides[1])
     order = sortperm(guides)

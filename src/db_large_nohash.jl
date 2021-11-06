@@ -79,7 +79,10 @@ function search_noHashDB(
         d1_combs = LongDNASeq.(comb_of_d1_extended(string(s))) # 1 distance
         idx1 = Set{Int64}()
         for d1_comb in d1_combs
-            idx1 = union(idx1, ThreadsX.findall(x -> is_equal(x, convert(UInt64, d1_comb), (len_noPAM - length(d1_comb)) * 2), sdb.guides))
+            idx1 = union(idx1, 
+                ThreadsX.findall(x -> 
+                    is_equal(x, convert(UInt64, d1_comb), 
+                        (len_noPAM + sdb.dbi.motif.distance - length(d1_comb)) * 2), sdb.guides))
         end
         
         if !isnothing(idx0)

@@ -109,13 +109,6 @@ function Motif(alias::String,
     if length(fwdmotif) != length(fwdpam)
         throw("fwd_motif and fwd_pam have to have the same length!")
     end
-    if extends5
-        fwdmotif = repeat("N", distance) * fwdmotif
-        fwdpam = repeat("X", distance) * fwdpam
-    else
-        fwdmotif = fwdmotif * repeat("N", distance)
-        fwdpam = fwdpam * repeat("X", distance)
-    end
     merge = combinestrings(fwdmotif, fwdpam)
 
     if forward_strand
@@ -148,6 +141,27 @@ function length_noPAM(motif::Motif)
     rve_len = length(motif.rve) - length(motif.pam_loci_rve)
     return max(fwd_len, rve_len)
 end
+
+
+function length(motif::Motif)
+    return max(length(motif.fwd), length(motif.rve))
+end
+
+
+function setambig(motif::Motif, ambig::Int)
+    return Motif(motif.alias, motif.fwd, motif.rve, 
+        motif.pam_loci_fwd, motif.pam_loci_rve, 
+        motif.distance, motif.extends5, ambig)
+end
+
+
+function setdist(motif::Motif, distance::Int)
+    return Motif(motif.alias, motif.fwd, motif.rve, 
+        motif.pam_loci_fwd, motif.pam_loci_rve, 
+        distance, motif.extends5, motif.ambig_max)
+end
+
+
 
 # function print_rgb(io::IO, t::String, r = 235, g = 79, b = 52)
 #     print(io, "\e[1m\e[38;2;$r;$g;$b;249m", t)
@@ -190,7 +204,8 @@ const motif_db = Dict(
                     "TTTNXXXXXXXXXXXXXXXXXXXX", true, true, 4, false, 0)
     )
 
-    
-function Motif(alias::String)
-    return motif_db[alias]
+
+function Motif(alias::String; distance::Int = 4, ambig_max::Int = 0)
+    motif = motif_db[alias]
+    return setambig(setdist(motif, distance), ambig_max)
 end

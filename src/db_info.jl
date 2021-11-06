@@ -22,7 +22,7 @@ struct DBInfo
     motif::Motif
 end
 
-function DBInfo(filepath::String, name::String, motif::Motif)
+function DBInfo(filepath::String, name::String, motif::Motif; vcf_filepath::String = "")
     checksum = open(crc32c, filepath)
 
     ext = extension(filepath)
@@ -61,7 +61,7 @@ function DBInfo(filepath::String, name::String, motif::Motif)
     pos_type = smallestutype(unsigned(maxchromlen))
     chrom_type = smallestutype(unsigned(length(chrom)))
     return DBInfo(name, now(Dates.UTC), filepath, checksum,
-                  "", chrom, chrom_type, pos_type, is_fa, motif)
+        vcf_filepath, chrom, chrom_type, pos_type, is_fa, motif)
 end
 
 struct Loc{T<:Unsigned,K<:Unsigned}
