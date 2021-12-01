@@ -29,6 +29,12 @@ function build_binDB(
     probability_of_error::Float64 = 0.001,
     max_count::Int = 10)
 
+    if motif.distance != 0 || motif.ambig_max != 0
+        @info "Distance and ambig_max enforced to 0."
+        motif = setdist(motif, 0)
+        motif = setambig(motif, 0)
+    end
+    @info motif
     dbi = DBInfo(genomepath, name, motif)
 
     # first we measure how many unique guides there are

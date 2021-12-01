@@ -22,12 +22,12 @@ function build_noHashDB(
     motif::Motif,
     storagedir::String)
 
-    if motif.ambig_max != 0
-        throw("We don't support unambigous searches yet.")
+    if (motif.distance != 1) || motif.ambig_max != 0
+        @info "Distance and ambig_max enforced to 1 and 0."
+        motif = setdist(motif, 1)
+        motif = setambig(motif, 0)
     end
-    if motif.distance != 1
-        throw("Motif for distances not 1 is not supported.")
-    end
+
     dbi = DBInfo(genomepath, name, motif)
 
     # first we measure how many unique guides there are

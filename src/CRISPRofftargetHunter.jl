@@ -53,7 +53,7 @@ include("db_vcf.jl")
 
 export Motif # motif
 export build_linearDB, search_linearDB # db_linear
-export build_compactDB, search_compactDB # db_compressed
+export build_compressedDB, search_compressedDB # db_compressed
 export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 export build_binDB, search_binDB # db_bins
@@ -63,7 +63,7 @@ export build_vcfDB, search_vcfDB # db_vcf
 
 
 ## Standalone binary generation
-function parse_commandline()
+function parse_commandline(args::Array{String})
     s = ArgParseSettings(
         prog = "CRISPRofftargetHunter", 
         description = "Fast and reliable off-target detection for CRISPR guideRNAs.",
@@ -88,11 +88,12 @@ function parse_commandline()
         "linearDB"
             action = :command
             help = "linearDB utilizes prefixes to decrease search time, but no other optimizations."
-        "sketchDB"
+        "compressedDB"
             action = :command
-            help = "sketchDB is extremally fast" * 
-                ", but it can only estimate number of off-targets" * 
-                ", however it can never under-estimate, it can only over-estimate."
+            help = "compressedDB utilizes previous guide alignment and focuses only on the differences between consecutive guides."
+        "hashDB"
+            action = :command
+            help = "hashDB is extremally fast, but only estimates off-targets within distance of 1"
         "dictDB"
             action = :command
             help = "dictDB is a simple dictionary of all unique guides and their counts."
@@ -100,6 +101,12 @@ function parse_commandline()
             action = :command
             help = "binDB is a binned bloom filter, it is very space efficient " * 
                 "and carries small error during estimations."
+        "noHashDB"
+            action = :command
+            help = "noHashDB is similar to dictDB, but more efficient at storage and matching."
+        "vcfDB"
+            action = :command
+            help = "vcfDB is similar specialized database to handle .vcf files and personalized off-target search."
         "--name"
             help = "How will you shortly name this database?"
             arg_type = String
@@ -138,6 +145,10 @@ function parse_commandline()
                 extra nucleotides will be added for alignment within distance. Whether
                 to extend in the 5' and 3' direction. Cas9 is extend3 = false, default, without this option."""
             action = :store_true
+        "--ambig_max"
+            help = """How many ambiguous bases are allowed inside the guide?"""
+            arg_type = Int
+            default = 0
         "--motif"
             help = """Will try to get the Motif from Motif databases avaialble are e.g. Cas9 or Cpf1"""
             arg_type = String
@@ -162,23 +173,30 @@ function parse_commandline()
             default = 7
     end
 
-    @add_arg_table! s["build"]["sketchDB"] begin
-        "--probability_of_error"
-            help = "Defines chance for over-estimating off-target counts. " * 
-                "Decreasing this value will increase the size of the sketchDB."
-            arg_type = Float64
-            default = 0.001
-        "--error_size"
-            help = "Transforms into length of the table, it is epsilon indicating what is desired " *
-                "error of the estimated count we can afford."
-            arg_type = Int
-            default = 3
+    @add_arg_table! s["build"]["compressedDB"] begin
+        "--prefix_length"
+        help = "Defines length of the prefix. " * 
+            "For each possible prefix there will be " *
+            "one linearDB instance."
+        arg_type = Int
+        default = 7
+    end
+
+    @add_arg_table! s["build"]["hashDB"] begin
         "--max_count"
             help = "Maximum count value for given off-target sequence. " * 
                 "Increasing this value will allow to keep more precise counts of often repeated guide sequences" * 
                 ", but increase the size of the database significantly."
             arg_type = Int
-            default = 255
+            default = 10
+        "--max_iterations"
+            help = "How many iterations to try before quiting the building of the DB."
+            arg_type = Int
+            default = 10
+        "--seed"
+            help = "Initial seed for database build."
+            arg_type = UInt64
+            default = UInt64(0x726b2b9d438b9d4d)
     end
 
     @add_arg_table! s["build"]["dictDB"] begin
@@ -187,7 +205,7 @@ function parse_commandline()
                 "Increasing this value will allow to keep more precise counts of often repeated guide sequences" * 
                 ", but increase the size of the database significantly."
             arg_type = Int
-            default = 255
+            default = 10
     end
 
     @add_arg_table! s["build"]["binDB"] begin
@@ -204,6 +222,13 @@ function parse_commandline()
             default = 10
     end
 
+    @add_arg_table! s["build"]["vcfDB"] begin
+        "--vcf"
+            help = "Path to the .vcf or .vcf.gz file. "
+            arg_type = String
+            required = true
+    end
+
     @add_arg_table! s["search"] begin
         "--distance"
             help = "Maximum edit distance to analyze. Must be less or equal to distance used when building db."
@@ -213,6 +238,13 @@ function parse_commandline()
             help = "Path to the file where additional detailed results should be written. Not aplicable for sketchDB."
             arg_type = String
             default = ""
+        "--early_stopping"
+            help = "A vector of values, for each (distance + 1), where alignments will be early stopped."
+            arg_type = Vector{Int}
+            default = repeat([250], 1 + 1)
+        "--right"
+            help = "Directionality in the filter databases."
+            action = :store_true
         "database"
             help = "Path to the folder where the database is stored. Same as used when building."
             arg_type = String
@@ -220,7 +252,15 @@ function parse_commandline()
         "type"
             help = "Type of the database: treeDB, sketchDB or linearDB."
             arg_type = String
-            range_tester = (x -> x == "sketchDB" || x == "binDB" || x == "dictDB" || x == "treeDB" || x == "linearDB")
+            range_tester = (
+                x -> x == "noHashDB" || 
+                x == "vcfDB" || 
+                x == "hashDB" || 
+                x == "compressedDB" || 
+                x == "binDB" || 
+                x == "dictDB" || 
+                x == "treeDB" || 
+                x == "linearDB")
             required = true
         "guides"
             help = "File path to the guides, each row in the file contains a guide WITHOUT PAM."
@@ -232,12 +272,12 @@ function parse_commandline()
             required = true
     end
 
-    return parse_args(s)
+    return parse_args(args, s)
 end
 
 
-function main()
-    args = parse_commandline()
+function main(args::Array{String})
+    args = parse_commandline(args)
     
     for (arg, val) in args
         println(" $arg  =>  $val")
@@ -247,11 +287,13 @@ function main()
         args = args["build"]
         if args["motif"] != ""
             motif = Motif(args["motif"])
+            motif = setdist(motif, args["distance"])
+            motif = setambig(motif, args["ambig_max"])
         else
             motif = Motif(
                 args["name"], args["fwd_motif"], 
                 args["fwd_pam"], !args["not_forward"], !args["not_reverse"],
-                args["distance"], !args["extend3"])
+                args["distance"], !args["extend3"], args["ambig_max"])
         end
 
         if args["%COMMAND%"] == "treeDB"
@@ -260,17 +302,25 @@ function main()
         elseif args["%COMMAND%"] == "linearDB"
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
                 args["linearDB"]["prefix_length"])
-        elseif args["%COMMAND%"] == "sketchDB"
-            #build_sketchDB(args["name"], args["genome"], motif, args["output"], 
-            #    args["sketchDB"]["probability_of_error"], args["sketchDB"]["error_size"]; 
-            #    max_count = args["sketchDB"]["max_count"])
+        elseif args["%COMMAND%"] == "compressedDB"
+            build_compressedDB(args["name"], args["genome"], motif, args["output"], 
+                args["compressedDB"]["prefix_length"])
+        elseif args["%COMMAND%"] == "hashDB"
+            build_hashDB(args["name"], args["genome"], motif, args["output"]; 
+                seed = args["hashDB"]["seed"], 
+                max_iterations = args["hashDB"]["max_iterations"],
+                max_count = args["hashDB"]["max_count"])
         elseif args["%COMMAND%"] == "dictDB"
             build_dictDB(args["name"], args["genome"], motif, args["output"]; 
-                max_count = args["sketchDB"]["max_count"])
+                max_count = args["dictDB"]["max_count"])
         elseif args["%COMMAND%"] == "binDB"
             build_binDB(args["name"], args["genome"], motif, args["output"], 
-                args["sketchDB"]["probability_of_error"]; 
-                max_count = args["sketchDB"]["max_count"])
+                probability_of_error = args["binDB"]["probability_of_error"]; 
+                max_count = args["binDB"]["max_count"])
+        elseif args["%COMMAND%"] == "noHashDB"
+            build_noHashDB(args["name"], args["genome"], motif, args["output"])
+        elseif args["%COMMAND%"] == "vcfDB"
+            build_vcfDB(args["name"], args["genome"], args["vcfDB"]["vcf"], motif, args["output"])
         else
             throw("Unsupported database type.")
         end
@@ -281,12 +331,18 @@ function main()
             res = search_treeDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "linearDB"
             res = search_linearDB(args["database"], guides, args["distance"]; detail = args["detail"])
-        elseif args["type"] == "sketchDB"
-            #res = search_sketchDB(args["database"],  guides, args["distance"])
+        elseif args["type"] == "compressedDB"
+            res = search_compressedDB(args["database"], guides, args["distance"]; detail = args["detail"])
+        elseif args["type"] == "hashDB"
+            res = search_hashDB(args["database"], guides, args["right"])
         elseif args["type"] == "dictDB"
-            res = search_dictDB(args["database"],  guides, args["distance"])
+            res = search_dictDB(args["database"], guides, args["distance"])
         elseif args["type"] == "binDB"
-            res = search_binDB(args["database"],  guides)
+            res = search_binDB(args["database"], guides)
+        elseif args["type"] == "noHashDB"
+            res = search_noHashDB(args["database"], guides)
+        elseif args["type"] == "vcfDB"
+            res = search_vcfDB(args["database"], guides)
         else
             throw("Unsupported database type.")
         end
@@ -297,7 +353,7 @@ end
 
 function julia_main()::Cint
     try
-        main()
+        main(ARGS)
     catch
         Base.invokelatest(Base.display_error, Base.catch_stack())
         return 1
@@ -307,7 +363,7 @@ end
 
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    main()
+    main(ARGS)
 end
 
 end

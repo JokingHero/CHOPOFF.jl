@@ -120,7 +120,11 @@ function pushguides!(
             guide = removepam(guide, pam_loci)
             return guide
         end
-        guides, guides_pos = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
+
+        if dbi.motif.distance > 0
+            guides = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
+        end
+        guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, reverse_comp)
 
         if dbi.motif.ambig_max > 0
             idx = ThreadsX.map(x -> n_ambiguous(x) > 0, guides)
@@ -172,7 +176,9 @@ function gatherofftargets(
         guide = removepam(guide, dbi.motif.pam_loci_fwd)
         return guide
     end
-    guides_fwd, guides_pos = add_extension(guides_fwd, guides_pos_fwd, dbi, seq, false)
+    guides_fwd = add_extension(guides_fwd, guides_pos_fwd, dbi, seq, false)
+    guides_fwd, guides_pos = normalize_to_PAMseqEXT(guides_fwd, guides_pos_fwd, dbi, false)
+    
 
     guides_pos_rve = findguides(dbi, seq, true)
     guides_rve = ThreadsX.map(guides_pos_rve) do x 
@@ -180,7 +186,8 @@ function gatherofftargets(
         guide = removepam(guide, dbi.motif.pam_loci_rve)
         return guide
     end
-    guides_rve, guides_pos = add_extension(guides_rve, guides_pos_rve, dbi, seq, true)
+    guides_rve = add_extension(guides_rve, guides_pos_rve, dbi, seq, true)
+    guides_rve, guides_pos = normalize_to_PAMseqEXT(guides_rve, guides_pos_rve, dbi, true)
 
     return vcat(guides_fwd, guides_rve), vcat(guides_pos_fwd, guides_pos_rve)
 end

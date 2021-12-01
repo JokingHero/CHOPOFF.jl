@@ -20,8 +20,13 @@ function build_dictDB(
     genomepath::String, 
     motif::Motif,
     storagedir::String;
-    max_count::Int = 255)
+    max_count::Int = 10)
 
+    if motif.distance != 0 || motif.ambig_max != 0
+        @info "Distance and ambig_max enforced to 0."
+        motif = setdist(motif, 0)
+        motif = setambig(motif, 0)
+    end
     dbi = DBInfo(genomepath, name, motif)
 
     # first we measure how many unique guides there are

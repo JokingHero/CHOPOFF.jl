@@ -90,31 +90,49 @@ function add_extension(
 
     chrom_max = lastindex(chrom)
     if dbi.motif.extends5 && reverse_comp
-        # CCN ... EXT
         ext = last.(guides_pos) .+ 1
         ext = ThreadsX.map(x -> getExt3(chrom, chrom_max, x, dbi.motif.distance), ext)
-        guides .= complement.(guides .* ext)
+        guides .= guides .* ext
+    elseif dbi.motif.extends5 && !reverse_comp
+        ext = first.(guides_pos) .- 1
+        ext = ThreadsX.map(x -> getExt5(chrom, x, dbi.motif.distance), ext)
+        guides .= ext .* guides
+    elseif !dbi.motif.extends5 && reverse_comp
+        ext = first.(guides_pos) .- 1
+        ext = ThreadsX.map(x -> getExt5(chrom, x, dbi.motif.distance), ext)
+        guides .= ext .* guides
+    else #!dbi.motif.extends5 && !reverse_comp
+        ext = last.(guides_pos) .+ 1
+        ext = ThreadsX.map(x -> getExt3(chrom, chrom_max, x, dbi.motif.distance), ext)
+        guides .= guides .* ext
+    end
+    return guides
+end
+
+
+function normalize_to_PAMseqEXT(
+    guides::Vector{LongDNASeq},
+    guides_pos::Vector{UnitRange{Int64}},
+    dbi::DBInfo,
+    reverse_comp::Bool)
+
+    if dbi.motif.extends5 && reverse_comp
+        # CCN ... EXT
+        guides .= complement.(guides)
         guides_pos = first.(guides_pos)
         # becomes GGN ... EXT
     elseif dbi.motif.extends5 && !reverse_comp 
         # EXT ... NGG
-        ext = first.(guides_pos) .- 1
-        ext = ThreadsX.map(x -> getExt5(chrom, x, dbi.motif.distance), ext)
-        guides .= reverse.(ext .* guides)
+        guides .= reverse.(guides)
         guides_pos = last.(guides_pos)
         # becomes GGN ... EXT
     elseif !dbi.motif.extends5 && reverse_comp 
         # EXT ... NAA
-        ext = first.(guides_pos) .- 1
-        ext = ThreadsX.map(x -> getExt5(chrom, x, dbi.motif.distance), ext)
-        guides .= reverse_complement.(ext .* guides)
+        guides .= reverse_complement.(guides)
         guides_pos = last.(guides_pos)
         # becomes TTA ... EXT
     else #!dbi.motif.extends5 && !reverse_comp
         # TTN ... EXT
-        ext = last.(guides_pos) .+ 1
-        ext = ThreadsX.map(x -> getExt3(chrom, chrom_max, x, dbi.motif.distance), ext)
-        guides .= guides .* ext
         guides_pos = first.(guides_pos)
     end
     return guides, guides_pos
@@ -158,7 +176,8 @@ function gatherofftargets(
     if length(dbi.motif) != 0
         guides_pos = findguides(dbi, chrom, reverse_comp)
         guides = ThreadsX.map(x -> removepam(chrom[x], pam_loci), guides_pos)
-        guides, guides_pos = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
+        guides = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
+        guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, reverse_comp)
         guides_pos = convert.(dbi.pos_type, guides_pos)
         loc = Loc.(chrom_name_, guides_pos, !reverse_comp)
 

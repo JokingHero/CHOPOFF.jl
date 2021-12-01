@@ -329,13 +329,13 @@ end
     end
     
 
-    @testset "linearDB vs compactDB" begin
-        cdb_path = joinpath(tdir, "compactDB")
+    @testset "linearDB vs compressedDB" begin
+        cdb_path = joinpath(tdir, "compressedDB")
         mkpath(cdb_path)
-        build_compactDB("samirandom", genome, Motif("Cas9"), cdb_path, 7)
+        build_compressedDB("samirandom", genome, Motif("Cas9"), cdb_path, 7)
 
         detail_path = joinpath(cdb_path, "detail.csv")
-        cdb_res = search_compactDB(cdb_path, guides, 3; detail = detail_path)
+        cdb_res = search_compressedDB(cdb_path, guides, 3; detail = detail_path)
         cdb = DataFrame(CSV.File(detail_path))
 
         @test nrow(cdb_res) == length(guides)

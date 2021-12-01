@@ -1,5 +1,7 @@
 # include all files in test/src directory
-files = readdir("src/")
+using CRISPRofftargetHunter
+dir = joinpath(pkgdir(CRISPRofftargetHunter), "test", "src")
+files = readdir(dir)
 for f in files
-    include("src/" * f)
+    include(joinpath(dir, f))
 end

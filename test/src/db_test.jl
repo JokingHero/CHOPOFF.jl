@@ -3,6 +3,28 @@ using CRISPRofftargetHunter
 using BioSequences
 using CSV
 using DataFrames
+using FASTX
+
+
+genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
+motif = Motif("Cas9")
+if motif.distance != 0 || motif.ambig_max != 0
+    @info "Distance and ambig_max enforced to 0."
+    motif = setdist(motif, 0)
+    motif = setambig(motif, 0)
+end
+dbi = CRISPRofftargetHunter.DBInfo(genome, "test", motif)
+
+ref = open(dbi.filepath, "r")
+reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
+ambig = Vector{LongDNASeq}()
+record = reader["chrM"] # this is possible only with index!
+@info "Working on $chrom_name"
+chrom = dbi.is_fa ? FASTA.sequence(record) : TwoBit.sequence(record)
+CRISPRofftargetHunter.pushguides!(output, ambig, dbi, chrom, false)
+CRISPRofftargetHunter.pushguides!(output, ambig, dbi, chrom, true)
+close(ref)
+
 
 cd("test")
 

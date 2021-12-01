@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  release:
+  build_release:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -22,8 +22,28 @@ jobs:
         with:
           version: ${{ matrix.julia-version }}
       - uses: julia-actions/julia-buildpkg@v1
+      - name: "Setup COH version"
+        run: echo "coh=$(julia --project=. -e 'using PkgVersion; print(string(@PkgVersion.Version));')" >> $GITHUB_ENV
+      - name: "Setup J version"
+        run: echo "jver=$(julia -e 'print(VERSION)')" >> $GITHUB_ENV
+      - name: "Setup COH name"
+        run: echo "coh_name=CRISPRofftargetHunter-_v${{ env.coh }}-julia_v${{ env.jver }}_${{ matrix.julia-arch }}-${{ matrix.os }}" >> $GITHUB_ENV
       - name: "Build"
-        run: ./build_standalone.sh
+        run: ./build_standalone.sh ${{ env.coh_name }}
+      - uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.coh_name }}
+          path: ./../${{ env.coh_name }}/
+          retention-days: 1
+
+  release:
+    name: "Release"
+    needs: build_release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v2
+      - name: Display structure of downloaded files
+        run: ls -R
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
@@ -32,4 +52,4 @@ jobs:
           title: "CRISPRofftargetHunter"
           files: |
             LICENSE.txt
-            ./../*.tar.gz
+            ./*/*.zip

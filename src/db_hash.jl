@@ -83,7 +83,8 @@ function build_hashDB(
 
     dbi = DBInfo(genomepath, name, motif)
     if motif.distance != 1
-        throw("Only distance 1 is supported!")
+        @info "Distance enforced to 1."
+        motif = setdist(motif, 1)
     end
     
     # gather all unique off-targets
@@ -205,6 +206,6 @@ function search_hashDB(
     col_d = [Symbol("D$i") for i in 0:1]
     rename!(res, col_d)
     res.guide = guides
-    sort!(res, col_d)
+    sort!(res, vcat(col_d, :guide))
     return res
 end

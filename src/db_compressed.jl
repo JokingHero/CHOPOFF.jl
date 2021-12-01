@@ -81,7 +81,7 @@ end
 
 
 """
-`build_compactDB(
+`build_compressedDB(
     name::String,
     genomepath::String,
     motif::Motif,
@@ -102,14 +102,12 @@ the prefix we don't search the off-targets grouped inside the prefix.
 Therefore it is advantageous to select larger prefix than maximum 
 search distance, however in that case number of files also grows.
 """
-function build_compactDB(
+function build_compressedDB(
     name::String,
     genomepath::String,
     motif::Motif,
     storagedir::String,
-    prefix_len::Int = 7;
-    bed_filter = "",
-    vcf = "") # TODO
+    prefix_len::Int = 7)
 
     if prefix_len <= motif.distance
         throw("prefix_len $prefix_len is <= " * string(motif.distance))
@@ -129,7 +127,7 @@ function build_compactDB(
     prefixes = Set(vcat(prefixes...))
 
     # step 2
-    @info "Step 2: Constructing per prefix compactDB."
+    @info "Step 2: Constructing per prefix compressedDB."
     # Iterate over all prefixes and merge different chromosomes
     @showprogress 60 for prefix in prefixes
         guides = Vector{LongDNASeq}()
@@ -177,8 +175,8 @@ function build_compactDB(
     end
 
     linDB = LinearDB(dbi, prefixes)
-    save(linDB, joinpath(storagedir, "linearDB.bin"))
-    @info "Finished constructing linearDB in " * storagedir
+    save(linDB, joinpath(storagedir, "compressedDB.bin"))
+    @info "Finished constructing compressedDB in " * storagedir
     return storagedir
 end
 
@@ -251,7 +249,6 @@ function search_compact_prefix!(
         end
     end
 
-    # check ambig guides # add VCF here?
     for (j, suffix) in enumerate(db.ambig_suffixes)
         for i in 1:length(guides)
             if !isfinal[i] && !is_early_stopped[i]
@@ -331,16 +328,16 @@ which off-targets are considered.
 `detail` - path and name for the output file. This search will create intermediate 
 files which will have same name as detail, but with a sequence prefix. Final file
 will contain all those intermediate files. Leave `detail` empty if you are only 
-interested in off-target counts returned by the linearDB.  
+interested in off-target counts returned by the compressedDB.  
 """
-function search_compactDB(
+function search_compressedDB(
     storagedir::String, 
     guides::Vector{LongDNASeq}, 
     dist::Int = 4,
     early_stop::Vector{Int} = repeat([250], dist + 1); 
     detail::String = "")
 
-    ldb = load(joinpath(storagedir, "linearDB.bin"))
+    ldb = load(joinpath(storagedir, "compressedDB.bin"))
     prefixes = collect(ldb.prefixes)
     if dist > length(first(prefixes)) || dist > ldb.dbi.motif.distance
         error("For this database maximum distance is " * 
