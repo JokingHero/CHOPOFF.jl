@@ -126,7 +126,7 @@ end
         cz_file = "./sample_data/crispritz_results/guides.output.targets.txt"
         cz = DataFrame(CSV.File(cz_file))
         cz = cz[cz.Total .<= 3, :]
-        cz.guide = asguide.(cz.crRNA)
+        cz.guide = asguide.(String.(cz.crRNA))
         cz.start = ldb_start(cz.Position, length.(cz.crRNA), countspaces.(cz.DNA), cz.Direction)
 
         # list all alignments that are in linearDB and not in crizpritz output

@@ -27,7 +27,7 @@ jobs:
       - name: "Setup J version"
         run: echo "jver=$(julia -e 'print(VERSION)')" >> $GITHUB_ENV
       - name: "Setup COH name"
-        run: echo "coh_name=CRISPRofftargetHunter-_v${{ env.coh }}-julia_v${{ env.jver }}_${{ matrix.julia-arch }}-${{ matrix.os }}" >> $GITHUB_ENV
+        run: echo "coh_name=CRISPRofftargetHunter_v${{ env.coh }}-julia_v${{ env.jver }}_${{ matrix.julia-arch }}-${{ matrix.os }}" >> $GITHUB_ENV
       - name: "Build"
         run: ./build_standalone.sh ${{ env.coh_name }}
       - uses: actions/upload-artifact@v2
