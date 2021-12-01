@@ -1,7 +1,6 @@
 /Manifest.toml
 
 .vscode/settings.json
-*.csv
 *.ebwt
 *.zip
 *.bin
