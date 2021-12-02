@@ -85,7 +85,7 @@ function build_binDB(
         end
         idx = findfirst(x -> x == real_count, counts)
         guide = LongDNASeq(guide, len_noPAM)
-        if n_ambiguous(guide) > 0
+        if isambig(guide)
             guide = expand_ambiguous(guide)
             for g in guide
                 push!(bins[idx], g)
@@ -104,7 +104,7 @@ function build_binDB(
     len_noPAM = length_noPAM(dbi.motif)
     for (guide, real_count) in dict
         guide = LongDNASeq(guide, len_noPAM)
-        if n_ambiguous(guide) == 0
+        if iscertain(guide)
             est_count = estimate(db, guide)
             if real_count >= max_count
                 real_count = max_count
@@ -171,7 +171,7 @@ function search_binDB(
     storagedir::String,
     guides::Vector{LongDNASeq})
 
-    if any(n_ambiguous.(guides) .> 0)
+    if any(isambig.(guides))
         throw("Ambiguous bases are not allowed in guide queries.")
     end
 

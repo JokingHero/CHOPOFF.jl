@@ -8,6 +8,7 @@ using FASTX
 
 genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
 motif = Motif("Cas9")
+
 if motif.distance != 1 || motif.ambig_max != 0
     motif = CRISPRofftargetHunter.setdist(motif, 1)
     motif = CRISPRofftargetHunter.setambig(motif, 0)
@@ -16,7 +17,9 @@ dbi = CRISPRofftargetHunter.DBInfo(genome, "test", motif)
 
 guides = Vector{UInt64}()
 ambig = CRISPRofftargetHunter.gatherofftargets!(guides, dbi)
+=#
 
+#=
 
 cd("test")
 
@@ -24,6 +27,7 @@ cd("test")
 
 genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
     "test", "sample_data", "genome", "semirandom.fa")
+genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
 guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
 guides = LongDNASeq.(guides_s)
 tdir = tempname()

@@ -346,13 +346,19 @@ end
     return y
 end
 
+
 @inline function BioSequences.LongDNASeq(x::UInt64, len::Int)
     return LongDNASeq(DNAMer{len}(x))
 end
 
+import BioSymbols.iscertain
+function BioSymbols.iscertain(x::LongDNASeq)
+    return all(iscertain.(x))
+end
+
 
 function isambig(x::LongDNASeq)
-    return count(isambiguous, x) > 0
+    return !iscertain(x)
 end
 
 

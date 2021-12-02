@@ -1,4 +1,4 @@
-[![Tests](https://github.com/JokingHero/CRISPRofftargetHunter.jl/actions/workflows/test.yml/badge.svg)](https://github.com/JokingHero/CRISPRofftargetHunter.jl/actions/workflows/test.yml)
+[![Tests & Release](https://github.com/JokingHero/CRISPRofftargetHunter.jl/actions/workflows/build_standalone.yml/badge.svg?branch=master)](https://github.com/JokingHero/CRISPRofftargetHunter.jl/actions/workflows/build_standalone.yml)
 
 # CRISPRofftargetHunter  
 

@@ -158,7 +158,7 @@ function search_hashDB(
     guides::Vector{LongDNASeq},
     right::Bool)
 
-    if any(n_ambiguous.(guides) .> 0)
+    if any(isambig.(guides))
         throw("Ambiguous bases are not allowed in guide queries.")
     end
 

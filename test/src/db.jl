@@ -253,7 +253,7 @@ end
         len_noPAM = CRISPRofftargetHunter.length_noPAM(dDB.dbi.motif)
         for (key, value) in dDB.dict
             key = LongDNASeq(key, len_noPAM)
-            if n_ambiguous(key) == 0
+            if iscertain(key)
                 svalue = CRISPRofftargetHunter.estimate(bDB, key)
                 @test value <= svalue
                 if svalue != value
@@ -294,7 +294,7 @@ end
         error = Vector{Int}()
         for (key, value) in dDB.dict
             key = LongDNASeq(key, len_noPAM)
-            if n_ambiguous(key) == 0
+            if iscertain(key)
                 svalue = CRISPRofftargetHunter.estimate(bDB, key)
                 @test value <= svalue
                 if svalue != value

@@ -5,7 +5,6 @@ module CRISPRofftargetHunter
 using Dates: isequal
 using Base: Float32
 using ArgParse: command_actions
-using BioSymbols: isambiguous
 
 using FastFilter
 using StaticArrays

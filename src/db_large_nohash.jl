@@ -55,7 +55,7 @@ function search_noHashDB(
     storagedir::String,
     guides::Vector{LongDNASeq})
 
-    if any(n_ambiguous.(guides) .> 0)
+    if any(isambig.(guides))
         throw("Ambiguous bases are not allowed in guide queries.")
     end
 

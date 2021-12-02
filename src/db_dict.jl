@@ -49,7 +49,7 @@ function search_dictDB(
     guides::Vector{LongDNASeq},
     dist::Int = 1)
 
-    if any(n_ambiguous.(guides) .> 0)
+    if any(isambig.(guides))
         throw("Ambiguous bases are not allowed in guide queries.")
     end
 
