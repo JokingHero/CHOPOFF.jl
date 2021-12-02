@@ -128,7 +128,7 @@ function pushguides!(
         
         idx = ThreadsX.map(x -> n_ambiguous(x) > 0, guides)
         if sum(idx) != 0
-            push!(ambig, guides[idx])
+            append!(ambig, guides[idx])
             guides = guides[.!idx]
         end
 
