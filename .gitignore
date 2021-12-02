@@ -4,4 +4,4 @@
 *.ebwt
 *.zip
 *.bin
-app_precompile.jl
+/build

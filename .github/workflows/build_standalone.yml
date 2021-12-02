@@ -33,7 +33,7 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: ${{ env.coh_name }}
-          path: ./../${{ env.coh_name }}/
+          path: build/
           retention-days: 1
 
   release:
@@ -52,4 +52,4 @@ jobs:
           title: "CRISPRofftargetHunter"
           files: |
             LICENSE.txt
-            ./*/*.zip
+            ./*.zip

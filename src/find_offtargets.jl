@@ -125,9 +125,9 @@ function pushguides!(
             guides = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
         end
         guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, reverse_comp)
-
-        if dbi.motif.ambig_max > 0
-            idx = ThreadsX.map(x -> n_ambiguous(x) > 0, guides)
+        
+        idx = ThreadsX.map(x -> n_ambiguous(x) > 0, guides)
+        if sum(idx) != 0
             push!(ambig, guides[idx])
             guides = guides[.!idx]
         end

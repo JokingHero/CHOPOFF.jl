@@ -4,8 +4,9 @@ using BioSequences
 using CSV
 using DataFrames
 using FASTX
+=#
 
-
+#= 
 genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
 motif = Motif("Cas9")
 if motif.distance != 0 || motif.ambig_max != 0
@@ -24,8 +25,9 @@ chrom = dbi.is_fa ? FASTA.sequence(record) : TwoBit.sequence(record)
 CRISPRofftargetHunter.pushguides!(output, ambig, dbi, chrom, false)
 CRISPRofftargetHunter.pushguides!(output, ambig, dbi, chrom, true)
 close(ref)
+=#
 
-
+#=
 cd("test")
 
 ## SET WD when debugging
@@ -37,16 +39,18 @@ guides = LongDNASeq.(guides_s)
 tdir = tempname()
 mkpath(tdir)
 
-nhdb_path = joinpath(tdir, "hashDB")
+nhdb_path = joinpath(tdir, "noHashDB")
 mkpath(nhdb_path)
-build_hashDB(
+build_noHashDB(
     "samirandom", genome, 
-    Motif("Cas9", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 1, true, 0), 
+    Motif("Cas9"; distance = 1, ambig_max = 0), 
     nhdb_path)
 
-nhdb_path = "/tmp/jl_r4Wgh4/hashDB"
 guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
 guides = LongDNASeq.(guides_s)
+
+search_noHashDB(nhdb_path, guides)
+=#
 
 #=
 bdb_path = joinpath(tdir, "binDB")
@@ -56,7 +60,7 @@ build_binDB(
     Motif("Cas9", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 0, true, 0), 
     bdb_path)
 bdb_res = search_binDB(bdb_path, guides, 1)
-=#
+
 nhdb_res = search_hashDB(nhdb_path, guides, true)
 
 using BioSequences
