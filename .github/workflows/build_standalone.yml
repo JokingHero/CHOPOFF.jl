@@ -44,6 +44,8 @@ jobs:
       - uses: actions/download-artifact@v2
       - name: Display structure of downloaded files
         run: ls -R
+      - name: tar.gz
+        run: find . -type d -maxdepth 1 -mindepth 1 -execdir tar -zcvf {}.tar.gz {} --xform='s!^\./!!' \;
       - uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
@@ -51,5 +53,4 @@ jobs:
           prerelease: false
           title: "CRISPRofftargetHunter"
           files: |
-            LICENSE.txt
-            ./*.zip
+            ./*.tar.gz
