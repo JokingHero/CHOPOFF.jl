@@ -351,6 +351,13 @@ end
     return LongDNASeq(DNAMer{len}(x))
 end
 
+
+"This can be used to asses whether query is inside the guide."
+@inline function is_equal(guide::UInt64, query::UInt64, shift::Int64)
+    return count_ones(~((guide >> shift) ⊻ query)) == 64
+end
+
+
 import BioSymbols.iscertain
 function BioSymbols.iscertain(x::LongDNASeq)
     return all(iscertain.(x))

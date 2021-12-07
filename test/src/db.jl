@@ -109,6 +109,15 @@ end
         hdb_path)
     hdb_res = search_hashDB(hdb_path, guides, false)
 
+    # hashDB but with ambig
+    hdb_path2 = joinpath(tdir, "hashDBambig")
+    mkpath(hdb_path2)
+    build_hashDB(
+        "samirandom", genome, 
+        Motif("Cas9"; distance = 1, ambig_max = 1), 
+        hdb_path2)
+    hdb_res2 = search_hashDB(hdb_path2, guides, false)
+
     # make and run default noHashDB
     nhdb_path = joinpath(tdir, "noHashDB")
     mkpath(nhdb_path)
@@ -117,6 +126,15 @@ end
         Motif("Cas9"; distance = 1, ambig_max = 0),
         nhdb_path)
     nhdb_res = search_noHashDB(nhdb_path, guides)
+
+    # noHashDB with ambig
+    nhdb_path2 = joinpath(tdir, "noHashDBambig")
+    mkpath(nhdb_path2)
+    build_noHashDB(
+        "samirandom", genome, 
+        Motif("Cas9"; distance = 1, ambig_max = 1),
+        nhdb_path2)
+    nhdb_res2 = search_noHashDB(nhdb_path2, guides)
 
     len_noPAM = CRISPRofftargetHunter.length_noPAM(Motif("Cas9"))
 

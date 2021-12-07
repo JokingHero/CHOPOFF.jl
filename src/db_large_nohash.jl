@@ -1,8 +1,39 @@
 struct NoHashDB
     dbi::DBInfo
-    guides::Vector{UInt64}
+    guides::Vector{BitVector}
     counts::Vector{UInt8}
     ambig::Union{AmbigIdx, Nothing}
+end
+
+
+"
+Prepare column wise storage of the guides.
+"
+function column_transform(guides::Vector{UInt64}, len::Int)
+    guides = sort(guides)
+    cols = Vector{BitVector}()
+    for i in (len*2):-1:1
+        push!(cols, ((guides .<< (64 - i)) .>> 63) .!= 0)
+    end
+    return cols
+end
+
+
+"Find which guides are matched with the `seq`."
+function findbits(seq::LongDNASeq, cols::Vector{BitVector})
+    seq_len = length(seq) * 2
+    seq = BitVector(digits(convert(UInt64, seq), base=2, pad=64) |> reverse)
+    idx = BitVector(ones(Bool, length(cols[1])))
+    j = 1
+    for i in seq_len:-1:1
+        if seq[65 - i] # is true
+            idx = idx .& cols[j]
+        else
+            idx = idx .& (.!cols[j])
+        end
+        j += 1
+    end
+    return idx
 end
 
 
@@ -22,10 +53,9 @@ function build_noHashDB(
     motif::Motif,
     storagedir::String)
 
-    if (motif.distance != 1) || motif.ambig_max != 0
-        @info "Distance and ambig_max enforced to 1 and 0."
+    if (motif.distance != 1)
+        @info "Distance enforced to 1."
         motif = setdist(motif, 1)
-        motif = setambig(motif, 0)
     end
 
     dbi = DBInfo(genomepath, name, motif)
@@ -34,6 +64,7 @@ function build_noHashDB(
     @info "Building Dictionary..."
     guides, counts, ambig = get_guides_by_counts(dbi)
     ambig = length(ambig) > 0 ? AmbigIdx(ambig, nothing) : nothing
+    guides = column_transform(guides, motif.distance + length_noPAM(motif))
 
     db = NoHashDB(dbi, guides, counts, ambig)
     save(db, joinpath(storagedir, "noHashDB.bin"))
@@ -43,11 +74,6 @@ function build_noHashDB(
         "\n consuming: " * string(round((filesize(joinpath(storagedir, "noHashDB.bin")) * 1e-6); digits = 3)) * 
         " mb of disk space."
     return storagedir
-end
-
-
-@inline function is_equal(guide::UInt64, query::UInt64, shift::Int64)
-    return count_ones(~((guide >> shift) ⊻ query)) == 64
 end
 
 
@@ -70,29 +96,16 @@ function search_noHashDB(
     res = zeros(Int, length(guides_), 2)
     len_noPAM = length_noPAM(sdb.dbi.motif)
     for (i, s) in enumerate(guides_)
-        idx0 = ThreadsX.findfirst(x -> is_equal(x, convert(UInt64, s), 2), sdb.guides)
+        idx0 = findbits(s, sdb.guides)
         res[i, 1] += isnothing(sdb.ambig) ? 0 : sum(findbits(s, sdb.ambig))
-        if !isnothing(idx0)
-            res[i, 1] += sdb.counts[idx0] # 0 distance
-        end
+        res[i, 1] += sum(sdb.counts[idx0]) # 0 distance
         
         d1_combs = LongDNASeq.(comb_of_d1_extended(string(s))) # 1 distance
-        idx1 = Set{Int64}()
-        for d1_comb in d1_combs
-            idx1 = union(idx1, 
-                ThreadsX.findall(x -> 
-                    is_equal(x, convert(UInt64, d1_comb), 
-                        (len_noPAM + sdb.dbi.motif.distance - length(d1_comb)) * 2), sdb.guides))
-        end
-        
-        if !isnothing(idx0)
-            idx1 = setdiff(idx1, Set(idx0)) # remove 0D index inside 1D indexes
-        end
-        
-        idx1 = collect(idx1)
+        idx1 = reduce(.|, map(x -> findbits(x, sdb.guides), d1_combs))
+        idx1 = idx1 .& .!idx0 # remove 0D index inside 1D indexes
         res[i, 2] = sum(sdb.counts[idx1])
         if !isnothing(sdb.ambig)
-            res[i, 2] += sum(reduce(|, map(x -> findbits(x, sdb.ambig), d1_combs)))
+            res[i, 2] += sum(reduce(.|, map(x -> findbits(x, sdb.ambig), d1_combs)))
         end
     end
 

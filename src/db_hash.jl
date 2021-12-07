@@ -180,6 +180,7 @@ function search_hashDB(
         end
         
         norm, border = comb_of_d1(s)
+        norm = collect(norm)
         for comb in convert.(UInt64, norm)
             idx = get_count_idx(db.bins_d0, comb, right)
             if !isnothing(idx)
@@ -198,7 +199,8 @@ function search_hashDB(
         end
 
         if !isnothing(db.ambig)
-            res[i, 2] += sum(reduce(|, map(x -> findbits(x, db.ambig), vcat(norm, border))))
+            bits_mapped = map(x -> findbits(x, db.ambig), vcat(norm, border))
+            res[i, 2] += sum(reduce(.|, bits_mapped))
         end
     end
 

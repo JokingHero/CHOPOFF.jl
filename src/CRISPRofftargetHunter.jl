@@ -50,6 +50,7 @@ include("db_hash.jl")
 include("db_large_nohash.jl")
 include("db_vcf.jl")
 
+
 export Motif # motif
 export build_linearDB, search_linearDB # db_linear
 export build_compressedDB, search_compressedDB # db_compressed

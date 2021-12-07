@@ -174,7 +174,7 @@ function build_compressedDB(
         save(csdb, joinpath(storagedir, string(prefix) * ".bin"))
     end
 
-    linDB = LinearDB(dbi, prefixes)
+    linDB = CompactDB(dbi, prefixes)
     save(linDB, joinpath(storagedir, "compressedDB.bin"))
     @info "Finished constructing compressedDB in " * storagedir
     return storagedir

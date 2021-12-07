@@ -4,8 +4,27 @@ using BioSequences
 using CSV
 using DataFrames
 using FASTX
+using StatsBase
+using StaticArrays
+
+cd("test")
+genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
+    "test", "sample_data", "genome", "semirandom.fa")
+genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
+guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
+guides = LongDNASeq.(guides_s)
+nhdb="/home/ai/tests_hg38v34/db/noHashDB"
+#search_noHashDB(nhdb, guides)
+
+sdb = CRISPRofftargetHunter.load(joinpath(nhdb, "noHashDB.bin"))
+cidx = CRISPRofftargetHunter.ColumnIdx(sdb.guides, sdb.counts, 21)
+
+CRISPRofftargetHunter.findbits(cidx, LongDNASeq(sdb.guides[1], 21))
 
 
+=#
+
+#=
 genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
 motif = Motif("Cas9")
 
@@ -19,8 +38,9 @@ guides = Vector{UInt64}()
 ambig = CRISPRofftargetHunter.gatherofftargets!(guides, dbi)
 =#
 
-#=
 
+
+#=
 cd("test")
 
 ## SET WD when debugging
