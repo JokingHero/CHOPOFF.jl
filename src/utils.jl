@@ -470,3 +470,45 @@ function order_by_hamming_and_prefix(guides::Vector{LongDNASeq}, i::Int64 = 1)
     
     return final_order
 end
+
+
+function all_kmers(size = 4; alphabet = [DNA_A, DNA_C, DNA_G, DNA_T])
+    iters = Iterators.product(ntuple(_ -> alphabet, size)...)
+    iters = DNAMer{size}.(collect(iters)[:])
+    return sort(iters)
+end
+
+
+function as_bitvector_of_kmers(x::LongDNASeq, kmers::IdDict{DNAMer{K}, Int}) where K
+    bits = zeros(length(kmers))
+    kmer_size = length(first(first(kmers)))
+    for i in 1:(length(x) - kmer_size + 1)
+        xi = x[i:(i + kmer_size - 1)]
+        if iscertain(xi)
+            bits[kmers[DNAMer(xi)]] = 1
+        else # replace all ambigs with nonambigs
+            xexp = expand_ambiguous(xi)
+            for xi in xexp
+                bits[kmers[DNAMer(xi)]] = 1
+            end
+        end
+    end
+    return BitVector(bits)
+end
+
+
+function as_kmers(x::LongDNASeq, kmer_size::Int)
+    kmers = Vector{DNAMer}()
+    for i in 1:(length(x) - kmer_size + 1)
+        xi = x[i:(i + kmer_size - 1)]
+        if iscertain(xi)
+            push!(kmers, DNAMer(xi))
+        else # replace all ambigs with nonambigs
+            xexp = expand_ambiguous(xi)
+            for xi in xexp
+                push!(kmers, DNAMer(xi))
+            end
+        end
+    end
+    return Set(kmers)
+end

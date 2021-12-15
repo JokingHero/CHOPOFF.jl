@@ -29,6 +29,8 @@ using ProgressMeter
 using VariantCallFormat
 using CodecZlib
 
+include("FMidx/FMindexes.jl")
+using .FMIndexes
 include("sketches/bloom.jl")
 include("ambig_index.jl")
 
@@ -50,6 +52,8 @@ include("db_hash.jl")
 include("db_large_nohash.jl")
 include("db_vcf.jl")
 
+include("db_fmi.jl")
+
 
 export Motif # motif
 export build_linearDB, search_linearDB # db_linear
@@ -60,7 +64,7 @@ export build_binDB, search_binDB # db_bins
 export build_hashDB, search_hashDB # db_hash
 export build_noHashDB, search_noHashDB # db_large_nohash
 export build_vcfDB, search_vcfDB # db_vcf
-
+export build_motifDB, search_motifDB, build_fmiDB, search_fmiDB
 
 ## Standalone binary generation
 function parse_commandline(args::Array{String})

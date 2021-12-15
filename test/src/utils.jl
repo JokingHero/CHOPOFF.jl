@@ -4,7 +4,8 @@ using Test
 using BioSequences
 using CRISPRofftargetHunter: safeadd, smallestutype, base_to_idx, 
     getseq, extension, levenshtein, comb_of_d1, comb_of_d, minkmersize, balance,
-    locate_telomeres, findall, expand_ambiguous, convert
+    locate_telomeres, findall, expand_ambiguous, convert, 
+    all_kmers, as_bitvector_of_kmers, as_kmers
 using Combinatorics
 
 @testset "utils.jl" begin
@@ -107,5 +108,36 @@ using Combinatorics
         @test expand_ambiguous(dna"ACTG") == [dna"ACTG"]
         @test expand_ambiguous(dna"AR") == [dna"AA", dna"AG"]
         @test expand_ambiguous(dna"WR") == [dna"AA", dna"TA", dna"AG", dna"TG"]
+    end
+
+    @testset "all_kmers" begin
+        for i in 1:6
+            @test length(all_kmers(i)) == 4^i
+        end
+    end
+
+    @testset "as_kmers" begin
+        @test first(as_kmers(LongDNASeq(repeat('A', 20)), 3)) == DNAMer(dna"AAA")
+        @test isempty(setdiff(
+            as_kmers(dna"ACTGR", 4), 
+            Set([DNAMer(dna"ACTG"), DNAMer(dna"CTGA"), DNAMer(dna"CTGG")])))
+        @test isempty(setdiff(
+            as_kmers(dna"ACTGR", 3), 
+            Set([DNAMer(dna"ACT"), DNAMer(dna"CTG"), DNAMer(dna"TGA"), DNAMer(dna"TGG")])))
+    end
+
+    @testset "as_bitvector_of_kmers" begin
+        kmers = all_kmers(2)
+        kmers = IdDict(zip(kmers, 1:length(kmers)))
+        b = as_bitvector_of_kmers(dna"AAAAAA", kmers)
+        @test sum(b) == 1
+        @test b[kmers[DNAMer(dna"AA")]]
+
+        kmers = all_kmers(3)
+        kmers = IdDict(zip(kmers, 1:length(kmers)))
+        b = as_bitvector_of_kmers(dna"ACTG", kmers)
+        @test sum(b) == 2
+        @test b[kmers[DNAMer(dna"ACT")]]
+        @test b[kmers[DNAMer(dna"CTG")]]
     end
 end

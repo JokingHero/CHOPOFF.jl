@@ -1,0 +1,57 @@
+#=
+using CRISPRofftargetHunter
+using BioSequences
+using CSV
+using DataFrames
+using FASTX
+using StatsBase
+using StaticArrays
+using BenchmarkTools
+
+cd("test")
+
+genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
+    "test", "sample_data", "genome", "semirandom.fa")
+#genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
+guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
+guides = LongDNASeq.(guides_s)
+#nhdb="/home/ai/tests_hg38v34/db/noHashDB"
+#search_noHashDB(nhdb, guides)
+#sdb = CRISPRofftargetHunter.load(joinpath(nhdb, "noHashDB.bin"))
+#cidx = CRISPRofftargetHunter.ColumnIdx(sdb.guides, sdb.counts, 21)
+# CRISPRofftargetHunter.findbits(cidx, LongDNASeq(sdb.guides[1], 21))
+
+motif = Motif("Cas9")
+tdir = tempname()
+mkpath(tdir)
+
+
+motifpospath = build_motifDB("testCas9", genome, motif, tdir)
+mdb_res = search_motifDB(tdir, guides, 3)
+=#
+#=
+dbi = CRISPRofftargetHunter.DBInfo(genome, "tests", motif)
+
+ref = open(dbi.filepath, "r")
+reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
+chrom_name = dbi.chrom[1]
+record = reader[chrom_name]
+chrom = dbi.is_fa ? FASTA.sequence(record) : TwoBit.sequence(record)
+close(ref)
+# there is a lot of N in the genome - treat them as mismatches
+
+composition(chrom)
+# 16 r 32 -> 215mb
+# 16 r 512 -> 187mb
+# 16 r 1024 -> 186mb - why is it twice?!
+index = CRISPRofftargetHunter.FMIndex(chrom, 16; r = 32)
+pam_pos = CRISPRofftargetHunter.locateall(dna"AGG", index) # 3.7 Milion! - slowish
+pos = CRISPRofftargetHunter.locateall(dna"ACTG", index) # 1M - quite FAST
+pos = CRISPRofftargetHunter.locateall(dna"ACTGT", index) # 265k - very FAST
+=#
+
+# for distance of 4 we search for 20/5 = 4
+# for distance of 3 we search for 20/4 = 5
+
+# we overlap indexes with previously stored PAM indexes - in this fashion we can quickly
+# reject what is wrong quickly

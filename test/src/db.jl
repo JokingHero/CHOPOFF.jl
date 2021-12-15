@@ -82,6 +82,31 @@ end
     ldb_res = search_linearDB(ldb_path, guides, 3; detail = detail_path)
     ldb = DataFrame(CSV.File(detail_path))
 
+    @testset "linearDB vs motifDB" begin
+        mdb_path = joinpath(tdir, "motifDB")
+        mkpath(mdb_path)
+        build_motifDB("samirandom", genome, Motif("Cas9"), mdb_path)
+
+        #detail_path = joinpath(tdb_path, "detail.csv")
+        mdb_res = search_motifDB(mdb_path, guides, 3)
+        #mdb = DataFrame(CSV.File(detail_path))
+
+        @test nrow(mdb_res) == length(guides)
+        @test all(mdb_res.guide .== guides)
+        @test all(mdb_res.guide .== guides)
+        ldb_res2 = Matrix(ldb_res)
+        mdb_res2 = Matrix(mdb_res)
+        for i in 1:length(guides)
+            compare = mdb_res2[i, 1:4] .<= ldb_res2[i, 1:4]
+            @test all(compare)
+            if !all(compare)
+                @info "Failed at guideS $i " * string(guides[i])
+                @info "linearDB result: " * string(ldb_res2[i, :])
+                @info "motifDB result: " * string(mdb_res2[i, :])
+            end
+        end
+    end
+
     # make and run default dictDB
     ddb_path = joinpath(tdir, "dictDB")
     mkpath(ddb_path)
@@ -137,6 +162,7 @@ end
     nhdb_res2 = search_noHashDB(nhdb_path2, guides)
 
     len_noPAM = CRISPRofftargetHunter.length_noPAM(Motif("Cas9"))
+
 
 
     @testset "linearDB against CRISPRitz" begin
