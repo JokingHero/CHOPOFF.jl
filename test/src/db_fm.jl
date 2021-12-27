@@ -1,4 +1,4 @@
-#=
+
 using CRISPRofftargetHunter
 using BioSequences
 using CSV
@@ -15,20 +15,19 @@ genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..",
 #genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
 guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
 guides = LongDNASeq.(guides_s)
-#nhdb="/home/ai/tests_hg38v34/db/noHashDB"
-#search_noHashDB(nhdb, guides)
-#sdb = CRISPRofftargetHunter.load(joinpath(nhdb, "noHashDB.bin"))
-#cidx = CRISPRofftargetHunter.ColumnIdx(sdb.guides, sdb.counts, 21)
-# CRISPRofftargetHunter.findbits(cidx, LongDNASeq(sdb.guides[1], 21))
 
 motif = Motif("Cas9")
 tdir = tempname()
 mkpath(tdir)
 
+fmidir = tempname()
+mkpath(fmidir)
 
-motifpospath = build_motifDB("testCas9", genome, motif, tdir)
-mdb_res = search_motifDB(tdir, guides, 3)
-=#
+motifpospath = build_motifDB("testCas9", genome, motif, tdir; store_kmers = true)
+#mdb_res = search_motifDB(tdir, guides, 3)
+fmidbpath = build_fmiDB("testCas9fmi", genome, motif, fmidir)
+res = search_fmiDB(fmidbpath, tdir, guides, 4)
+
 #=
 dbi = CRISPRofftargetHunter.DBInfo(genome, "tests", motif)
 

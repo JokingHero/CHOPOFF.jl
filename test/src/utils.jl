@@ -117,13 +117,13 @@ using Combinatorics
     end
 
     @testset "as_kmers" begin
-        @test first(as_kmers(LongDNASeq(repeat('A', 20)), 3)) == DNAMer(dna"AAA")
+        @test first(as_kmers(LongDNASeq(repeat('A', 20)), 3)) == dna"AAA"
         @test isempty(setdiff(
-            as_kmers(dna"ACTGR", 4), 
-            Set([DNAMer(dna"ACTG"), DNAMer(dna"CTGA"), DNAMer(dna"CTGG")])))
+            Set(as_kmers(dna"ACTGR", 4)), 
+            Set([dna"ACTG", dna"CTGA", dna"CTGG"])))
         @test isempty(setdiff(
-            as_kmers(dna"ACTGR", 3), 
-            Set([DNAMer(dna"ACT"), DNAMer(dna"CTG"), DNAMer(dna"TGA"), DNAMer(dna"TGG")])))
+            Set(as_kmers(dna"ACTGR", 3)), 
+            Set([dna"ACT", dna"CTG", dna"TGA", dna"TGG"])))
     end
 
     @testset "as_bitvector_of_kmers" begin

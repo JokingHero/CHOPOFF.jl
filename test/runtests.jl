@@ -2,6 +2,8 @@
 using CRISPRofftargetHunter
 dir = joinpath(pkgdir(CRISPRofftargetHunter), "test", "src")
 files = readdir(dir)
-for f in files
-    include(joinpath(dir, f))
-end
+#for f in files
+#    include(joinpath(dir, f))
+#end
+
+include(joinpath(dir, "db_fmi.jl"))

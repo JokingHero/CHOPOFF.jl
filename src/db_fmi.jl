@@ -1,6 +1,6 @@
 struct MotifPos
     dbi::DBInfo
-    kmer_size::Int
+    kmer_size::Int # 0 indicates there were no kmer storage
     chroms::Vector{<: Unsigned}
     pos::Vector{<: Unsigned}
     isplus::BitVector
@@ -127,12 +127,11 @@ function build_motifDB(
             end
         end
         (guides, loci_range, loci) = unique_guides(guides, loci)
+        guides = Base.map(x -> prefix * x, guides)
         if store_kmers
-            guides = Base.map(x -> prefix * x, guides)
             guides_ = ThreadsX.map(x -> as_bitvector_of_kmers(x, kmers), guides)
             append!(gbits_all, guides_)
         else
-            guides = nothing  
             kmer_size = 0  
         end
         append!(guides_all, guides)
@@ -161,8 +160,8 @@ function build_motifDB(
         end
     end
 
-    @info "Finished constructing motifDB in " * motifpos_path
-    return motifpos_path
+    @info "Finished constructing motifDB in " * storagedir
+    return storagedir
 end
 
 
@@ -176,18 +175,19 @@ function build_fmiDB(
     ref = open(dbi.filepath, "r")
     reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
     @showprogress 60 for chrom in dbi.chrom
-        fmi = FMIndex(getchromseq(dbi.is_fa, reader[x]), 16, r = 32)
+        fmi = FMIndex(getchromseq(dbi.is_fa, reader[chrom]), 16, r = 32)
         p = joinpath(storagedir, chrom * ".bin")
         save(fmi, p)
     end
     close(ref)
+    save(dbi, joinpath(storagedir, "dbi.bin"))
     @info "FMindex is build."
     return storagedir
 end
 
 
 function guide_to_bitvector(guide::LongDNASeq, path::String, kmer_size::Int)
-    guide = collect(as_kmers(guide, kmer_size))
+    guide = collect(Set(as_kmers(guide, kmer_size)))
     guide_bits = load(joinpath(path, string(guide[1]) * ".bin"))
     for i in 2:length(guide)
         bits = load(joinpath(path, string(guide[i]) * ".bin"))
@@ -239,53 +239,211 @@ function search_motifDB(
 end
 
 
+# assumes pattern_pos is sorted
+function is_in_range(
+    all_pos::Vector{UInt32}, # contains all pos
+    pos::BitVector, # should be as long as all_pos - indicates which pos should be evaluated
+    pattern_pos::Vector{Int}, # positions of the kmer
+    reverse_comp::Bool,
+    extends5::Bool,
+    dist::Int, # maximal distance we consider here
+    shift::Int, # shift from the begining 
+    pam_length::Int,
+    kmer_length::Int)
+    configuration = (extends5 & reverse_comp) | (!extends5 & !reverse_comp)
+    pattern_last_insert_idx = length(pattern_pos) + 1
+    pos = copy(pos)
+    for (i, b) in enumerate(pos)
+        if b # true means we should evaluate the potential
+            # check if is close enough
+            is_close = false
+            if configuration
+                # CCN 1 2 3 4 5 6 7 8 9 ... EXT
+                # p
+                #     p + pam_length
+                #     p + shift - 1
+                #     T G A C # first >= 
+                all_pos_i = all_pos[i] + pam_length + shift - 1
+                idx = searchsortedfirst(pattern_pos, all_pos_i)
+                if idx != pattern_last_insert_idx
+                    is_close = (pattern_pos[idx] - all_pos_i) <= dist
+                end
+            else
+                # EXT ... 1 2 3 4 5 6 7 8 9 N G G
+                #                               p
+                #                         p - pam_length (3)
+                #                         p - shift (1) + 1
+                #                   p - kmer_length (4) + 1 # we get first position of the kmer too
+                all_pos_i = all_pos[i] - pam_length - shift - kmer_length + 2
+                # first value that pattern_pos[idx] >= all_pos[i]
+                idx = searchsortedfirst(pattern_pos, all_pos_i)
+                if idx != pattern_last_insert_idx
+                    is_close = (pattern_pos[idx] - all_pos_i) <= dist
+                end
+            end
+            pos[i] = is_close
+        end
+    end
+    return pos
+end
+
+
+# will update long too (expand part)
+function shrink_and_expand!(long::BitVector, counts::Vector{Int})
+    short = BitVector(zeros(length(counts)))
+    start = 1
+    for (i, c) in enumerate(counts)
+        stop = start + c - 1
+        short[i] = any(long[start:stop])
+        if short[i]
+            long[start:stop] = ones(Bool, c)
+        end
+        start = stop + 1
+    end
+    return short
+end
+
+
+"
+Funny enough this can easily support ambig guides!
+
+THIS FUNCTION IS BUGGED somewhere :( GL figuring this out
+"
 function search_fmiDB(
-    fmidir::String, motifdbpath::String, 
+    fmidbdir::String, motifdbdir::String,
     guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")
 
-    mp = load(motifdbpath)
+    mp = load(joinpath(motifdbdir, "motifDB.bin"))
+    mp_counts = bits_to_counts(mp.ug, mp.ug_count)
 
     if dist > mp.dbi.motif.distance
         error("Maximum distance is " * string(mp.dbi.motif.distance))
     end
 
-    # we work on each chrom separately
-    # each guide separately?
-    
-    prefixes = collect(ldb.prefixes)
-    if dist > length(first(prefixes)) || dist > ldb.dbi.motif.distance
-        error("For this database maximum distance is " * 
-              string(min(ldb.dbi.motif.distance, length(first(prefixes)))))
-    end
-
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
-    if ldb.dbi.motif.extends5
+    if mp.dbi.motif.extends5
         guides_ = reverse.(guides_)
     end
 
-    #res = zeros(Int, length(guides_), dist + 1)
-    res = ThreadsX.mapreduce(p -> search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storagedir), +, prefixes)
-    #for p in prefixes
-    #    res += search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storagedir)
-    #end
-    
+    pam_length = length(mp.dbi.motif) - length_noPAM(mp.dbi.motif) 
+    kmer_length = minkmersize(length_noPAM(mp.dbi.motif), dist)
+    gkmers = as_kmers.(guides_, kmer_length)
     if detail != ""
         # clean up detail files into one file
-        open(detail, "w") do detail_file
-            write(detail_file, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
-            for prefix in filter(x -> occursin("detail_", x), readdir(dirname(detail)))
-                prefix_file = joinpath(dirname(detail), prefix)
-                open(prefix_file, "r") do prefix_file
-                    for ln in eachline(prefix_file)
-                        write(detail_file, ln * "\n")
-                    end
+        detail_file = open(detail, "w")
+        write(detail_file, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
+    end
+
+    res = zeros(Int, length(guides_), dist + 1)
+    # early stopping + write detail
+    for (ic, chrom) in enumerate(mp.dbi.chrom)
+        fmi = load(joinpath(fmidbdir, chrom * ".bin"))
+        pos_chrom = mp.chroms .== ic
+        pos_chrom_fwd = pos_chrom .& mp.isplus # 1 have to be chcked
+        pos_chrom_rev = pos_chrom .& (.!mp.isplus)
+        for (idx, gk) in enumerate(gkmers)
+            # keep track of all pos that have been checked already
+            # exclude these from further analyses!
+            was_checked = BitVector(zeros(length(mp.pos)))
+            for (i , kmer) in enumerate(gk)
+                if mp.dbi.motif.extends5
+                    kmer_rev = complement(kmer)
+                    kmer = reverse(kmer)
+                else
+                    kmer_rev = copy(kmer)
+                    kmer = reverse_complement(kmer)
                 end
-                rm(prefix_file)
+                kmer_pos = sort(locateall(kmer, fmi))
+                pos_chrom_fwd_in_range = is_in_range(
+                    mp.pos, (.!was_checked) .& pos_chrom_fwd, 
+                    kmer_pos, false, mp.dbi.motif.extends5, dist, i, pam_length, kmer_length)
+
+                pos_seqnames = shrink_and_expand!(pos_chrom_fwd_in_range, mp_counts)
+                was_checked .|= pos_chrom_fwd_in_range
+
+                dists = ThreadsX.map(x -> levenshtein(guides_[idx], x, dist), mp.sequences[pos_seqnames])
+                mp_counts_g = mp_counts[pos_seqnames]
+                for d in 0:dist
+                    res[idx, d + 1] += sum(mp_counts_g[dists .== d])
+                end
+
+                # reverse now
+                kmer_pos = sort(locateall(kmer_rev, fmi))
+                pos_chrom_rve_in_range = is_in_range(
+                    mp.pos, (.!was_checked) .& pos_chrom_rev, 
+                    kmer_pos, true, mp.dbi.motif.extends5, dist, i, pam_length, kmer_length)
+
+                pos_seqnames = shrink_and_expand!(pos_chrom_rve_in_range, mp_counts)
+                was_checked .|= pos_chrom_rve_in_range
+
+                dists = ThreadsX.map(x -> levenshtein(guides_[idx], x, dist), mp.sequences[pos_seqnames])
+                mp_counts_g = mp_counts[pos_seqnames]
+                for d in 0:dist
+                    res[idx, d + 1] += sum(mp_counts_g[dists .== d])
+                end
             end
         end
     end
+    
+    res = DataFrame(res, :auto)
+    col_d = [Symbol("D$i") for i in 0:dist]
+    rename!(res, col_d)
+    res.guide = guides
+    sort!(res, col_d)
+    return res
+end
 
+
+function search_fmiDB_raw(
+    fmidbdir::String, genomepath::String, motif::Motif,
+    guides::Vector{LongDNASeq}; detail::String = "", prefix_length::Int = 10)
+
+    dbi = load(joinpath(storagedir, "dbi.bin"))
+    guides_ = copy(guides)
+    # reverse guides so that PAM is always on the left
+    if motif.extends5
+        guides_ = reverse.(guides_)
+    end
+
+    partials = as_partial_alignments.(String.(guides_), motif, prefix_length)
+    
+    res = zeros(Int, length(guides_), motif.distance + 1)
+    ref = open(genomepath, "r")
+    reader = dbi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
+
+    for (ic, chrom) in enumerate(dbi.chrom)
+        fmi = load(joinpath(fmidbdir, chrom * ".bin"))
+        seq = getchromseq(dbi.is_fa, reader[chrom])
+    
+        for (idx, gp) in enumerate(partials)
+            p, p_rev = gp
+            pos = mapreduce(x -> locateall(x, fmi), union, p)
+            dists = ThreadsX.map(x -> levenshtein(
+                guides_[idx], 
+                seq[(pos - prefix_length - motif.distance - 1):(pos + prefix_length)], 
+                motif.distance), 
+                pos)
+
+            for d in 0:dist
+                res[idx, d + 1] += sum(dists .== d)
+            end
+
+            
+            pos = mapreduce(x -> locateall(x, fmi), union, p_rev)
+            dists = ThreadsX.map(x -> levenshtein(
+                guides_[idx], 
+                seq[(pos - prefix_length - motif.distance - 1):(pos + prefix_length)], 
+                motif.distance), 
+                pos)
+
+            for d in 0:dist
+                res[idx, d + 1] += sum(dists .== d)
+            end
+        end
+    end
+    close(ref)
+    
     res = DataFrame(res, :auto)
     col_d = [Symbol("D$i") for i in 0:dist]
     rename!(res, col_d)
