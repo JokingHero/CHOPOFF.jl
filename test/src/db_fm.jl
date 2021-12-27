@@ -1,4 +1,5 @@
 
+#=
 using CRISPRofftargetHunter
 using BioSequences
 using CSV
@@ -27,6 +28,7 @@ motifpospath = build_motifDB("testCas9", genome, motif, tdir; store_kmers = true
 #mdb_res = search_motifDB(tdir, guides, 3)
 fmidbpath = build_fmiDB("testCas9fmi", genome, motif, fmidir)
 res = search_fmiDB(fmidbpath, tdir, guides, 4)
+=#
 
 #=
 dbi = CRISPRofftargetHunter.DBInfo(genome, "tests", motif)

@@ -215,7 +215,11 @@ function do_linear_chrom(chrom_name::String, chrom::K, dbi::DBInfo, prefix_len::
             loci = vcat(output_fwd[fwd_idx].loci, output_rve[rve_idx].loci)
         end
         pdb = PrefixDB(prefix, suffixes, loci)
-        save(pdb, joinpath(storagedir, string(pdb.prefix) * "_" * chrom_name * ".bin"))
+        pdir = joinpath(storagedir, string(prefix))
+        if !isdir(pdir)
+            mkdir(pdir)
+        end
+        save(pdb, joinpath(pdir, string(pdb.prefix) * "_" * chrom_name * ".bin"))
     end
     return prefixes
 end

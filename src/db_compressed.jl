@@ -133,14 +133,14 @@ function build_compressedDB(
         guides = Vector{LongDNASeq}()
         loci = Vector{Loc}()
         for chrom in dbi.chrom
-            p = joinpath(storagedir, string(prefix) * "_" * chrom * ".bin")
+            p = joinpath(storagedir, string(prefix), string(prefix) * "_" * chrom * ".bin")
             if ispath(p)
                 pdb = load(p)
                 append!(guides, pdb.suffix)
                 append!(loci, pdb.loci)
-                rm(p)
             end
         end
+        rm(joinpath(storagedir, string(prefix)), recursive = true)
         # ambig suffixes & ambig extensions
         ambig_idx = ThreadsX.findall(isambig, guides)
         ambig_suffixes = guides[ambig_idx]

@@ -512,29 +512,3 @@ function as_kmers(x::LongDNASeq, kmer_size::Int)
     end
     return kmers
 end
-
-
-function as_partial_alignments(s::String, motif::Motif, len::Int = 10)
-    s = s[1:(len + d)]
-    if d == 0
-        return [s]
-    end
-    comb = comb_of_d1(s, alphabet)
-    for i in 1:(d-1)
-        comb = foldxt(union, Map(x -> comb_of_d1(x, alphabet)), comb)
-    end
-
-    comb = collect(Set(map(x -> x[1:len], comb)))
-
-    if motif.extends5
-        partials = map(x -> dna"GGN" * x, comb)
-        partials_rev = complement(partials)
-        partials = reverse(partials)
-    else
-        partials = map(x -> dna"TTTN" * x, comb)
-        partials_rev = reverse_complement(partials)
-    end
-    partials = expand_ambiguous(partials)
-    partials_rev = expand_ambiguous(partials_rev)
-    return (partials, partials_rev)
-end

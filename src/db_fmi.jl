@@ -118,14 +118,14 @@ function build_motifDB(
         guides = Vector{LongDNASeq}()
         loci = Vector{Loc}()
         for chrom in dbi.chrom
-            p = joinpath(storagedir, string(prefix) * "_" * chrom * ".bin")
+            p = joinpath(storagedir, string(prefix), string(prefix) * "_" * chrom * ".bin")
             if ispath(p)
                 pdb = load(p)
                 append!(guides, pdb.suffix)
                 append!(loci, pdb.loci)
-                rm(p)
             end
         end
+        rm(joinpath(storagedir, string(prefix)), recursive = true)
         (guides, loci_range, loci) = unique_guides(guides, loci)
         guides = Base.map(x -> prefix * x, guides)
         if store_kmers
@@ -394,6 +394,31 @@ function search_fmiDB(
     return res
 end
 
+
+function as_partial_alignments(s::String, motif::Motif, len::Int = 10)
+    s = s[1:(len + d)]
+    if d == 0
+        return [s]
+    end
+    comb = comb_of_d1(s, alphabet)
+    for i in 1:(d-1)
+        comb = foldxt(union, Map(x -> comb_of_d1(x, alphabet)), comb)
+    end
+
+    comb = collect(Set(map(x -> x[1:len], comb)))
+
+    if motif.extends5
+        partials = map(x -> dna"GGN" * x, comb)
+        partials_rev = complement(partials)
+        partials = reverse(partials)
+    else
+        partials = map(x -> dna"TTTN" * x, comb)
+        partials_rev = reverse_complement(partials)
+    end
+    partials = expand_ambiguous(partials)
+    partials_rev = expand_ambiguous(partials_rev)
+    return (partials, partials_rev)
+end
 
 function search_fmiDB_raw(
     fmidbdir::String, genomepath::String, motif::Motif,

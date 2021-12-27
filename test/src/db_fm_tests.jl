@@ -1,4 +1,5 @@
 
+#=
 using CRISPRofftargetHunter
 using BioSequences
 using CSV
@@ -26,3 +27,5 @@ fmidbpath = "/tmp/jl_Uj4tcC"
 #res = search_fmiDB(fmidbpath, tdir, guides, 4)
 res = search_fmiDB_raw(fmidbpath, genome, Motif("Cas9"), guides)
 mdb_res = search_motifDB(tdir, guides, 4)
+
+=#

@@ -143,14 +143,14 @@ function build_treeDB(
         guides = Vector{LongDNASeq}()
         loci = Vector{Loc}()
         for chrom in dbi.chrom
-            p = joinpath(storagedir, string(prefix) * "_" * chrom * ".bin")
+            p = joinpath(storagedir, string(prefix), string(prefix) * "_" * chrom * ".bin")
             if ispath(p)
                 pdb = load(p)
                 append!(guides, pdb.suffix)
                 append!(loci, pdb.loci)
-                rm(p)
             end
         end
+        rm(joinpath(storagedir, string(prefix)), recursive = true)
         sdb = to_suffixtree(prefix, guides, loci, motif.distance)
         save(sdb, joinpath(storagedir, string(prefix) * ".bin"))
         i += 1
