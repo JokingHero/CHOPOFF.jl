@@ -6,7 +6,7 @@ using CSV
 using DataFrames
 
 ## SET WD when debugging
-cd("test")
+# cd("test")
 
 ## CRISPRitz compare functions - we test with up to 4 distance
 function asguide(x::String)
@@ -118,23 +118,23 @@ end
         template = CRISPRofftargetHunter.build_motifTemplates(motif_cas9)
         fmidbdir = build_fmiDB("testCas9fmi", genome, motif_cas9, fmidb_path)
 
-        fmidb_res = search_fmiDB_patterns(
-            fmidbdir, genome, template, guides; distance = dist)
-        fmidb_res2 = search_fmiDB_patterns_cashed(
+        #fmidb_res = search_fmiDB_patterns(
+        #    fmidbdir, genome, template, guides; distance = dist)
+        fmidb_res = search_fmiDB_patterns_cashed(
             fmidbdir, genome, template, guides; distance = dist)
 
-        @test nrow(mdb_res) == length(guides)
-        @test all(mdb_res.guide .== guides)
-        @test all(mdb_res.guide .== guides)
+        @test nrow(fmidb_res) == length(guides)
+        @test all(fmidb_res.guide .== guides)
+        @test all(fmidb_res.guide .== guides)
         ldb_res2 = Matrix(ldb_res)
-        mdb_res2 = Matrix(mdb_res)
+        fmidb_res2 = Matrix(fmidb_res)
         for i in 1:length(guides)
-            compare = mdb_res2[i, 1:4] .<= ldb_res2[i, 1:4]
+            compare = fmidb_res2[i, 1:3] .<= ldb_res2[i, 1:3]
             @test all(compare)
             if !all(compare)
                 @info "Failed at guideS $i " * string(guides[i])
                 @info "linearDB result: " * string(ldb_res2[i, :])
-                @info "motifDB result: " * string(mdb_res2[i, :])
+                @info "motifDB result: " * string(fmidb_res2[i, :])
             end
         end
     end

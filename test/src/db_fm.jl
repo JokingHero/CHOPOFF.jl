@@ -1,4 +1,5 @@
 
+#=
 using CRISPRofftargetHunter
 using BioSequences
 using CSV
@@ -28,7 +29,7 @@ mkpath(fmidir)
 fmidbpath = build_fmiDB("testCas9fmi", genome, motif, fmidir)
 #res = search_fmiDB(fmidbpath, tdir, guides, 4)
 
-
+=#
 #=
 dbi = CRISPRofftargetHunter.DBInfo(genome, "tests", motif)
 
