@@ -28,6 +28,7 @@ using CSV
 using ProgressMeter
 using VariantCallFormat
 using CodecZlib
+using PathDistribution
 
 include("FMidx/FMindexes.jl")
 using .FMIndexes
@@ -40,6 +41,7 @@ include("persistence.jl")
 include("distance_metrics.jl")
 include("motif.jl")
 include("db_info.jl")
+include("motif_path_templates.jl")
 
 include("find_offtargets.jl")
 include("db_helpers.jl")
@@ -64,7 +66,10 @@ export build_binDB, search_binDB # db_bins
 export build_hashDB, search_hashDB # db_hash
 export build_noHashDB, search_noHashDB # db_large_nohash
 export build_vcfDB, search_vcfDB # db_vcf
-export build_motifDB, search_motifDB, build_fmiDB, search_fmiDB
+export build_motifTemplates
+export build_motifDB, search_motifDB, build_fmiDB, search_fmiDB, search_fmiDB_raw
+export search_fmiDB_patterns, search_fmiDB_patterns_cashed
+
 
 ## Standalone binary generation
 function parse_commandline(args::Array{String})

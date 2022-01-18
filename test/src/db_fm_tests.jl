@@ -1,5 +1,3 @@
-
-#=
 using CRISPRofftargetHunter
 using BioSequences
 using CSV
@@ -17,15 +15,21 @@ genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..",
 guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
 guides = LongDNASeq.(guides_s)
 
+motif = Motif("Cas9")
+motif = CRISPRofftargetHunter.setdist(motif, 2)
+
+CRISPRofftargetHunter.as_partial_alignments("AAAAAAAAAAAAAAAAAAAA", motif, 10)
+#fmidir = tempname()
+#mkpath(fmidir)
+#fmidbpath = build_fmiDB("testCas9fmi", genome, motif, fmidir)
+
 tdir = "/tmp/jl_AKyJgh"
-fmidbpath = "/tmp/jl_Uj4tcC"
+fmidbpath = "/tmp/jl_1PWg8q"
 
 #guides = [dna"AGAGCGCCTGTGGTTGCCGG"] # "GGCCGTTGGTGTCCGCGAGACTCG" 42622 - on minus
 # isplus 85215, 85216
 # pos 108117 
 # chrom semirandom3 0x03 0x07
 #res = search_fmiDB(fmidbpath, tdir, guides, 4)
-res = search_fmiDB_raw(fmidbpath, genome, Motif("Cas9"), guides)
-mdb_res = search_motifDB(tdir, guides, 4)
-
-=#
+res = search_fmiDB_raw(fmidbpath, genome, motif, guides)
+#mdb_res = search_motifDB(tdir, guides, 4)

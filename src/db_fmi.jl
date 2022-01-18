@@ -395,43 +395,48 @@ function search_fmiDB(
 end
 
 
-function as_partial_alignments(s::String, motif::Motif, len::Int = 10)
-    s = s[1:(len + d)]
-    if d == 0
+# NOT FINISHED?! - untested
+function as_partial_alignments(s::String, motif::Motif, len::Int = 10, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
+    s = s[1:(len + motif.distance)]
+    if motif.distance == 0
         return [s]
     end
     comb = comb_of_d1(s, alphabet)
-    for i in 1:(d-1)
+    for i in 1:(motif.distance-1)
         comb = foldxt(union, Map(x -> comb_of_d1(x, alphabet)), comb)
     end
 
-    comb = collect(Set(map(x -> x[1:len], comb)))
+    comb = collect(Set(map(x -> x[1:len], collect(comb))))
 
     if motif.extends5
-        partials = map(x -> dna"GGN" * x, comb)
-        partials_rev = complement(partials)
-        partials = reverse(partials)
+        pam = reverse(motif.fwd[motif.pam_loci_fwd])
+        comb .= pam .* comb
+        comb_rev = complement.(comb)
+        comb = reverse.(comb)
     else
-        partials = map(x -> dna"TTTN" * x, comb)
-        partials_rev = reverse_complement(partials)
+        pam = motif.fwd[motif.pam_loci_fwd]
+        comb .= pam .* comb
+        comb_rev = reverse_complement.(comb)
     end
-    partials = expand_ambiguous(partials)
-    partials_rev = expand_ambiguous(partials_rev)
-    return (partials, partials_rev)
+    comb = vcat(expand_ambiguous.(comb)...)
+    comb_rev = vcat(expand_ambiguous.(comb_rev)...)
+    return (comb, comb_rev)
 end
 
+
+# NOT FINISHED!!!
 function search_fmiDB_raw(
     fmidbdir::String, genomepath::String, motif::Motif,
     guides::Vector{LongDNASeq}; detail::String = "", prefix_length::Int = 10)
 
-    dbi = load(joinpath(storagedir, "dbi.bin"))
+    dbi = load(joinpath(fmidbdir, "dbi.bin"))
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
     if motif.extends5
         guides_ = reverse.(guides_)
     end
 
-    partials = as_partial_alignments.(String.(guides_), motif, prefix_length)
+    partials = map(x -> as_partial_alignments(String(x), motif, prefix_length), guides_)
     
     res = zeros(Int, length(guides_), motif.distance + 1)
     ref = open(genomepath, "r")
@@ -471,6 +476,173 @@ function search_fmiDB_raw(
     
     res = DataFrame(res, :auto)
     col_d = [Symbol("D$i") for i in 0:dist]
+    rename!(res, col_d)
+    res.guide = guides
+    sort!(res, col_d)
+    return res
+end
+
+
+function search_fmiDB_patterns(
+    fmidbdir::String, genomepath::String, mpt::MotifPathTemplates,
+    guides::Vector{LongDNASeq}; detail::String = "", distance::Int = 3)
+
+    if distance > mpt.motif.distance
+        throw("DIstance is too large for selected MotifPathTemplates. Max distance is" * 
+            string(mpt.motif.distance))
+    end
+
+    dbi = load(joinpath(fmidbdir, "dbi.bin"))
+    guides_ = copy(guides)
+    # reverse guides so that PAM is always on the left
+    pam = mpt.motif.fwd[mpt.motif.pam_loci_fwd]
+    if mpt.motif.extends5
+        guides_ = reverse.(guides_)
+        pam = reverse(pam)
+    end
+
+    pam = expand_ambiguous(pam)
+    no_pam = map(x -> templates_to_sequences(x, mpt; dist = distance), guides_)
+    res = zeros(Int, length(guides_), mpt.motif.distance + 1)
+    #ref = open(genomepath, "r")
+    #reader = dbi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
+
+    for (ic, chrom) in enumerate(dbi.chrom)
+        fmi = load(joinpath(fmidbdir, chrom * ".bin"))
+        #seq = CRISPRofftargetHunter.getchromseq(dbi.is_fa, reader[chrom])
+        
+        for pam_i in pam
+            for (i, t) in enumerate(no_pam)
+                for path in t
+                    sequence = reverse(pam_i * path.seq)
+                    count = CRISPRofftargetHunter.count(sequence, fmi)
+                    count_rve = CRISPRofftargetHunter.count(reverse_complement(sequence), fmi)
+                    res[i, path.dist + 1] += (count + count_rve)
+                    if path.reducible != 0
+                        res[i, t[path.reducible].dist + 1] -= (count + count_rve)
+                    end
+                end
+            end
+        end
+    end
+    #close(ref)
+        
+    res = DataFrame(res, :auto)
+    col_d = [Symbol("D$i") for i in 0:distance]
+    rename!(res, col_d)
+    res.guide = guides
+    sort!(res, col_d)
+    return res
+end
+
+
+function search_fmiDB_patterns_cashed(
+    fmidbdir::String, genomepath::String, mpt::MotifPathTemplates,
+    guides::Vector{LongDNASeq}; detail::String = "", distance::Int = 3)
+
+    if distance > mpt.motif.distance
+        throw("DIstance is too large for selected MotifPathTemplates. Max distance is" * 
+            string(mpt.motif.distance))
+    end
+
+    dbi = load(joinpath(fmidbdir, "dbi.bin"))
+    guides_ = copy(guides)
+    # reverse guides so that PAM is always on the left
+    pam = mpt.motif.fwd[mpt.motif.pam_loci_fwd]
+    if mpt.motif.extends5
+        guides_ = reverse.(guides_)
+        pam = reverse(pam)
+    end
+
+    pam = expand_ambiguous(pam)
+    no_pam = map(x -> templates_to_sequences(x, mpt; dist = distance), guides_)
+    # we need to add GGN in front and reverse for it to be forward sequence to search on the genome
+    # for reverse we need to complement
+
+    res = zeros(Int, length(guides_), mpt.motif.distance + 1)
+    #ref = open(genomepath, "r")
+    #reader = dbi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
+
+    for (ic, chrom) in enumerate(dbi.chrom)
+        fmi = load(joinpath(fmidbdir, chrom * ".bin"))
+        cashe = Dict{LongDNASeq, UnitRange{Int}}()
+        #seq = CRISPRofftargetHunter.getchromseq(dbi.is_fa, reader[chrom])
+        
+        for pam_i in pam
+            for (i, t) in enumerate(no_pam)
+                for path in t
+                    sequence = reverse(pam_i * path.seq)
+                    count = count_with_cashe!(sequence, fmi, cashe)
+                    count_rve = count_with_cashe!(reverse_complement(sequence), fmi, cashe)
+                    res[i, path.dist + 1] += (count + count_rve)
+                    if path.reducible != 0
+                        res[i, t[path.reducible].dist + 1] -= (count + count_rve)
+                    end
+                end
+            end
+        end
+    end
+    #close(ref)
+        
+    res = DataFrame(res, :auto)
+    col_d = [Symbol("D$i") for i in 0:distance]
+    rename!(res, col_d)
+    res.guide = guides
+    sort!(res, col_d)
+    return res
+end
+
+
+# https://mikael-salson.univ-lille.fr/talks/VST_010seed.pdf
+# TODO
+function search_fmiDB_lossless_seed(
+    fmidbdir::String, genomepath::String, 
+    guides::Vector{LongDNASeq}; detail::String = "", distance::Int = 3)
+
+    # 01*0 seed always exists when pattern is partitioned in at leasst distance + 2 parts
+    adj_seed_size = Int(floor(length(guides)/(distance + 2)))
+
+    dbi = load(joinpath(fmidbdir, "dbi.bin"))
+    guides_ = copy(guides)
+    # reverse guides so that PAM is always on the left
+    pam = mpt.motif.fwd[mpt.motif.pam_loci_fwd]
+    if mpt.motif.extends5
+        guides_ = reverse.(guides_)
+        pam = reverse(pam)
+    end
+
+    pam = expand_ambiguous(pam)
+    no_pam = map(x -> templates_to_sequences(x, mpt; dist = distance), guides_)
+    # we need to add GGN in front and reverse for it to be forward sequence to search on the genome
+    # for reverse we need to complement
+
+    res = zeros(Int, length(guides_), mpt.motif.distance + 1)
+    #ref = open(genomepath, "r")
+    #reader = dbi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
+
+    for (ic, chrom) in enumerate(dbi.chrom)
+        fmi = load(joinpath(fmidbdir, chrom * ".bin"))
+        cashe = Dict{LongDNASeq, UnitRange{Int}}()
+        #seq = CRISPRofftargetHunter.getchromseq(dbi.is_fa, reader[chrom])
+        
+        for pam_i in pam
+            for (i, t) in enumerate(no_pam)
+                for path in t
+                    sequence = reverse(pam_i * path.seq)
+                    count = count_with_cashe!(sequence, fmi, cashe)
+                    count_rve = count_with_cashe!(reverse_complement(sequence), fmi, cashe)
+                    res[i, path.dist + 1] += (count + count_rve)
+                    if path.reducible != 0
+                        res[i, t[path.reducible].dist + 1] -= (count + count_rve)
+                    end
+                end
+            end
+        end
+    end
+    #close(ref)
+        
+    res = DataFrame(res, :auto)
+    col_d = [Symbol("D$i") for i in 0:distance]
     rename!(res, col_d)
     res.guide = guides
     sort!(res, col_d)

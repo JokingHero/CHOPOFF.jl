@@ -105,7 +105,7 @@ end
 function Motif(alias::String,
     fwdmotif::String, fwdpam::String,
     forward_strand::Bool = true, reverse_strand::Bool = true,
-    distance::Int = 4, extends5::Bool = true, ambig_max::Int = 4)
+    distance::Int = 3, extends5::Bool = true, ambig_max::Int = 3)
     if length(fwdmotif) != length(fwdpam)
         throw("fwd_motif and fwd_pam have to have the same length!")
     end
@@ -196,16 +196,19 @@ end
 
 # TODO add more motifs
 const motif_db = Dict(
+    "test" => Motif("test",
+                    "NNNX",
+                    "XXXG", true, true, 2, true, 0),
     "Cas9" => Motif("Cas9",
                     "NNNNNNNNNNNNNNNNNNNNXXX",
-                    "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 4, true, 0),
+                    "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 3, true, 0),
     "Cpf1" => Motif("Cas12a",
                     "XXXXNNNNNNNNNNNNNNNNNNNN",
-                    "TTTNXXXXXXXXXXXXXXXXXXXX", true, true, 4, false, 0)
+                    "TTTNXXXXXXXXXXXXXXXXXXXX", true, true, 3, false, 0)
     )
 
 
-function Motif(alias::String; distance::Int = 4, ambig_max::Int = 0)
+function Motif(alias::String; distance::Int = 3, ambig_max::Int = 0)
     motif = motif_db[alias]
     return setambig(setdist(motif, distance), ambig_max)
 end
