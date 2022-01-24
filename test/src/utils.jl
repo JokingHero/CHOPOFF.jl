@@ -127,17 +127,17 @@ using Combinatorics
     end
 
     @testset "as_bitvector_of_kmers" begin
-        kmers = all_kmers(2)
-        kmers = IdDict(zip(kmers, 1:length(kmers)))
+        kmers = LongDNASeq.(all_kmers(2))
+        kmers = Dict(zip(kmers, 1:length(kmers)))
         b = as_bitvector_of_kmers(dna"AAAAAA", kmers)
         @test sum(b) == 1
-        @test b[kmers[DNAMer(dna"AA")]]
+        @test b[kmers[dna"AA"]]
 
-        kmers = all_kmers(3)
-        kmers = IdDict(zip(kmers, 1:length(kmers)))
+        kmers = LongDNASeq.(all_kmers(3))
+        kmers = Dict(zip(kmers, 1:length(kmers)))
         b = as_bitvector_of_kmers(dna"ACTG", kmers)
         @test sum(b) == 2
-        @test b[kmers[DNAMer(dna"ACT")]]
-        @test b[kmers[DNAMer(dna"CTG")]]
+        @test b[kmers[dna"ACT"]]
+        @test b[kmers[dna"CTG"]]
     end
 end

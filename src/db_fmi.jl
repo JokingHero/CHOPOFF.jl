@@ -1,12 +1,19 @@
-struct MotifPos
+struct SeedDB
     dbi::DBInfo
-    kmer_size::Int # 0 indicates there were no kmer storage
+    prefixes::Set{LongDNASeq}
+    kmer_size::Int
+    kmers::Dict{LongDNASeq, Int}
+end
+
+
+struct MotifPos
     chroms::Vector{<: Unsigned}
     pos::Vector{<: Unsigned}
     isplus::BitVector
     sequences::Vector{LongDNASeq} # large and potentially uneccessary
     ug::BitVector # bitvector encodes which guides positions share the same sequence!
     ug_count::Int
+    bits::BitMatrix # columns are guides, rows are kmers
 end
 
 
@@ -89,7 +96,7 @@ function build_motifDB(
     store_kmers = true)
 
     dbi = CRISPRofftargetHunter.DBInfo(genomepath, name, motif)
-    prefix_len = 4
+    prefix_len = 7
 
     # step 1
     @info "Step 1: Searching chromosomes."
@@ -105,15 +112,9 @@ function build_motifDB(
     # step 2
     @info "Step 2: Constructing per prefix db."
     # Iterate over all prefixes and merge different chromosomes
-    guides_all = Vector{LongDNASeq}()
-    gbits_all = Vector{BitVector}()
-    loci_range_all = Vector{LociRange}()
-    loci_chrom_all = Vector{dbi.chrom_type}()
-    loci_pos_all = Vector{dbi.pos_type}()
-    loci_isplus_all = BitVector()
-    kmer_size = minkmersize(length_noPAM(motif), motif.distance)
-    kmers = all_kmers(kmer_size)
-    kmers = IdDict(zip(kmers, 1:length(kmers)))
+    kmer_size = Int(floor(length_noPAM(motif) / (motif.distance + 2))) # lossless seed 01*0
+    kmers = LongDNASeq.(all_kmers(kmer_size))
+    kmers = Dict(zip(kmers, 1:length(kmers)))
     @showprogress 60 for prefix in prefixes
         guides = Vector{LongDNASeq}()
         loci = Vector{Loc}()
@@ -128,39 +129,24 @@ function build_motifDB(
         rm(joinpath(storagedir, string(prefix)), recursive = true)
         (guides, loci_range, loci) = unique_guides(guides, loci)
         guides = Base.map(x -> prefix * x, guides)
-        if store_kmers
-            guides_ = ThreadsX.map(x -> as_bitvector_of_kmers(x, kmers), guides)
-            append!(gbits_all, guides_)
-        else
-            kmer_size = 0  
-        end
-        append!(guides_all, guides)
-        append!(loci_range_all, loci_range)
-        append!(loci_chrom_all, map(x -> x.chrom, loci))
-        append!(loci_pos_all, map(x -> x.pos, loci))
-        append!(loci_isplus_all, BitVector(map(x -> x.isplus, loci)))
-    end
-    ug_count = length(loci_range_all)
-    loci_range_all = convert(BitVector, loci_range_all)
-    motifpos = MotifPos(
-        dbi, kmer_size, loci_chrom_all, loci_pos_all, 
-        loci_isplus_all, guides_all, loci_range_all, ug_count)
-    motifpos_path = joinpath(storagedir, "motifDB.bin")
-    save(motifpos, motifpos_path)
+        guides_ = ThreadsX.map(x -> as_bitvector_of_kmers(x, kmers), guides)
+        guides_ = hcat(guides_...) # as BitMatrix - columns are guides, rows are kmers
 
-    if store_kmers
-        # now kmers for each guide - skip FMindex stuff - pay with disk space
-        @info "Writing down kmers."
-        @showprogress 60 for (kmer, pos) in kmers
-            kmer_bit = zeros(length(gbits_all))
-            for (idx, g) in enumerate(gbits_all)
-                kmer_bit[idx] = g[pos]
-            end
-            save(BitVector(kmer_bit), joinpath(storagedir, string(kmer) * ".bin"))
-        end
+        loci_chrom = ThreadsX.map(x -> x.chrom, loci)
+        loci_pos = ThreadsX.map(x -> x.pos, loci)
+        loci_isplus = BitVector(ThreadsX.map(x -> x.isplus, loci))
+
+        ug_count = length(loci_range)
+        loci_range = convert(BitVector, loci_range)
+        save(
+            MotifPos(
+                loci_chrom, loci_pos, loci_isplus, guides, 
+                loci_range, ug_count, guides_),
+            joinpath(storagedir, string(prefix) * ".bin"))
     end
 
-    @info "Finished constructing motifDB in " * storagedir
+    save(SeedDB(dbi, prefixes, kmer_size, kmers), joinpath(storagedir, "seedDB.bin"))
+    @info "Finished constructing seedDB in " * storagedir
     return storagedir
 end
 
@@ -186,14 +172,12 @@ function build_fmiDB(
 end
 
 
-function guide_to_bitvector(guide::LongDNASeq, path::String, kmer_size::Int)
-    guide = collect(Set(as_kmers(guide, kmer_size)))
-    guide_bits = load(joinpath(path, string(guide[1]) * ".bin"))
+function guide_to_bitvector(guide::Vector{LongDNASeq}, bits::BitMatrix, kmers::Dict{LongDNASeq, Int})
+    in_guide = bits[kmers[guide[1]], :]
     for i in 2:length(guide)
-        bits = load(joinpath(path, string(guide[i]) * ".bin"))
-        guide_bits .|= bits
+        in_guide += bits[kmers[guide[i]], :]
     end
-    return guide_bits
+    return in_guide .> 1 # lossless seed requiries at least two skipmers to be found
 end
 
 
@@ -203,11 +187,9 @@ function search_motifDB(
     dist::Int = 4; 
     detail::String = "")
 
-    mp = load(joinpath(storagedir, "motifDB.bin"))
-    mp_counts = bits_to_counts(mp.ug, mp.ug_count)
-
-    if dist > mp.dbi.motif.distance
-        error("Maximum distance is " * string(mp.dbi.motif.distance))
+    sdb = load(joinpath(storagedir, "seedDB.bin"))
+    if dist > sdb.dbi.motif.distance
+        error("Maximum distance is " * string(sdb.dbi.motif.distance))
     end
 
     # we work on each chrom separately
@@ -215,18 +197,25 @@ function search_motifDB(
 
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
-    if mp.dbi.motif.extends5
+    if sdb.dbi.motif.extends5
         guides_ = reverse.(guides_)
     end
 
+    gskipmers = ThreadsX.map(x -> collect(Set(as_skipkmers(x, sdb.kmer_size))), guides_)
     res = zeros(Int, length(guides_), dist + 1)
-    for (idx, g) in enumerate(guides_) # if we add detail and early stopping - paralelize on the guides
-        g_bits = guide_to_bitvector(g, storagedir, mp.kmer_size)
-        offtargets = mp.sequences[g_bits]
-        mp_counts_g = mp_counts[g_bits]
-        dists = ThreadsX.map(x -> levenshtein(g, x, dist), offtargets)
-        for d in 0:dist
-            res[idx, d + 1] += sum(mp_counts_g[dists .== d])
+    for prefix in sdb.prefixes
+        mp = load(joinpath(storagedir, string(prefix) * ".bin"))
+        mp_counts = bits_to_counts(mp.ug, mp.ug_count)
+        for (idx, g) in enumerate(guides_)
+            g_bits = guide_to_bitvector(gskipmers[idx], mp.bits, sdb.kmers)
+            if any(g_bits)
+                offtargets = mp.sequences[g_bits]
+                mp_counts_g = mp_counts[g_bits]
+                dists = ThreadsX.map(x -> levenshtein(g, x, dist), offtargets)
+                for d in 0:dist
+                    res[idx, d + 1] += sum(mp_counts_g[dists .== d])
+                end
+            end
         end
     end
 

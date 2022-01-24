@@ -479,17 +479,18 @@ function all_kmers(size = 4; alphabet = [DNA_A, DNA_C, DNA_G, DNA_T])
 end
 
 
-function as_bitvector_of_kmers(x::LongDNASeq, kmers::IdDict{DNAMer{K}, Int}) where K
+function as_bitvector_of_kmers(x::LongDNASeq, kmers::Dict{LongDNASeq, Int})
+    BioSequences.ungap!(x)
     bits = zeros(length(kmers))
     kmer_size = length(first(first(kmers)))
     for i in 1:(length(x) - kmer_size + 1)
         xi = x[i:(i + kmer_size - 1)]
         if iscertain(xi)
-            bits[kmers[DNAMer(xi)]] = 1
+            bits[kmers[xi]] = 1
         else # replace all ambigs with nonambigs
             xexp = expand_ambiguous(xi)
             for xi in xexp
-                bits[kmers[DNAMer(xi)]] = 1
+                bits[kmers[xi]] = 1
             end
         end
     end
@@ -500,6 +501,25 @@ end
 function as_kmers(x::LongDNASeq, kmer_size::Int)
     kmers = Vector{LongDNASeq}()
     for i in 1:(length(x) - kmer_size + 1)
+        xi = x[i:(i + kmer_size - 1)]
+        if iscertain(xi)
+            push!(kmers, xi)
+        else # replace all ambigs with nonambigs
+            xexp = expand_ambiguous(xi)
+            for xi in xexp
+                push!(kmers, xi)
+            end
+        end
+    end
+    return kmers
+end
+
+
+# TODO what to do when there are leftovers after kmerizing?
+# I think we should simply add 1 more k-mer from the other side?
+function as_skipkmers(x::LongDNASeq, kmer_size::Int)
+    kmers = Vector{LongDNASeq}()
+    for i in 1:kmer_size:(length(x) - kmer_size + 1)
         xi = x[i:(i + kmer_size - 1)]
         if iscertain(xi)
             push!(kmers, xi)
