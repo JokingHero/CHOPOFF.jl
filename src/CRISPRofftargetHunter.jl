@@ -97,6 +97,9 @@ function parse_commandline(args::Array{String})
         "linearDB"
             action = :command
             help = "linearDB utilizes prefixes to decrease search time, but no other optimizations."
+        "motifDB"
+            action = :command
+            help = "motifDB utilizes prefixes to decrease search time, and also lossless seeds."
         "compressedDB"
             action = :command
             help = "compressedDB utilizes previous guide alignment and focuses only on the differences between consecutive guides."
@@ -116,6 +119,9 @@ function parse_commandline(args::Array{String})
         "vcfDB"
             action = :command
             help = "vcfDB is similar specialized database to handle .vcf files and personalized off-target search."
+        "fmi"
+            action = :command
+            help = "Build FM-index of a genome"
         "--name"
             help = "How will you shortly name this database?"
             arg_type = String
@@ -178,6 +184,15 @@ function parse_commandline(args::Array{String})
             help = "Defines length of the prefix. " * 
                 "For each possible prefix there will be " *
                 "one linearDB instance."
+            arg_type = Int
+            default = 7
+    end
+
+    @add_arg_table! s["build"]["motifDB"] begin
+        "--prefix_length"
+            help = "Defines length of the prefix. " * 
+                "For each possible prefix there will be " *
+                "one motifDB instance."
             arg_type = Int
             default = 7
     end
@@ -269,6 +284,8 @@ function parse_commandline(args::Array{String})
                 x == "binDB" || 
                 x == "dictDB" || 
                 x == "treeDB" || 
+                x == "motifDB" ||
+                x == "fmi" ||
                 x == "linearDB")
             required = true
         "guides"
@@ -311,6 +328,11 @@ function main(args::Array{String})
         elseif args["%COMMAND%"] == "linearDB"
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
                 args["linearDB"]["prefix_length"])
+        elseif args["%COMMAND%"] == "motifDB"
+            build_motifDB(args["name"], args["genome"], motif, args["output"], 
+                args["motifDB"]["prefix_length"])
+        elseif args["%COMMAND%"] == "fmi"
+            build_fmiDB(args["name"], args["genome"], motif, args["output"])
         elseif args["%COMMAND%"] == "compressedDB"
             build_compressedDB(args["name"], args["genome"], motif, args["output"], 
                 args["compressedDB"]["prefix_length"])
@@ -340,6 +362,11 @@ function main(args::Array{String})
             res = search_treeDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "linearDB"
             res = search_linearDB(args["database"], guides, args["distance"]; detail = args["detail"])
+        elseif args["type"] == "motifDB"
+            res = search_motifDB(args["database"], guides, args["distance"]; detail = args["detail"])
+        elseif args["type"] == "fmi"
+            template = CRISPRofftargetHunter.build_motifTemplates(motif)
+            res = search_fmiDB_patterns(args["database"], "", template, guides; distance = args["distance"])
         elseif args["type"] == "compressedDB"
             res = search_compressedDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "hashDB"

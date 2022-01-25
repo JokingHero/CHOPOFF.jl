@@ -92,11 +92,10 @@ function build_motifDB(
     name::String,
     genomepath::String,
     motif::Motif,
-    storagedir::String;
-    store_kmers = true)
+    storagedir::String,
+    prefix_len = 7)
 
     dbi = CRISPRofftargetHunter.DBInfo(genomepath, name, motif)
-    prefix_len = 7
 
     # step 1
     @info "Step 1: Searching chromosomes."

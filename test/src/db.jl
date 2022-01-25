@@ -85,7 +85,7 @@ end
     @testset "linearDB vs motifDB" begin
         mdb_path = joinpath(tdir, "motifDB")
         mkpath(mdb_path)
-        build_motifDB("samirandom", genome, Motif("Cas9"), mdb_path)
+        build_motifDB("samirandom", genome, Motif("Cas9"), mdb_path, 7)
 
         #detail_path = joinpath(tdb_path, "detail.csv")
         mdb_res = search_motifDB(mdb_path, guides, 3)
