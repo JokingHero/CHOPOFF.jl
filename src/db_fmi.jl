@@ -10,7 +10,7 @@ struct MotifPos
     chroms::Vector{<: Unsigned}
     pos::Vector{<: Unsigned}
     isplus::BitVector
-    sequences::Vector{LongDNASeq} # large and potentially uneccessary
+    sequences::Vector{LongDNASeq} # large and potentially uneccessary suffixes
     ug::BitVector # bitvector encodes which guides positions share the same sequence!
     ug_count::Int
     bits::BitMatrix # columns are guides, rows are kmers
@@ -115,7 +115,7 @@ function build_motifDB(
     kmer_size = Int(floor(length_noPAM(motif) / (motif.distance + 2))) # lossless seed 01*0
     kmers = LongDNASeq.(all_kmers(kmer_size))
     kmers = Dict(zip(kmers, 1:length(kmers)))
-    @showprogress 60 for prefix in prefixes
+    @showprogress 60 for prefix in prefixes # can be paralelized here ?! memory?!
         guides = Vector{LongDNASeq}()
         loci = Vector{Loc}()
         for chrom in dbi.chrom
@@ -128,8 +128,7 @@ function build_motifDB(
         end
         rm(joinpath(storagedir, string(prefix)), recursive = true)
         (guides, loci_range, loci) = unique_guides(guides, loci)
-        guides = Base.map(x -> prefix * x, guides)
-        guides_ = ThreadsX.map(x -> as_bitvector_of_kmers(x, kmers), guides)
+        guides_ = ThreadsX.map(x -> as_bitvector_of_kmers(prefix * x, kmers), guides)
         guides_ = hcat(guides_...) # as BitMatrix - columns are guides, rows are kmers
 
         loci_chrom = ThreadsX.map(x -> x.chrom, loci)
@@ -181,6 +180,76 @@ function guide_to_bitvector(guide::Vector{LongDNASeq}, bits::BitMatrix, kmers::D
 end
 
 
+function search_prefix(
+    prefix::LongDNASeq,
+    dist::Int,
+    dbi::DBInfo,
+    detail::String,
+    guides::Vector{LongDNASeq},
+    gskipmers::Vector{Vector{LongDNASeq}},
+    kmers::Dict{LongDNASeq, Int},
+    storagedir::String)
+
+    res = zeros(Int, length(guides), dist + 1)
+    if detail != ""
+        detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
+        detail_file = open(detail_path, "w")
+    end
+
+    # prefix alignment against all the guides
+    suffix_len = length_noPAM(dbi.motif) + dbi.motif.distance - length(prefix)
+    prefix_aln = Base.map(g -> prefix_align(g, prefix, suffix_len, dist), guides)
+    isfinal = Base.map(x -> x.isfinal, prefix_aln)
+
+    if all(isfinal)
+        return res
+    end
+
+    # if any of the guides requires further alignment
+    sdb = load(joinpath(storagedir, string(prefix) * ".bin"))
+    sdb_counts = bits_to_counts(sdb.ug, sdb.ug_count)
+    for i in 1:length(guides)
+        if !isfinal[i]
+            g_bits = guide_to_bitvector(gskipmers[i], sdb.bits, kmers)
+            if any(g_bits)
+                offtargets = sdb.sequences[g_bits]
+                sdb_counts_g = sdb_counts[g_bits]
+                for (j, suffix) in enumerate(offtargets)
+                    suffix_aln = suffix_align(suffix, prefix_aln[i])
+                    if suffix_aln.dist <= dist
+                        res[i, suffix_aln.dist + 1] += sdb_counts_g[j]
+                        if detail != ""
+                            #=
+                            offtargets = sdb.loci[sl_idx.start:sl_idx.stop]
+                            if dbi.motif.extends5
+                                guide_stranded = reverse(prefix_aln[i].guide)
+                                aln_guide = reverse(suffix_aln.guide)
+                                aln_ref = reverse(suffix_aln.ref)
+                            else
+                                guide_stranded = prefix_aln[i].guide
+                                aln_guide = suffix_aln.guide
+                                aln_ref = suffix_aln.ref
+                            end
+                            noloc = string(guide_stranded) * "," * aln_guide * "," * 
+                                    aln_ref * "," * string(suffix_aln.dist) * ","
+                            for offt in offtargets
+                                write(detail_file, noloc * decode(offt, dbi) * "\n")
+                            end
+                            =#
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if detail != ""
+        close(detail_file)
+    end
+    return res
+end
+
+
 function search_motifDB(
     storagedir::String, 
     guides::Vector{LongDNASeq}, 
@@ -202,19 +271,25 @@ function search_motifDB(
     end
 
     gskipmers = ThreadsX.map(x -> collect(Set(as_skipkmers(x, sdb.kmer_size))), guides_)
-    res = zeros(Int, length(guides_), dist + 1)
-    for prefix in sdb.prefixes
-        mp = load(joinpath(storagedir, string(prefix) * ".bin"))
-        mp_counts = bits_to_counts(mp.ug, mp.ug_count)
-        for (idx, g) in enumerate(guides_)
-            g_bits = guide_to_bitvector(gskipmers[idx], mp.bits, sdb.kmers)
-            if any(g_bits)
-                offtargets = mp.sequences[g_bits]
-                mp_counts_g = mp_counts[g_bits]
-                dists = ThreadsX.map(x -> levenshtein(g, x, dist), offtargets)
-                for d in 0:dist
-                    res[idx, d + 1] += sum(mp_counts_g[dists .== d])
+    #res = zeros(Int, length(guides_), dist + 1)
+    res = ThreadsX.mapreduce(p -> search_prefix(
+        p, dist, sdb.dbi, dirname(detail), guides_, gskipmers, sdb.kmers, storagedir), +, sdb.prefixes)
+    #for p in prefixes
+    #    res += search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storagedir)
+    #end
+    
+    if detail != ""
+        # clean up detail files into one file
+        open(detail, "w") do detail_file
+            write(detail_file, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
+            for prefix in filter(x -> occursin("detail_", x), readdir(dirname(detail)))
+                prefix_file = joinpath(dirname(detail), prefix)
+                open(prefix_file, "r") do prefix_file
+                    for ln in eachline(prefix_file)
+                        write(detail_file, ln * "\n")
+                    end
                 end
+                rm(prefix_file)
             end
         end
     end
