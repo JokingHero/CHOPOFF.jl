@@ -365,6 +365,8 @@ function main(args::Array{String})
         elseif args["type"] == "motifDB"
             res = search_motifDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "fmi"
+            motif = Motif("Cas9")
+            motif = setdist(motif, args["distance"])
             template = CRISPRofftargetHunter.build_motifTemplates(motif)
             res = search_fmiDB_patterns(args["database"], "", template, guides; distance = args["distance"])
         elseif args["type"] == "compressedDB"
