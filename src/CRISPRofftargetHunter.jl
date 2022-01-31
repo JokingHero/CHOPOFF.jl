@@ -272,6 +272,10 @@ function parse_commandline(args::Array{String})
         "--right"
             help = "Directionality in the filter databases."
             action = :store_true
+        "--template"
+            help = "Path to the table with the template. You can build a template with 'build  template'"
+            arg_type = String
+            required = true
         "database"
             help = "Path to the folder where the database is stored. Same as used when building."
             arg_type = String
@@ -298,13 +302,6 @@ function parse_commandline(args::Array{String})
             required = true
         "output"
             help = "File path to the file where summarized output should be generated."
-            arg_type = String
-            required = true
-    end
-
-    @add_arg_table! s["search"]["fmi"] begin
-        "--template"
-            help = "Path to the table with the template. You can build a template with 'build  template'"
             arg_type = String
             required = true
     end
