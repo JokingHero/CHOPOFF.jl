@@ -122,6 +122,9 @@ function parse_commandline(args::Array{String})
         "fmi"
             action = :command
             help = "Build FM-index of a genome"
+        "template"
+            action = :command
+            help = "Build templates with specific Motif."
         "--name"
             help = "How will you shortly name this database?"
             arg_type = String
@@ -286,6 +289,7 @@ function parse_commandline(args::Array{String})
                 x == "treeDB" || 
                 x == "motifDB" ||
                 x == "fmi" ||
+                x == "template" ||
                 x == "linearDB")
             required = true
         "guides"
@@ -294,6 +298,13 @@ function parse_commandline(args::Array{String})
             required = true
         "output"
             help = "File path to the file where summarized output should be generated."
+            arg_type = String
+            required = true
+    end
+
+    @add_arg_table! s["search"]["fmi"] begin
+        "--template"
+            help = "Path to the table with the template. You can build a template with 'build  template'"
             arg_type = String
             required = true
     end
@@ -325,6 +336,8 @@ function main(args::Array{String})
         if args["%COMMAND%"] == "treeDB"
             build_treeDB(args["name"], args["genome"], motif, args["output"], 
                 args["treeDB"]["prefix_length"])
+        elseif args["%COMMAND%"] == "template"
+            build_motifTemplates(motif; storagepath = joinpath(args["output"], motif.alias * ".bin"))
         elseif args["%COMMAND%"] == "linearDB"
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
                 args["linearDB"]["prefix_length"])
@@ -365,9 +378,7 @@ function main(args::Array{String})
         elseif args["type"] == "motifDB"
             res = search_motifDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "fmi"
-            motif = Motif("Cas9")
-            motif = setdist(motif, args["distance"])
-            template = CRISPRofftargetHunter.build_motifTemplates(motif)
+            template = load(args["template"])
             res = search_fmiDB_patterns(args["database"], "", template, guides; distance = args["distance"])
         elseif args["type"] == "compressedDB"
             res = search_compressedDB(args["database"], guides, args["distance"]; detail = args["detail"])
