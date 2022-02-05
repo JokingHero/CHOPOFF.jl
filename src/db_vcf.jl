@@ -58,15 +58,15 @@ function build_vcfDB(
     motif_len = length(motif) + motif.distance # include distance in all calculations!
 
     # For each chromsome paralelized we build database
-    ref = open(dbi.filepath, "r")
-    reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
+    ref = open(dbi.gi.filepath, "r")
+    reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
 
     all_guides = Vector{LongDNASeq}()
     guide_annot = Vector{String}()
 
     for ch in unique(rs_chroms)
         #ch = first(unique(rs_chroms)) # REMOVE
-        chrom_seq = getchromseq(dbi.is_fa, reader[ch])
+        chrom_seq = getchromseq(dbi.gi.is_fa, reader[ch])
         chrom_idx = findall(isequal(ch), rs_chroms)
         # now for every snp (we assume they are sorted)
         # group snps by proximity - as we have to enumerate all permutations of rs_alt for them

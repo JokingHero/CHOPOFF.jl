@@ -171,14 +171,14 @@ function gatherofftargets(
     prefix_len::Int) where {K<:BioSequence}
  
     pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
-    chrom_name_ = convert(dbi.chrom_type, findfirst(isequal(chrom_name), dbi.chrom))
+    chrom_name_ = convert(dbi.gi.chrom_type, findfirst(isequal(chrom_name), dbi.gi.chrom))
 
     if length(dbi.motif) != 0
         guides_pos = findguides(dbi, chrom, reverse_comp)
         guides = ThreadsX.map(x -> removepam(chrom[x], pam_loci), guides_pos)
         guides = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
         guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, reverse_comp)
-        guides_pos = convert.(dbi.pos_type, guides_pos)
+        guides_pos = convert.(dbi.gi.pos_type, guides_pos)
         loc = Loc.(chrom_name_, guides_pos, !reverse_comp)
 
         gprefix = getindex.(guides, [1:prefix_len])

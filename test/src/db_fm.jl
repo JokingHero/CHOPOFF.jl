@@ -25,18 +25,18 @@ mkpath(fmidir)
 
 motifpospath = build_motifDB("testCas9", genome, motif, tdir; store_kmers = true)
 mdb_res = search_motifDB(tdir, guides, 3)
-fmidbpath = build_fmiDB("testCas9fmi", genome, motif, fmidir)
+fmidbpath = build_fmiDB(genome, fmidir)
 #res = search_fmiDB(fmidbpath, tdir, guides, 4)
 
 =#
 #=
 dbi = CRISPRofftargetHunter.DBInfo(genome, "tests", motif)
 
-ref = open(dbi.filepath, "r")
-reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
-chrom_name = dbi.chrom[1]
+ref = open(dbi.gi.filepath, "r")
+reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
+chrom_name = dbi.gi.chrom[1]
 record = reader[chrom_name]
-chrom = dbi.is_fa ? FASTA.sequence(record) : TwoBit.sequence(record)
+chrom = dbi.gi.is_fa ? FASTA.sequence(record) : TwoBit.sequence(record)
 close(ref)
 # there is a lot of N in the genome - treat them as mismatches
 

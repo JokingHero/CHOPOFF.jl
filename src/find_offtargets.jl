@@ -150,13 +150,13 @@ function gatherofftargets!(
     output::Any,
     dbi::DBInfo)
 
-    ref = open(dbi.filepath, "r")
-    reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
+    ref = open(dbi.gi.filepath, "r")
+    reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
     ambig = Vector{LongDNASeq}()
-    for chrom_name in dbi.chrom
+    for chrom_name in dbi.gi.chrom
         record = reader[chrom_name] # this is possible only with index!
         @info "Working on $chrom_name"
-        chrom = dbi.is_fa ? FASTA.sequence(record) : TwoBit.sequence(record)
+        chrom = dbi.gi.is_fa ? FASTA.sequence(record) : TwoBit.sequence(record)
         pushguides!(output, ambig, dbi, chrom, false)
         pushguides!(output, ambig, dbi, chrom, true)
     end

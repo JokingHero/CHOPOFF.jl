@@ -22,7 +22,7 @@ motif = CRISPRofftargetHunter.setdist(motif, 2)
 CRISPRofftargetHunter.as_partial_alignments("AAAAAAAAAAAAAAAAAAAA", motif, 10)
 #fmidir = tempname()
 #mkpath(fmidir)
-#fmidbpath = build_fmiDB("testCas9fmi", genome, motif, fmidir)
+#fmidbpath = build_fmiDB(genome, fmidir)
 
 tdir = "/tmp/jl_AKyJgh"
 fmidbpath = "/tmp/jl_1PWg8q"

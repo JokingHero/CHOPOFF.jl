@@ -118,10 +118,10 @@ function build_compressedDB(
     # step 1
     @info "Step 1: Searching chromosomes."
     # For each chromsome paralelized we build database
-    ref = open(dbi.filepath, "r")
-    reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
+    ref = open(dbi.gi.filepath, "r")
+    reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
     # Don't paralelize here as you can likely run out of memory (chromosomes are large)
-    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.is_fa, reader[x]), dbi, prefix_len, storagedir), dbi.chrom)
+    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storagedir), dbi.gi.chrom)
     close(ref)
 
     prefixes = Set(vcat(prefixes...))
@@ -132,7 +132,7 @@ function build_compressedDB(
     @showprogress 60 for prefix in prefixes
         guides = Vector{LongDNASeq}()
         loci = Vector{Loc}()
-        for chrom in dbi.chrom
+        for chrom in dbi.gi.chrom
             p = joinpath(storagedir, string(prefix), string(prefix) * "_" * chrom * ".bin")
             if ispath(p)
                 pdb = load(p)

@@ -19,9 +19,9 @@ using BioSequences
 
     @testset "DBInfo & Loc" begin
         dbi = DBInfo("./sample_data/genome/semirandom.fa", "test", cas9)
-        @test dbi.is_fa == true
-        @test length(dbi.chrom) == 8
-        loc = Loc{dbi.chrom_type, dbi.pos_type}(1, 10, true)
+        @test dbi.gi.is_fa == true
+        @test length(dbi.gi.chrom) == 8
+        loc = Loc{dbi.gi.chrom_type, dbi.gi.pos_type}(1, 10, true)
         @test "semirandom1,10,+" == decode(loc, dbi)
     end
 

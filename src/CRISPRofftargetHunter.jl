@@ -275,7 +275,7 @@ function parse_commandline(args::Array{String})
         "--template"
             help = "Path to the table with the template. You can build a template with 'build  template'"
             arg_type = String
-            required = true
+            required = false
         "database"
             help = "Path to the folder where the database is stored. Same as used when building."
             arg_type = String
@@ -334,7 +334,7 @@ function main(args::Array{String})
             build_treeDB(args["name"], args["genome"], motif, args["output"], 
                 args["treeDB"]["prefix_length"])
         elseif args["%COMMAND%"] == "template"
-            build_motifTemplates(motif; storagepath = joinpath(args["output"], motif.alias * ".bin"))
+            build_motifTemplates(motif; storagepath = joinpath(args["output"], args["name"] * ".bin"))
         elseif args["%COMMAND%"] == "linearDB"
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
                 args["linearDB"]["prefix_length"])
@@ -342,7 +342,7 @@ function main(args::Array{String})
             build_motifDB(args["name"], args["genome"], motif, args["output"], 
                 args["motifDB"]["prefix_length"])
         elseif args["%COMMAND%"] == "fmi"
-            build_fmiDB(args["name"], args["genome"], motif, args["output"])
+            build_fmiDB(args["genome"], args["output"])
         elseif args["%COMMAND%"] == "compressedDB"
             build_compressedDB(args["name"], args["genome"], motif, args["output"], 
                 args["compressedDB"]["prefix_length"])

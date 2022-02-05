@@ -116,7 +116,7 @@ end
         motif_cas9 = CRISPRofftargetHunter.setdist(motif_cas9, dist)
 
         template = CRISPRofftargetHunter.build_motifTemplates(motif_cas9)
-        fmidbdir = build_fmiDB("testCas9fmi", genome, motif_cas9, fmidb_path)
+        fmidbdir = build_fmiDB(genome, fmidb_path)
 
         #fmidb_res = search_fmiDB_patterns(
         #    fmidbdir, genome, template, guides; distance = dist)

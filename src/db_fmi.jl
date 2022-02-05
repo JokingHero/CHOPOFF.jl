@@ -74,14 +74,14 @@ function gatherofftargets(
     reverse_comp::Bool) where {K<:BioSequence}
  
     pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
-    chrom_name_ = convert(dbi.chrom_type, findfirst(isequal(chrom_name), dbi.chrom))
+    chrom_name_ = convert(dbi.gi.chrom_type, findfirst(isequal(chrom_name), dbi.gi.chrom))
 
     if length(dbi.motif) != 0
         guides_pos = findguides(dbi, chrom, reverse_comp)
         guides = ThreadsX.map(x -> removepam(chrom[x], pam_loci), guides_pos)
         guides = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
         guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, reverse_comp)
-        guides_pos = convert.(dbi.pos_type, guides_pos)
+        guides_pos = convert.(dbi.gi.pos_type, guides_pos)
         return (chrom_name_, guides, guides_pos, !reverse_comp)
     end
     return nothing
@@ -100,10 +100,10 @@ function build_motifDB(
     # step 1
     @info "Step 1: Searching chromosomes."
     # For each chromsome paralelized we build database
-    ref = open(dbi.filepath, "r")
-    reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
+    ref = open(dbi.gi.filepath, "r")
+    reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
     # Don't paralelize here as you can likely run out of memory (chromosomes are large)
-    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.is_fa, reader[x]), dbi, prefix_len, storagedir), dbi.chrom)
+    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storagedir), dbi.gi.chrom)
     close(ref)
 
     prefixes = Set(vcat(prefixes...))
@@ -117,7 +117,7 @@ function build_motifDB(
     @showprogress 60 for prefix in prefixes # can be paralelized here ?! memory?!
         guides = Vector{LongDNASeq}()
         loci = Vector{Loc}()
-        for chrom in dbi.chrom
+        for chrom in dbi.gi.chrom
             p = joinpath(storagedir, string(prefix), string(prefix) * "_" * chrom * ".bin")
             if ispath(p)
                 pdb = load(p)
@@ -150,21 +150,19 @@ end
 
 
 function build_fmiDB(
-    name::String,
     genomepath::String,
-    motif::Motif,
     storagedir::String)
 
-    dbi = DBInfo(genomepath, name, motif)
-    ref = open(dbi.filepath, "r")
-    reader = dbi.is_fa ? FASTA.Reader(ref, index = dbi.filepath * ".fai") : TwoBit.Reader(ref)
-    @showprogress 60 for chrom in dbi.chrom
-        fmi = FMIndex(getchromseq(dbi.is_fa, reader[chrom]), 16, r = 32)
+    gi = GenomeInfo(genomepath)
+    ref = open(gi.filepath, "r")
+    reader = gi.is_fa ? FASTA.Reader(ref, index = gi.filepath * ".fai") : TwoBit.Reader(ref)
+    @showprogress 60 for chrom in gi.chrom
+        fmi = FMIndex(getchromseq(gi.is_fa, reader[chrom]), 16, r = 32)
         p = joinpath(storagedir, chrom * ".bin")
         save(fmi, p)
     end
     close(ref)
-    save(dbi, joinpath(storagedir, "dbi.bin"))
+    save(gi, joinpath(storagedir, "genomeInfo.bin"))
     @info "FMindex is build."
     return storagedir
 end
@@ -400,7 +398,7 @@ function search_fmiDB(
 
     res = zeros(Int, length(guides_), dist + 1)
     # early stopping + write detail
-    for (ic, chrom) in enumerate(mp.dbi.chrom)
+    for (ic, chrom) in enumerate(mp.dbi.gi.chrom)
         fmi = load(joinpath(fmidbdir, chrom * ".bin"))
         pos_chrom = mp.chroms .== ic
         pos_chrom_fwd = pos_chrom .& mp.isplus # 1 have to be chcked
@@ -492,7 +490,7 @@ function search_fmiDB_raw(
     fmidbdir::String, genomepath::String, motif::Motif,
     guides::Vector{LongDNASeq}; detail::String = "", prefix_length::Int = 10)
 
-    dbi = load(joinpath(fmidbdir, "dbi.bin"))
+    gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
     if motif.extends5
@@ -503,11 +501,11 @@ function search_fmiDB_raw(
     
     res = zeros(Int, length(guides_), motif.distance + 1)
     ref = open(genomepath, "r")
-    reader = dbi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
+    reader = gi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
 
-    for (ic, chrom) in enumerate(dbi.chrom)
+    for (ic, chrom) in enumerate(gi.chrom)
         fmi = load(joinpath(fmidbdir, chrom * ".bin"))
-        seq = getchromseq(dbi.is_fa, reader[chrom])
+        seq = getchromseq(gi.is_fa, reader[chrom])
     
         for (idx, gp) in enumerate(partials)
             p, p_rev = gp
@@ -555,7 +553,7 @@ function search_fmiDB_patterns(
             string(mpt.motif.distance))
     end
 
-    dbi = load(joinpath(fmidbdir, "dbi.bin"))
+    gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
     pam = mpt.motif.fwd[mpt.motif.pam_loci_fwd]
@@ -568,11 +566,11 @@ function search_fmiDB_patterns(
     no_pam = map(x -> templates_to_sequences(x, mpt; dist = distance), guides_)
     res = zeros(Int, length(guides_), mpt.motif.distance + 1)
     #ref = open(genomepath, "r")
-    #reader = dbi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
+    #reader = gi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
 
-    for (ic, chrom) in enumerate(dbi.chrom)
+    for (ic, chrom) in enumerate(gi.chrom)
         fmi = load(joinpath(fmidbdir, chrom * ".bin"))
-        #seq = CRISPRofftargetHunter.getchromseq(dbi.is_fa, reader[chrom])
+        #seq = CRISPRofftargetHunter.getchromseq(gi.is_fa, reader[chrom])
         
         for pam_i in pam
             for (i, t) in enumerate(no_pam)
@@ -608,7 +606,7 @@ function search_fmiDB_patterns_cashed(
             string(mpt.motif.distance))
     end
 
-    dbi = load(joinpath(fmidbdir, "dbi.bin"))
+    gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
     pam = mpt.motif.fwd[mpt.motif.pam_loci_fwd]
@@ -624,12 +622,12 @@ function search_fmiDB_patterns_cashed(
 
     res = zeros(Int, length(guides_), mpt.motif.distance + 1)
     #ref = open(genomepath, "r")
-    #reader = dbi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
+    #reader = gi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
 
-    for (ic, chrom) in enumerate(dbi.chrom)
+    for (ic, chrom) in enumerate(gi.chrom)
         fmi = load(joinpath(fmidbdir, chrom * ".bin"))
         cashe = Dict{LongDNASeq, UnitRange{Int}}()
-        #seq = CRISPRofftargetHunter.getchromseq(dbi.is_fa, reader[chrom])
+        #seq = CRISPRofftargetHunter.getchromseq(gi.is_fa, reader[chrom])
         
         for pam_i in pam
             for (i, t) in enumerate(no_pam)
@@ -665,7 +663,7 @@ function search_fmiDB_lossless_seed(
     # 01*0 seed always exists when pattern is partitioned in at leasst distance + 2 parts
     adj_seed_size = Int(floor(length(guides)/(distance + 2)))
 
-    dbi = load(joinpath(fmidbdir, "dbi.bin"))
+    gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
     pam = mpt.motif.fwd[mpt.motif.pam_loci_fwd]
@@ -681,12 +679,12 @@ function search_fmiDB_lossless_seed(
 
     res = zeros(Int, length(guides_), mpt.motif.distance + 1)
     #ref = open(genomepath, "r")
-    #reader = dbi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
+    #reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
 
-    for (ic, chrom) in enumerate(dbi.chrom)
+    for (ic, chrom) in enumerate(dbi.gi.chrom)
         fmi = load(joinpath(fmidbdir, chrom * ".bin"))
         cashe = Dict{LongDNASeq, UnitRange{Int}}()
-        #seq = CRISPRofftargetHunter.getchromseq(dbi.is_fa, reader[chrom])
+        #seq = CRISPRofftargetHunter.getchromseq(dbi.gi.is_fa, reader[chrom])
         
         for pam_i in pam
             for (i, t) in enumerate(no_pam)
