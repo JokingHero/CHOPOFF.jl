@@ -2,7 +2,7 @@ using BioSequences
 using Test
 using CRISPRofftargetHunter
 
-@testset "motif_path_remplates.jl" begin
+@testset "motif_path_templates.jl" begin
 
     @testset "templates_to_sequences" begin
         motif = Motif("test")

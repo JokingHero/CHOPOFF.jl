@@ -17,11 +17,10 @@ struct GenomeInfo
     is_fa::Bool
 end
 
-"Instantiate GenomeInfo object from genom file path."
-function GenomeInfo(filepath::String)
-    checksum = open(crc32c, filepath)
 
+function is_fasta(filepath::String)
     ext = extension(filepath)
+    is_fa = false
     if (ext == ".fa" || ext == ".fasta" || ext == ".fna")
         is_fa = true
     elseif (ext == ".2bit")
@@ -30,7 +29,15 @@ function GenomeInfo(filepath::String)
         error("Wrong extension of the genome.",
               "We can parse only .fa/.fna/.fasta or .2bit references.")
     end
+    return is_fa
+end
 
+
+"Instantiate GenomeInfo object from genom file path."
+function GenomeInfo(filepath::String)
+    checksum = open(crc32c, filepath)
+
+    is_fa = is_fasta(filepath)
     ref = open(filepath, "r")
     maxchromlen = 0
 

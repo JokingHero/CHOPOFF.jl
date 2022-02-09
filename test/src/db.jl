@@ -54,25 +54,36 @@ end
     # guide ACTCAATCATGTTTCCCGTC is on the border - depending on the motif definition
     # it can/can't be found by different methods
 
-     # make and run default vcfDB
-     vcf_path = joinpath(tdir, "vcfDB")
-     vcf = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
-         "test", "sample_data", "artificial.vcf")
-     mkpath(vcf_path)
-     build_vcfDB(
-         "samirandom", genome, vcf,
-         Motif("Cas9"; distance = 1, ambig_max = 0),
-         vcf_path)
-     vcf_res = search_vcfDB(vcf_path, guides)
- 
-     @testset "vcfDB result is same as in saved file" begin
-         ar_file = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
+    # make and run default vcfDB
+    vcf_path = joinpath(tdir, "vcfDB")
+    vcf = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
+        "test", "sample_data", "artificial.vcf")
+    mkpath(vcf_path)
+    build_vcfDB(
+        "samirandom", genome, vcf,
+        Motif("Cas9"; distance = 1, ambig_max = 0),
+        vcf_path)
+    vcf_res = search_vcfDB(vcf_path, guides)
+
+    # put into proper test later! TODO
+    fmi_path = joinpath(tdir, "fmiDB")
+    mkdir(fmi_path)
+    fmidbpath = build_fmiDB(genome, fmi_path)
+    pamdbpath = joinpath(fmi_path, "pamDB.bin")
+    build_pamDB(fmi_path, Motif("Cas9"; distance = 3, ambig_max = 0); storagedir = pamdbpath)
+    pamDB_res = search_pamDB(fmi_path, genome, pamdbpath, guides; detail = "", distance = 3)
+    template = CRISPRofftargetHunter.build_motifTemplates(Motif("Cas9"; distance = 2, ambig_max = 0))
+    fmi_patterns = search_fmiDB_patterns(fmidbpath, "", template, guides; distance = 2)
+    fmi_cashed = search_fmiDB_patterns_cashed(fmidbpath, "", template, guides; distance = 2)
+
+    @testset "vcfDB result is same as in saved file" begin
+        ar_file = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
             "test", "sample_data", "artificial_results.csv")
-         ar = DataFrame(CSV.File(ar_file))
-         @test nrow(vcf_res) == length(guides)
-         @test all(vcf_res.guide .== guides)
-         @test all(Matrix(vcf_res[:, 1:2]) == Matrix(ar[:, 1:2]))
-     end
+        ar = DataFrame(CSV.File(ar_file))
+        @test nrow(vcf_res) == length(guides)
+        @test all(vcf_res.guide .== guides)
+        @test all(Matrix(vcf_res[:, 1:2]) == Matrix(ar[:, 1:2]))
+    end
 
     # make and run default linearDB
     ldb_path = joinpath(tdir, "linearDB")

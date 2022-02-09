@@ -15,6 +15,15 @@ The goal is to make it fast and reliable.
 
 # Must do
 
+* fmi index searches
+    * lossless seed  + indexed pam loci -> search_pamDB
+    * partially seed on the prefix and then + lossless seed?/alignment -> search_fmiDB_raw
+* improve motifDB with chunked lossless seed?
+* what is the probability that guide and off-target will be within certain distance, based only on some sort of transform of their letters - or rather figure out 0 probability in a fast way!
+
+
+* test small motifDB with UInt128, test cashe on hgv38!, test search_pamDB
+
 * add EARLY stopping!!! 
 * VCF support (5 d) 
 * Loci Range alternative where we have default value of just one UInt32, else we have UInt8/UInt16 as width! - will decrease the database sizes considerably because most of the guides are unique!

@@ -10,7 +10,7 @@ struct MotifPos
     chroms::Vector{<: Unsigned}
     pos::Vector{<: Unsigned}
     isplus::BitVector
-    sequences::Vector{LongDNASeq} # large and potentially uneccessary suffixes
+    sequences::Vector{UInt128} # large and potentially uneccessary suffixes
     ug::BitVector # bitvector encodes which guides positions share the same sequence!
     ug_count::Int
     bits::BitMatrix # columns are guides, rows are kmers
@@ -136,9 +136,10 @@ function build_motifDB(
 
         ug_count = length(loci_range)
         loci_range = convert(BitVector, loci_range)
+        guides = ThreadsX.map(x -> convert(UInt128, x), guides)
         save(
             MotifPos(
-                loci_chrom, loci_pos, loci_isplus, guides, 
+                loci_chrom, loci_pos, loci_isplus, guides,
                 loci_range, ug_count, guides_),
             joinpath(storagedir, string(prefix) * ".bin"))
     end
@@ -166,6 +167,9 @@ function build_fmiDB(
     @info "FMindex is build."
     return storagedir
 end
+
+
+
 
 
 function guide_to_bitvector(guide::Vector{LongDNASeq}, bits::BitMatrix, kmers::Dict{LongDNASeq, Int})
@@ -209,7 +213,7 @@ function search_prefix(
         if !isfinal[i]
             g_bits = guide_to_bitvector(gskipmers[i], sdb.bits, kmers)
             if any(g_bits)
-                offtargets = sdb.sequences[g_bits]
+                offtargets = map(x -> LongDNASeq(x, suffix_len), sdb.sequences[g_bits])
                 sdb_counts_g = sdb_counts[g_bits]
                 for (j, suffix) in enumerate(offtargets)
                     suffix_aln = suffix_align(suffix, prefix_aln[i])
@@ -544,6 +548,7 @@ function search_fmiDB_raw(
 end
 
 
+# Working - but pattern, reduceability is to be improved - currently it is not precise!
 function search_fmiDB_patterns(
     fmidbdir::String, genomepath::String, mpt::MotifPathTemplates,
     guides::Vector{LongDNASeq}; detail::String = "", distance::Int = 3)
@@ -628,63 +633,6 @@ function search_fmiDB_patterns_cashed(
         fmi = load(joinpath(fmidbdir, chrom * ".bin"))
         cashe = Dict{LongDNASeq, UnitRange{Int}}()
         #seq = CRISPRofftargetHunter.getchromseq(gi.is_fa, reader[chrom])
-        
-        for pam_i in pam
-            for (i, t) in enumerate(no_pam)
-                for path in t
-                    sequence = reverse(pam_i * path.seq)
-                    count = count_with_cashe!(sequence, fmi, cashe)
-                    count_rve = count_with_cashe!(reverse_complement(sequence), fmi, cashe)
-                    res[i, path.dist + 1] += (count + count_rve)
-                    if path.reducible != 0
-                        res[i, t[path.reducible].dist + 1] -= (count + count_rve)
-                    end
-                end
-            end
-        end
-    end
-    #close(ref)
-        
-    res = DataFrame(res, :auto)
-    col_d = [Symbol("D$i") for i in 0:distance]
-    rename!(res, col_d)
-    res.guide = guides
-    sort!(res, col_d)
-    return res
-end
-
-
-# https://mikael-salson.univ-lille.fr/talks/VST_010seed.pdf
-# TODO
-function search_fmiDB_lossless_seed(
-    fmidbdir::String, genomepath::String, 
-    guides::Vector{LongDNASeq}; detail::String = "", distance::Int = 3)
-
-    # 01*0 seed always exists when pattern is partitioned in at leasst distance + 2 parts
-    adj_seed_size = Int(floor(length(guides)/(distance + 2)))
-
-    gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
-    guides_ = copy(guides)
-    # reverse guides so that PAM is always on the left
-    pam = mpt.motif.fwd[mpt.motif.pam_loci_fwd]
-    if mpt.motif.extends5
-        guides_ = reverse.(guides_)
-        pam = reverse(pam)
-    end
-
-    pam = expand_ambiguous(pam)
-    no_pam = map(x -> templates_to_sequences(x, mpt; dist = distance), guides_)
-    # we need to add GGN in front and reverse for it to be forward sequence to search on the genome
-    # for reverse we need to complement
-
-    res = zeros(Int, length(guides_), mpt.motif.distance + 1)
-    #ref = open(genomepath, "r")
-    #reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
-
-    for (ic, chrom) in enumerate(dbi.gi.chrom)
-        fmi = load(joinpath(fmidbdir, chrom * ".bin"))
-        cashe = Dict{LongDNASeq, UnitRange{Int}}()
-        #seq = CRISPRofftargetHunter.getchromseq(dbi.gi.is_fa, reader[chrom])
         
         for pam_i in pam
             for (i, t) in enumerate(no_pam)

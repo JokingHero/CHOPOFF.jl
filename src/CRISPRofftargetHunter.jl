@@ -55,6 +55,7 @@ include("db_large_nohash.jl")
 include("db_vcf.jl")
 
 include("db_fmi.jl")
+include("db_fmi_lossless_seed.jl")
 
 
 export Motif # motif
@@ -69,6 +70,7 @@ export build_vcfDB, search_vcfDB # db_vcf
 export build_motifTemplates
 export build_motifDB, search_motifDB, build_fmiDB, search_fmiDB, search_fmiDB_raw
 export search_fmiDB_patterns, search_fmiDB_patterns_cashed
+export build_pamDB, search_pamDB
 
 
 ## Standalone binary generation
@@ -122,6 +124,9 @@ function parse_commandline(args::Array{String})
         "fmi"
             action = :command
             help = "Build FM-index of a genome"
+        "pamDB"
+            action = :command
+            help = "Build DB of PAMs of a genome"
         "template"
             action = :command
             help = "Build templates with specific Motif."
@@ -256,6 +261,13 @@ function parse_commandline(args::Array{String})
             required = true
     end
 
+    @add_arg_table! s["build"]["pamDB"] begin
+        "--fmidir"
+            help = "Path to the fmi directory. "
+            arg_type = String
+            required = true
+    end
+
     @add_arg_table! s["search"] begin
         "--distance"
             help = "Maximum edit distance to analyze. Must be less or equal to distance used when building db."
@@ -276,6 +288,14 @@ function parse_commandline(args::Array{String})
             help = "Path to the table with the template. You can build a template with 'build  template'"
             arg_type = String
             required = false
+        "--genome"
+            help = "Path to the genome."
+            arg_type = String
+            required = false
+        "--pamDB"
+            help = "Path to the file with pamDB. - Make with build_pamDB."
+            arg_type = String
+            required = false
         "database"
             help = "Path to the folder where the database is stored. Same as used when building."
             arg_type = String
@@ -294,6 +314,7 @@ function parse_commandline(args::Array{String})
                 x == "motifDB" ||
                 x == "fmi" ||
                 x == "template" ||
+                x == "pamDB" ||
                 x == "linearDB")
             required = true
         "guides"
@@ -343,6 +364,8 @@ function main(args::Array{String})
                 args["motifDB"]["prefix_length"])
         elseif args["%COMMAND%"] == "fmi"
             build_fmiDB(args["genome"], args["output"])
+        elseif args["%COMMAND%"] == "pamDB"
+            build_pamDB(args["fmidir"], motif; storagedir = joinpath(args["output"], args["name"] * ".bin"))
         elseif args["%COMMAND%"] == "compressedDB"
             build_compressedDB(args["name"], args["genome"], motif, args["output"], 
                 args["compressedDB"]["prefix_length"])
@@ -376,7 +399,7 @@ function main(args::Array{String})
             res = search_motifDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "fmi"
             template = load(args["template"])
-            res = search_fmiDB_patterns(args["database"], "", template, guides; distance = args["distance"])
+            res = search_fmiDB_patterns_cashed(args["database"], "", template, guides; distance = args["distance"])
         elseif args["type"] == "compressedDB"
             res = search_compressedDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "hashDB"
@@ -389,6 +412,8 @@ function main(args::Array{String})
             res = search_noHashDB(args["database"], guides)
         elseif args["type"] == "vcfDB"
             res = search_vcfDB(args["database"], guides)
+        elseif args["type"] == "pamDB"
+            res = search_pamDB(args["database"], args["genome"], args["pamDB"], guides)
         else
             throw("Unsupported database type.")
         end
