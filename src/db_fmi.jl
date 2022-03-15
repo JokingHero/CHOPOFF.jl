@@ -10,7 +10,7 @@ struct MotifPos
     chroms::Vector{<: Unsigned}
     pos::Vector{<: Unsigned}
     isplus::BitVector
-    sequences::Vector{UInt128} # large and potentially uneccessary suffixes
+    sequences::Vector{LongDNASeq} # large and potentially uneccessary suffixes
     ug::BitVector # bitvector encodes which guides positions share the same sequence!
     ug_count::Int
     bits::BitMatrix # columns are guides, rows are kmers
@@ -136,7 +136,6 @@ function build_motifDB(
 
         ug_count = length(loci_range)
         loci_range = convert(BitVector, loci_range)
-        guides = ThreadsX.map(x -> convert(UInt128, x), guides)
         save(
             MotifPos(
                 loci_chrom, loci_pos, loci_isplus, guides,
@@ -213,7 +212,7 @@ function search_prefix(
         if !isfinal[i]
             g_bits = guide_to_bitvector(gskipmers[i], sdb.bits, kmers)
             if any(g_bits)
-                offtargets = map(x -> LongDNASeq(x, suffix_len), sdb.sequences[g_bits])
+                offtargets = sdb.sequences[g_bits]
                 sdb_counts_g = sdb_counts[g_bits]
                 for (j, suffix) in enumerate(offtargets)
                     suffix_aln = suffix_align(suffix, prefix_aln[i])
