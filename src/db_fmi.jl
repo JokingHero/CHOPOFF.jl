@@ -111,7 +111,7 @@ function build_motifDB(
     # step 2
     @info "Step 2: Constructing per prefix db."
     # Iterate over all prefixes and merge different chromosomes
-    kmer_size = Int(floor(length_noPAM(motif) / (motif.distance + 2))) # lossless seed 01*0
+    kmer_size = Int(floor(length_noPAM(motif) / (motif.distance + 3))) # lossless seed 01*0 + 1
     kmers = LongDNASeq.(all_kmers(kmer_size))
     kmers = Dict(zip(kmers, 1:length(kmers)))
     @showprogress 60 for prefix in prefixes # can be paralelized here ?! memory?!
@@ -127,7 +127,7 @@ function build_motifDB(
         end
         rm(joinpath(storagedir, string(prefix)), recursive = true)
         (guides, loci_range, loci) = unique_guides(guides, loci)
-        guides_ = ThreadsX.map(x -> as_bitvector_of_kmers(prefix * x, kmers), guides)
+        guides_ = ThreadsX.map(x -> as_bitvector_of_kmers(x, kmers), guides) # only suffix part
         guides_ = hcat(guides_...) # as BitMatrix - columns are guides, rows are kmers
 
         loci_chrom = ThreadsX.map(x -> x.chrom, loci)
@@ -171,12 +171,12 @@ end
 
 
 
-function guide_to_bitvector(guide::Vector{LongDNASeq}, bits::BitMatrix, kmers::Dict{LongDNASeq, Int})
+function guide_to_bitvector(guide::Vector{LongDNASeq}, bits::BitMatrix, kmers::Dict{LongDNASeq, Int}, min_count::Int)
     in_guide = bits[kmers[guide[1]], :]
     for i in 2:length(guide)
         in_guide += bits[kmers[guide[i]], :]
     end
-    return in_guide .> 1 # lossless seed requiries at least two skipmers to be found
+    return in_guide .> min_count
 end
 
 
@@ -197,7 +197,8 @@ function search_prefix(
     end
 
     # prefix alignment against all the guides
-    suffix_len = length_noPAM(dbi.motif) + dbi.motif.distance - length(prefix)
+    prefix_len = length(prefix)
+    suffix_len = length_noPAM(dbi.motif) + dbi.motif.distance - prefix_len
     prefix_aln = Base.map(g -> prefix_align(g, prefix, suffix_len, dist), guides)
     isfinal = Base.map(x -> x.isfinal, prefix_aln)
 
@@ -205,12 +206,20 @@ function search_prefix(
         return res
     end
 
+    # what is the alignment score so far - how many distance is accumulated
+    row_min = Base.map(x -> minimum(x.v[prefix_len - 1, :]), prefix_aln)
+
     # if any of the guides requires further alignment
     sdb = load(joinpath(storagedir, string(prefix) * ".bin"))
     sdb_counts = bits_to_counts(sdb.ug, sdb.ug_count)
     for i in 1:length(guides)
         if !isfinal[i]
-            g_bits = guide_to_bitvector(gskipmers[i], sdb.bits, kmers)
+            # at maximum can be length(gskipmers[i])
+            # but that means
+            # some distance can be eaten by prefix -row_min[i]
+            # maximum allowed distance is dist
+            min_count = length(gskipmers[i]) - (dist - row_min[i])
+            g_bits = guide_to_bitvector(gskipmers[i], sdb.bits, kmers, min_count)
             if any(g_bits)
                 offtargets = sdb.sequences[g_bits]
                 sdb_counts_g = sdb_counts[g_bits]
@@ -270,7 +279,8 @@ function search_motifDB(
         guides_ = reverse.(guides_)
     end
 
-    gskipmers = ThreadsX.map(x -> collect(Set(as_skipkmers(x, sdb.kmer_size))), guides_)
+    prefix_len = length(first(sdb.prefixes))
+    gskipmers = ThreadsX.map(x -> collect(Set(as_skipkmers(x[(prefix_len + 1):end], sdb.kmer_size))), guides_)
     #res = zeros(Int, length(guides_), dist + 1)
     res = ThreadsX.mapreduce(p -> search_prefix(
         p, dist, sdb.dbi, dirname(detail), guides_, gskipmers, sdb.kmers, storagedir), +, sdb.prefixes)
