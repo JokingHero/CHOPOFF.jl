@@ -69,7 +69,7 @@ export build_noHashDB, search_noHashDB # db_large_nohash
 export build_vcfDB, search_vcfDB # db_vcf
 export build_motifTemplates
 export build_motifDB, search_motifDB, build_fmiDB, search_fmiDB, search_fmiDB_raw
-export search_fmiDB_patterns, search_fmiDB_patterns_cashed
+export search_fmiDB_patterns
 export build_pamDB, search_pamDB
 
 
@@ -399,7 +399,7 @@ function main(args::Array{String})
             res = search_motifDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "fmi"
             template = load(args["template"])
-            res = search_fmiDB_patterns_cashed(args["database"], "", template, guides; distance = args["distance"])
+            res = search_fmiDB_patterns(args["database"], "", template, guides; distance = args["distance"])
         elseif args["type"] == "compressedDB"
             res = search_compressedDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "hashDB"

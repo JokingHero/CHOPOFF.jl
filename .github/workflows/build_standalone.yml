@@ -29,7 +29,7 @@ jobs:
       - name: "Setup COH name"
         run: echo "coh_name=CRISPRofftargetHunter_v${{ env.coh }}-julia_v${{ env.jver }}_${{ matrix.julia-arch }}-${{ matrix.os }}" >> $GITHUB_ENV
       - name: "Build"
-        run: ./build_standalone.sh ${{ env.coh_name }}
+        run: ./build_standalone.sh --noprecompile
       - uses: actions/upload-artifact@v2
         with:
           name: ${{ env.coh_name }}

@@ -74,7 +74,6 @@ end
     pamDB_res = search_pamDB(fmi_path, genome, pamdbpath, guides; detail = "", distance = 3)
     template = CRISPRofftargetHunter.build_motifTemplates(Motif("Cas9"; distance = 2, ambig_max = 0))
     fmi_patterns = search_fmiDB_patterns(fmidbpath, "", template, guides; distance = 2)
-    fmi_cashed = search_fmiDB_patterns_cashed(fmidbpath, "", template, guides; distance = 2)
 
     @testset "vcfDB result is same as in saved file" begin
         ar_file = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
@@ -129,9 +128,7 @@ end
         template = CRISPRofftargetHunter.build_motifTemplates(motif_cas9)
         fmidbdir = build_fmiDB(genome, fmidb_path)
 
-        #fmidb_res = search_fmiDB_patterns(
-        #    fmidbdir, genome, template, guides; distance = dist)
-        fmidb_res = search_fmiDB_patterns_cashed(
+        fmidb_res = search_fmiDB_patterns(
             fmidbdir, genome, template, guides; distance = dist)
 
         @test nrow(fmidb_res) == length(guides)

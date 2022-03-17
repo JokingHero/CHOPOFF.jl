@@ -2,14 +2,13 @@ __precompile__()
 
 module FMIndexes
 
-using SuffixArrays
-#using WaveletMatrices # this is not on registry too ffs!
-include("WaveletMatrices.jl")
-using BioSequences
-using .WaveletMatrices
 using IndexableBitVectors
 using Humanize
 using Mmap
+using SuffixArrays
+#using WaveletMatrices # this is not on registry too ffs!
+include("WaveletMatrices.jl")
+using .WaveletMatrices
 
 include("saca.jl")
 
@@ -158,31 +157,6 @@ end
     return sp:ep
 end
 
-function sa_range!(query::LongDNASeq, index::FMIndex, cashe::Dict{LongDNASeq, UnitRange{Int}})
-    sp, ep = 1, (length(index) + 1)
-    cashe_val = sp:ep
-    i = length(query)
-    while !isnothing(cashe_val) && i ≥ 1
-        cashe_val = get(cashe, LongDNASeq(query[i:end]), nothing)
-        if !isnothing(cashe_val)
-            sp = cashe_val.start
-            ep = cashe_val.stop
-            i -= 1
-        end
-    end
-
-    # backward search
-    while sp ≤ ep && i ≥ 1
-        char = convert(UInt8, query[i])
-        c = index.count[char+1]
-        sp = c + rank(char, index.bwt, (sp > index.sentinel ? sp - 1 : sp) - 1) + 1
-        ep = c + rank(char, index.bwt, (ep > index.sentinel ? ep - 1 : ep))
-        cashe[LongDNASeq(query[i:end])] = sp:ep
-        i -= 1
-    end
-    return sp:ep
-end
-
 function sa_value(i::Int, index::FMIndex)
     if i == 1
         # point to the sentinel '$'
@@ -203,14 +177,6 @@ Count the number of occurrences of the given query.
 """
 function Base.count(query, index::FMIndex)
     return length(sa_range(query, index))
-end
-
-"""
-Count the number of occurrences of the given query.
-Use cashe. Update cashe with each iteration.
-"""
-function count_with_cashe!(query::LongDNASeq, index::FMIndex, cashe::Dict{LongDNASeq, UnitRange{Int}})
-    return length(sa_range!(query, index, cashe))
 end
 
 struct LocationIterator{w,T}
