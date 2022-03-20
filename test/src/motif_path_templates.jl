@@ -15,11 +15,11 @@ using CRISPRofftargetHunter
         @test length(pat) == 8
 
         ref = CRISPRofftargetHunter.comb_of_d1_extended_ref("AAAA")
-        ref = map(x -> CRISPRofftargetHunter.align(guide, LongDNASeq(x), dist), collect(ref))
+        ref = map(x -> CRISPRofftargetHunter.align(guide, LongDNA{4}(x), dist), collect(ref))
         function remove_gap(x::String)
             gaps = map(x -> x == '-', collect(x))
             x = collect(x)[.!gaps]
-            return LongDNASeq(join(x))
+            return LongDNA{4}(join(x))
         end
 
         ref = map(x -> remove_gap(x.ref), ref)

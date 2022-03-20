@@ -30,12 +30,13 @@ using VariantCallFormat
 using CodecZlib
 using PathDistribution
 
+include("utils.jl")
+
 include("FMidx/FMindexes.jl")
 using .FMIndexes
 include("sketches/bloom.jl")
 include("ambig_index.jl")
 
-include("utils.jl")
 include("persistence.jl")
 
 include("distance_metrics.jl")
@@ -390,7 +391,7 @@ function main(args::Array{String})
         end
     elseif args["%COMMAND%"] == "search"
         args = args["search"]
-        guides = LongDNASeq.(readlines(args["guides"]))
+        guides = LongDNA{4}.(readlines(args["guides"]))
         if args["type"] == "treeDB"
             res = search_treeDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "linearDB"

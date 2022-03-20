@@ -1,5 +1,5 @@
 struct Path
-    seq::LongDNASeq
+    seq::LongDNA{4}
     seq_len::Int
     dist::Int
     reducible::Int # index inside the outer vector linking to which 
@@ -102,7 +102,7 @@ end
 
 
 function templates_to_sequences(
-    guide::LongDNASeq, 
+    guide::LongDNA{4}, 
     template::CRISPRofftargetHunter.MotifPathTemplates;
     dist::Int = length(template) - 1)
 
@@ -130,9 +130,9 @@ function templates_to_sequences(
     ps = Vector{Path}()
     for di in 0:dist
         seq = ThreadsX.mapreduce(
-            x -> CRISPRofftargetHunter.expand_ambiguous(LongDNASeq(g_[x])), 
+            x -> CRISPRofftargetHunter.expand_ambiguous(LongDNA{4}(g_[x])), 
             vcat,
-            template.paths[di]; init = Vector{LongDNASeq}())
+            template.paths[di]; init = Vector{LongDNA{4}}())
         seq = ThreadsX.collect(Set(seq))
         append!(ps, ThreadsX.map(x -> Path(x, length(x), di, 0), seq))
     end

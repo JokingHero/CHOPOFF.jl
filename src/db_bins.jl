@@ -5,7 +5,7 @@ struct BinDB{T<:Unsigned}
 end
 
 
-function estimate(db::BinDB, guide::LongDNASeq)
+function estimate(db::BinDB, guide::LongDNA{4})
     for i in length(db.counts):-1:1
         if guide in db.bins[i]
             return db.counts[i]
@@ -16,7 +16,7 @@ end
 
 
 function estimate(db::BinDB, guide::String)
-    return estimate(db, LongDNASeq(guide))
+    return estimate(db, LongDNA{4}(guide))
 end
 
 
@@ -84,7 +84,7 @@ function build_binDB(
             real_count = max_count
         end
         idx = findfirst(x -> x == real_count, counts)
-        guide = LongDNASeq(guide, len_noPAM)
+        guide = LongDNA{4}(guide, len_noPAM)
         if isambig(guide)
             guide = expand_ambiguous(guide)
             for g in guide
@@ -103,7 +103,7 @@ function build_binDB(
     error = Vector{Int}()
     len_noPAM = length_noPAM(dbi.motif)
     for (guide, real_count) in dict
-        guide = LongDNASeq(guide, len_noPAM)
+        guide = LongDNA{4}(guide, len_noPAM)
         if iscertain(guide)
             est_count = estimate(db, guide)
             if real_count >= max_count
@@ -134,7 +134,7 @@ end
 """
 `search_binDB(
     storagedir::String,
-    guides::Vector{LongDNASeq})`
+    guides::Vector{LongDNA{4}})`
 
 Results are estimations of offtarget counts in the genome.
 
@@ -169,7 +169,7 @@ and therefore are overestimating extensively with increasing `distance`.
 """
 function search_binDB(
     storagedir::String,
-    guides::Vector{LongDNASeq})
+    guides::Vector{LongDNA{4}})
 
     if any(isambig.(guides))
         throw("Ambiguous bases are not allowed in guide queries.")

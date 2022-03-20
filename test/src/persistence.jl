@@ -8,7 +8,7 @@ using BioSequences
     @testset "load and save" begin
         struct TestSeq
             field::Bool
-            vec::Vector{LongDNASeq}
+            vec::Vector{LongDNA{4}}
         end
         
         tdir, io = mktemp()

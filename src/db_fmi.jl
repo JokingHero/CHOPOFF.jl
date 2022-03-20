@@ -1,8 +1,8 @@
 struct SeedDB
     dbi::DBInfo
-    prefixes::Set{LongDNASeq}
+    prefixes::Set{LongDNA{4}}
     kmer_size::Int
-    kmers::Dict{LongDNASeq, Int}
+    kmers::Dict{LongDNA{4}, Int}
 end
 
 
@@ -10,7 +10,7 @@ struct MotifPos
     chroms::Vector{<: Unsigned}
     pos::Vector{<: Unsigned}
     isplus::BitVector
-    sequences::Vector{LongDNASeq} # large and potentially uneccessary suffixes
+    sequences::Vector{LongDNA{4}} # large and potentially uneccessary suffixes
     ug::BitVector # bitvector encodes which guides positions share the same sequence!
     ug_count::Int
     bits::BitMatrix # columns are guides, rows are kmers
@@ -112,10 +112,10 @@ function build_motifDB(
     @info "Step 2: Constructing per prefix db."
     # Iterate over all prefixes and merge different chromosomes
     kmer_size = Int(floor(length_noPAM(motif) / (motif.distance + 3))) # lossless seed 01*0 + 1
-    kmers = LongDNASeq.(all_kmers(kmer_size))
+    kmers = all_kmers(kmer_size)
     kmers = Dict(zip(kmers, 1:length(kmers)))
     @showprogress 60 for prefix in prefixes # can be paralelized here ?! memory?!
-        guides = Vector{LongDNASeq}()
+        guides = Vector{LongDNA{4}}()
         loci = Vector{Loc}()
         for chrom in dbi.gi.chrom
             p = joinpath(storagedir, string(prefix), string(prefix) * "_" * chrom * ".bin")
@@ -171,7 +171,7 @@ end
 
 
 
-function guide_to_bitvector(guide::Vector{LongDNASeq}, bits::BitMatrix, kmers::Dict{LongDNASeq, Int}, min_count::Int)
+function guide_to_bitvector(guide::Vector{LongDNA{4}}, bits::BitMatrix, kmers::Dict{LongDNA{4}, Int}, min_count::Int)
     in_guide = bits[kmers[guide[1]], :]
     for i in 2:length(guide)
         in_guide += bits[kmers[guide[i]], :]
@@ -181,13 +181,13 @@ end
 
 
 function search_prefix(
-    prefix::LongDNASeq,
+    prefix::LongDNA{4},
     dist::Int,
     dbi::DBInfo,
     detail::String,
-    guides::Vector{LongDNASeq},
-    gskipmers::Vector{Vector{LongDNASeq}},
-    kmers::Dict{LongDNASeq, Int},
+    guides::Vector{LongDNA{4}},
+    gskipmers::Vector{Vector{LongDNA{4}}},
+    kmers::Dict{LongDNA{4}, Int},
     storagedir::String)
 
     res = zeros(Int, length(guides), dist + 1)
@@ -261,7 +261,7 @@ end
 
 function search_motifDB(
     storagedir::String, 
-    guides::Vector{LongDNASeq}, 
+    guides::Vector{LongDNA{4}}, 
     dist::Int = 4; 
     detail::String = "")
 
@@ -385,7 +385,7 @@ THIS FUNCTION IS BUGGED somewhere :( GL figuring this out
 "
 function search_fmiDB(
     fmidbdir::String, motifdbdir::String,
-    guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")
+    guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")
 
     mp = load(joinpath(motifdbdir, "motifDB.bin"))
     mp_counts = bits_to_counts(mp.ug, mp.ug_count)
@@ -501,7 +501,7 @@ end
 # NOT FINISHED!!!
 function search_fmiDB_raw(
     fmidbdir::String, genomepath::String, motif::Motif,
-    guides::Vector{LongDNASeq}; detail::String = "", prefix_length::Int = 10)
+    guides::Vector{LongDNA{4}}; detail::String = "", prefix_length::Int = 10)
 
     gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
     guides_ = copy(guides)
@@ -560,7 +560,7 @@ end
 # Working - but pattern, reduceability is to be improved - currently it is not precise!
 function search_fmiDB_patterns(
     fmidbdir::String, genomepath::String, mpt::MotifPathTemplates,
-    guides::Vector{LongDNASeq}; detail::String = "", distance::Int = 3)
+    guides::Vector{LongDNA{4}}; detail::String = "", distance::Int = 3)
 
     if distance > mpt.motif.distance
         throw("DIstance is too large for selected MotifPathTemplates. Max distance is" * 

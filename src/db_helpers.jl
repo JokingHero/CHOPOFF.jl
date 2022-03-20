@@ -38,8 +38,8 @@ Temporary structure that is build per chromosome, per prefix.
 Slow to save/load.
 "
 struct PrefixDB
-    prefix::LongDNASeq
-    suffix::Vector{LongDNASeq}
+    prefix::LongDNA{4}
+    suffix::Vector{LongDNA{4}}
     loci::Vector{Loc}
 end
 
@@ -52,10 +52,10 @@ CCN ... EXT
 function getExt3(chrom::K, chrom_max::Int, ext_start::Int, dist::Int) where K <: BioSequence
     ext_end = ext_start + dist - 1
     if ext_start > chrom_max
-        ext = LongDNASeq(repeat("-", dist))
+        ext = LongDNA{4}(repeat("-", dist))
     elseif ext_end > chrom_max
         ext = chrom[ext_start:chrom_max] 
-        ext = ext * LongDNASeq(repeat("-", dist - length(ext)))
+        ext = ext * LongDNA{4}(repeat("-", dist - length(ext)))
     else
         ext = chrom[ext_start:ext_end]
     end
@@ -70,10 +70,10 @@ EXT ... NGG
 function getExt5(chrom::K, ext_end::Int, dist::Int) where K <: BioSequence
     ext_start = ext_end - dist + 1
     if ext_end < 1
-        ext = LongDNASeq(repeat("-", dist))
+        ext = LongDNA{4}(repeat("-", dist))
     elseif ext_start < 1
         ext = chrom[1:ext_end]
-        ext = LongDNASeq(repeat("-", dist - length(ext))) * ext
+        ext = LongDNA{4}(repeat("-", dist - length(ext))) * ext
     else
         ext = chrom[ext_start:ext_end]
     end
@@ -82,7 +82,7 @@ end
 
 
 function add_extension(
-    guides::Vector{LongDNASeq},
+    guides::Vector{LongDNA{4}},
     guides_pos::Vector{UnitRange{Int64}},
     dbi::DBInfo,
     chrom::K,
@@ -111,7 +111,7 @@ end
 
 
 function normalize_to_PAMseqEXT(
-    guides::Vector{LongDNASeq},
+    guides::Vector{LongDNA{4}},
     guides_pos::Vector{UnitRange{Int64}},
     dbi::DBInfo,
     reverse_comp::Bool)

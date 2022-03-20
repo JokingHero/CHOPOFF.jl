@@ -6,7 +6,7 @@ safeadd(x::T, y::T) where {T} = ifelse(x + y ≥ x, x + y, typemax(T))
 Randomize sequence of length `n` from `letters`.
 "
 function getseq(n = 20, letters = ['A', 'C', 'G', 'T'])
-    return LongDNASeq(randstring(letters, n))
+    return LongDNA{4}(randstring(letters, n))
 end
 
 
@@ -98,17 +98,17 @@ function comb_of_d1(s::String, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
     end
     # for now we need this - suboptimal method
     #allcomb = collect(allcomb)
-    #dist = [levenshtein(LongDNASeq(s), LongDNASeq(x), 1) == 1 for x in allcomb]
+    #dist = [levenshtein(LongDNA{4}(s), LongDNA{4}(x), 1) == 1 for x in allcomb]
     return allcomb #[dist]
 end
 
 
 # this is only working for distance 1, and it ignores
 # bulges on the reference, as these can be also covered by mismatches 
-function comb_of_d1(s::LongDNASeq)
+function comb_of_d1(s::LongDNA{4})
     alphabet = [DNA_A, DNA_C, DNA_T, DNA_G] # we can't deal with ambig at this moment here
-    allcomb = Set{LongDNASeq}()
-    allcomb1 = Set{LongDNASeq}()
+    allcomb = Set{LongDNA{4}}()
+    allcomb1 = Set{LongDNA{4}}()
     for (i, si)  in enumerate(s)
         for ai in alphabet
             if isequal(si, ai) # skip a base and add all combinations
@@ -225,7 +225,7 @@ last position will match on the ref (which we don't know)
 
 d is assumed to be > 0
 "
-function is_within_d(s::LongDNASeq, x::LongDNASeq, d::Int)
+function is_within_d(s::LongDNA{4}, x::LongDNA{4}, d::Int)
     dist = levenshtein(s, x, d)
     if dist == d
         return 1
@@ -263,7 +263,7 @@ function comb_of_d(s::String, d::Int = 1, alphabet::Vector{Char} = ['A', 'C', 'T
     end
 
     comb = ThreadsX.collect(comb)
-    dist = ThreadsX.collect(is_within_d(LongDNASeq(s), LongDNASeq(x), d) for x in comb)
+    dist = ThreadsX.collect(is_within_d(LongDNA{4}(s), LongDNA{4}(x), d) for x in comb)
     return (comb[dist .== 1], comb[dist .== 2])
 end
 
@@ -300,10 +300,10 @@ Instead of this there is also BigMER!
 Transform DNA to UInt128, usefull for hashing, and space saving.
 We zero bits that are beyond sequence length. No clue why these bits are set.
 "
-function Base.convert(::Type{UInt128}, x::LongDNASeq)
+function Base.convert(::Type{UInt128}, x::LongDNA{4})
     gap_idx = findfirst(DNA_Gap, x)
     len = length(x)
-    x = BioSequences.encoded_data(x)
+    x = x.data
     if !isnothing(gap_idx)
         throw("DNA with gaps can't be converted!")
     end
@@ -320,9 +320,9 @@ end
 
 
 # Slow!
-@inline function Base.convert(::Type{LongDNASeq}, x::UInt128)
+@inline function Base.convert(::Type{LongDNA{4}}, x::UInt128)
     x = bitstring(x)
-    x_seq = LongDNASeq("")
+    x_seq = LongDNA{4}("")
     @inbounds for i in reverse(1:4:length(x))
         xi = reinterpret(DNA, parse(UInt8, x[i:i + 3]; base = 2))
         if xi != DNA_Gap
@@ -335,20 +335,58 @@ end
 end
 
 
-function Base.convert(::Type{UInt64}, x::LongDNASeq)
-    return BioSequences.encoded_data(DNAMer(x))
+function Base.convert(::Type{UInt64}, x::LongDNA{4})
+    # BioSequences.encoded_data(DNAMer(x))
+    x = LongDNA{2}(x)
+    if (length(x.data) > 1) 
+        throw("Sequence too long to save as UInt64.")
+    end
+
+    y = zero(UInt64)
+    for c in x
+        nt = convert(DNA, c)
+        if isambiguous(nt)
+            throw(ArgumentError("cannot create a mer with ambiguous nucleotides"))
+        elseif isgap(nt)
+            throw(ArgumentError("cannot create a mer with gaps"))
+        end
+        y = (y << 2) | UInt64(BioSequences.twobitnucs[reinterpret(UInt8, nt) + 0x01])
+    end
+
+    mask = (one(UInt64) << (2 * length(x))) - 1
+    return reinterpret(UInt64, y & mask) # encoded_data
 end
 
 
-@inline function BioSequences.LongDNASeq(x::UInt128, len::Int)
-    y = LongDNASeq(len)
-    y.data = [convert(UInt64, (x << 64) >> 64), convert(UInt64, x >> 64)]
-    return y
+# this is needed inside saca.jl
+# TODO make sure the queried sequences are from the same type
+# or conform to the same encoding as the reference
+# aka. I am pretty sure it won't work {2} vs {4}
+@inline function Base.convert(::Type{UInt8}, x::DNA)
+    return reinterpret(UInt8, x)
+end
+
+@inline function Base.convert(::Type{String}, x::BioSequence)
+    return String(x)
 end
 
 
-@inline function BioSequences.LongDNASeq(x::UInt64, len::Int)
-    return LongDNASeq(DNAMer{len}(x))
+@inline function BioSequences.LongDNA{4}(x::UInt128, len::Int)
+    data = [convert(UInt64, (x << 64) >> 64), convert(UInt64, x >> 64)]
+    return LongDNA{4}(data, UInt64(len))
+end
+
+
+@inline function BioSequences.LongDNA{4}(x::UInt64, len::Int)
+    y = []
+    for i in 1:len
+        push!(y, reinterpret(DNA, 0x01 << ((x >> 2(len - i)) & 0b11)))
+    end
+    
+    # LongDNA{4}(DNAMer{len}(x))
+    #return LongDNA{4}([nt for nt in x])
+    #return LongDNA{4}(LongDNA{2}([x], UInt64(len)))
+    return LongDNA{4}(y)
 end
 
 
@@ -359,12 +397,12 @@ end
 
 
 import BioSymbols.iscertain
-function BioSymbols.iscertain(x::LongDNASeq)
+function BioSymbols.iscertain(x::LongDNA{4})
     return all(iscertain.(x))
 end
 
 
-function isambig(x::LongDNASeq)
+function isambig(x::LongDNA{4})
     return !iscertain(x)
 end
 
@@ -411,12 +449,14 @@ const FROM_AMBIGUOUS = IdDict(
     )
 
 
-function expand_ambiguous(x::LongDNASeq)
+function expand_ambiguous(x::LongDNA{4})
     amb_dna = Vector{Vector{DNA}}()
     amb_idx = Vector{Int64}()
-    for (i, dna) in each(isambiguous, x)
-        push!(amb_idx, i)
-        push!(amb_dna, FROM_AMBIGUOUS[dna])
+    for (i, dna) in enumerate(x)
+        if isambiguous(dna)
+            push!(amb_idx, i)
+            push!(amb_dna, FROM_AMBIGUOUS[dna])
+        end
     end
     iter = Iterators.product(amb_dna...)
     res = [copy(x) for i in 1:length(iter)]
@@ -436,7 +476,7 @@ This simplistic strategy seems to compress around 50% more compared to
 super fast sort. Selection of the starting index does not seem to influence
 the compression greatly.
 "
-function order_by_hamming_and_prefix(guides::Vector{LongDNASeq}, i::Int64 = 1)
+function order_by_hamming_and_prefix(guides::Vector{LongDNA{4}}, i::Int64 = 1)
     guides_len = length(guides)
     final_order = zeros(Int64, guides_len)
     is_done = zeros(Bool, guides_len)
@@ -474,12 +514,12 @@ end
 
 function all_kmers(size = 4; alphabet = [DNA_A, DNA_C, DNA_G, DNA_T])
     iters = Iterators.product(ntuple(_ -> alphabet, size)...)
-    iters = DNAMer{size}.(collect(iters)[:])
+    iters = LongDNA{4}.(collect(iters)[:])
     return sort(iters)
 end
 
 
-function as_bitvector_of_kmers(x::LongDNASeq, kmers::Dict{LongDNASeq, Int})
+function as_bitvector_of_kmers(x::LongDNA{4}, kmers::Dict{LongDNA{4}, Int})
     BioSequences.ungap!(x)
     bits = zeros(length(kmers))
     kmer_size = length(first(first(kmers)))
@@ -498,8 +538,8 @@ function as_bitvector_of_kmers(x::LongDNASeq, kmers::Dict{LongDNASeq, Int})
 end
 
 
-function as_kmers(x::LongDNASeq, kmer_size::Int)
-    kmers = Vector{LongDNASeq}()
+function as_kmers(x::LongDNA{4}, kmer_size::Int)
+    kmers = Vector{LongDNA{4}}()
     for i in 1:(length(x) - kmer_size + 1)
         xi = x[i:(i + kmer_size - 1)]
         if iscertain(xi)
@@ -517,8 +557,8 @@ end
 
 # TODO what to do when there are leftovers after kmerizing?
 # I think we should simply add 1 more k-mer from the other side?
-function as_skipkmers(x::LongDNASeq, kmer_size::Int)
-    kmers = Vector{LongDNASeq}()
+function as_skipkmers(x::LongDNA{4}, kmer_size::Int)
+    kmers = Vector{LongDNA{4}}()
     for i in 1:kmer_size:(length(x) - kmer_size + 1)
         xi = x[i:(i + kmer_size - 1)]
         if iscertain(xi)

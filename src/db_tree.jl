@@ -6,7 +6,7 @@ to other Nodes that are inside and outside the
 radius.
 "
 struct Node
-    suffix::LongDNASeq
+    suffix::LongDNA{4}
     loci_idx::LociRange
     radius::UInt8
     inside::UInt32
@@ -19,14 +19,14 @@ Final SuffixVPtreeDB unit that contains all guides from
 all chromosomes that start with the `prefix` and their locations.
 "
 struct SuffixTreeDB
-    prefix::LongDNASeq
+    prefix::LongDNA{4}
     nodes::Vector{Node}
     loci::Vector{Loc}
 end
 
 
-function to_suffixtree(prefix::LongDNASeq, 
-    guides::Vector{LongDNASeq}, 
+function to_suffixtree(prefix::LongDNA{4}, 
+    guides::Vector{LongDNA{4}}, 
     loci::Vector{Loc}, ext::Int)
     
     (guides, loci_range, loci) = unique_guides(guides, loci)
@@ -88,7 +88,7 @@ end
 
 struct TreeDB
     dbi::DBInfo
-    prefixes::Set{LongDNASeq}
+    prefixes::Set{LongDNA{4}}
 end
 
 
@@ -140,7 +140,7 @@ function build_treeDB(
     # Iterate over all prefixes and merge different chromosomes
     i = 0
     for prefix in prefixes
-        guides = Vector{LongDNASeq}()
+        guides = Vector{LongDNA{4}}()
         loci = Vector{Loc}()
         for chrom in dbi.gi.chrom
             p = joinpath(storagedir, string(prefix), string(prefix) * "_" * chrom * ".bin")
@@ -165,11 +165,11 @@ end
 
 
 function search_prefixtree(
-    prefix::LongDNASeq,
+    prefix::LongDNA{4},
     dist::Int,
     dbi::DBInfo,
     detail::String,
-    guides::Vector{LongDNASeq},
+    guides::Vector{LongDNA{4}},
     storagedir::String)
     
     res = zeros(Int, length(guides), dist + 1)
@@ -241,7 +241,7 @@ end
 
 
 """
-`search_treeDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")`
+`search_treeDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")`
 
 Will search the previously build database for the off-targets of the `guides`. 
 Assumes your guides do not contain PAM, and are all in the same direction as 
@@ -265,7 +265,7 @@ files which will have same name as detail, but with a sequence prefix. Final fil
 will contain all those intermediate files. Leave `detail` empty if you are only 
 interested in off-target counts returned by the searchDB.
 """
-function search_treeDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")
+function search_treeDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")
     ldb = load(joinpath(storagedir, "treeDB.bin"))
     prefixes = collect(ldb.prefixes)
     if dist > length(first(prefixes)) || dist > ldb.dbi.motif.distance

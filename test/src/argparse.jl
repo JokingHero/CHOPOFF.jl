@@ -12,7 +12,7 @@ using BioSequences
         mkpath(tdir)
         genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", "test", "sample_data", "genome", "semirandom.fa")
         guides_s = "./sample_data/crispritz_results/guides.txt"
-        guides = LongDNASeq.(Set(readlines(guides_s)))
+        guides = LongDNA{4}.(Set(readlines(guides_s)))
 
         args = ["build", "--name", "test_hash", "--genome", genome, "--output", tdir, "--motif", "Cas9", 
             "--distance", "1", "--ambig_max", "0", "hashDB"]

@@ -203,7 +203,7 @@ using BioSequences
             #@show "$i $g $ref " * string(k[i]) * " " * string(prefix_len[i])
             aln = align(g, ref, k[i])
             if aln.dist <= k[i]
-                @test aln.dist == hamming(LongDNASeq(aln.guide), LongDNASeq(aln.ref), isequal)    
+                @test aln.dist == hamming(LongDNA{4}(aln.guide), LongDNA{4}(aln.ref), isequal)    
             end
             @test levenshtein(g, ref, k[i]) == aln.dist
             @test aln.dist == pa_sa(g, ref, k[i] + prefix_len[i], k[i]).dist
@@ -213,7 +213,7 @@ using BioSequences
 
     @testset "prefix_ and suffix_! alignment" begin
 
-        function mutate_suffix!(suffix::LongDNASeq, changes::Int = 3)
+        function mutate_suffix!(suffix::LongDNA{4}, changes::Int = 3)
             min = length(suffix)
             for i in changes
                 idx = Int(ceil(rand() * length(suffix)))

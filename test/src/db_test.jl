@@ -12,14 +12,14 @@ genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..",
     "test", "sample_data", "genome", "semirandom.fa")
 genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
 guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
-guides = LongDNASeq.(guides_s)
+guides = LongDNA{4}.(guides_s)
 nhdb="/home/ai/tests_hg38v34/db/noHashDB"
 #search_noHashDB(nhdb, guides)
 
 sdb = CRISPRofftargetHunter.load(joinpath(nhdb, "noHashDB.bin"))
 cidx = CRISPRofftargetHunter.ColumnIdx(sdb.guides, sdb.counts, 21)
 
-CRISPRofftargetHunter.findbits(cidx, LongDNASeq(sdb.guides[1], 21))
+CRISPRofftargetHunter.findbits(cidx, LongDNA{4}(sdb.guides[1], 21))
 
 
 =#
@@ -49,7 +49,7 @@ genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..",
     "test", "sample_data", "genome", "semirandom.fa")
 genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
 guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
-guides = LongDNASeq.(guides_s)
+guides = LongDNA{4}.(guides_s)
 tdir = tempname()
 mkpath(tdir)
 
@@ -61,7 +61,7 @@ build_noHashDB(
     nhdb_path)
 
 guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
-guides = LongDNASeq.(guides_s)
+guides = LongDNA{4}.(guides_s)
 
 search_noHashDB(nhdb_path, guides)
 =#
@@ -100,7 +100,7 @@ filter(x -> length(x) == 21, collect(i))
 s = dna"GAATGCGCCTATGGATGCGG"
 ext, bord1 = CRISPRofftargetHunter.comb_of_d1(s)
 norm, bord = CRISPRofftargetHunter.comb_of_d(string(s), 1)
-norm = Set(vcat(LongDNASeq.(norm), LongDNASeq.(bord)))
+norm = Set(vcat(LongDNA{4}.(norm), LongDNA{4}.(bord)))
 setdiff(ext, norm)
 
 norm = setdiff(norm, ext)

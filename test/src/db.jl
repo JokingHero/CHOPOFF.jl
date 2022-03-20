@@ -48,7 +48,7 @@ end
     genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
         "test", "sample_data", "genome", "semirandom.fa")
     guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
-    guides = LongDNASeq.(guides_s)
+    guides = LongDNA{4}.(guides_s)
     tdir = tempname()
     mkpath(tdir)
     # guide ACTCAATCATGTTTCCCGTC is on the border - depending on the motif definition
@@ -336,7 +336,7 @@ end
         error = Vector{Int}()
         len_noPAM = CRISPRofftargetHunter.length_noPAM(dDB.dbi.motif)
         for (key, value) in dDB.dict
-            key = LongDNASeq(key, len_noPAM)
+            key = LongDNA{4}(key, len_noPAM)
             if iscertain(key)
                 svalue = CRISPRofftargetHunter.estimate(bDB, key)
                 @test value <= svalue
@@ -377,7 +377,7 @@ end
         conflict = 0
         error = Vector{Int}()
         for (key, value) in dDB.dict
-            key = LongDNASeq(key, len_noPAM)
+            key = LongDNA{4}(key, len_noPAM)
             if iscertain(key)
                 svalue = CRISPRofftargetHunter.estimate(bDB, key)
                 @test value <= svalue

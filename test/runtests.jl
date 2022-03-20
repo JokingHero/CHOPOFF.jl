@@ -1,5 +1,6 @@
 # include all files in test/src directory
 using CRISPRofftargetHunter
+
 dir = joinpath(pkgdir(CRISPRofftargetHunter), "test", "src")
 files = readdir(dir)
 for f in files
@@ -7,3 +8,4 @@ for f in files
 end
 
 #include(joinpath(dir, "db_fmi.jl"))
+#include(joinpath(dir, "utils.jl"))

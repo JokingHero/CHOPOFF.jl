@@ -46,7 +46,7 @@ end
 
 function search_dictDB(
     storagedir::String,
-    guides::Vector{LongDNASeq},
+    guides::Vector{LongDNA{4}},
     dist::Int = 1)
 
     if any(isambig.(guides))
@@ -66,8 +66,8 @@ function search_dictDB(
         res[i, 1] += get(sdb.dict, convert(UInt128, s), 0) # 0 distance
         for d in 1:dist
             norm_d, border_d = comb_of_d(string(s), d)
-            norm_d_res = ThreadsX.sum(get(sdb.dict, convert(UInt128, LongDNASeq(sd)), 0) for sd in norm_d)
-            border_d_res = ThreadsX.sum(get(sdb.dict, convert(UInt128, LongDNASeq(sd)), 0) for sd in border_d)
+            norm_d_res = ThreadsX.sum(get(sdb.dict, convert(UInt128, LongDNA{4}(sd)), 0) for sd in norm_d)
+            border_d_res = ThreadsX.sum(get(sdb.dict, convert(UInt128, LongDNA{4}(sd)), 0) for sd in border_d)
             res[i, d + 1] = norm_d_res + border_d_res
             res[i, dist + d + 1] = norm_d_res
             res[i, dist * 2 + d + 1] = border_d_res

@@ -61,8 +61,8 @@ Motif('Cas9', 'NNNNNNNNNNNNNNNNNNNNXXX', 'XXXXXXXXXXXXXXXXXXXXNGG'. true, true, 
 """
 struct Motif
     alias::String
-    fwd::LongDNASeq
-    rve::LongDNASeq
+    fwd::LongDNA{4}
+    rve::LongDNA{4}
     pam_loci_fwd::UnitRange{<:Integer}
     pam_loci_rve::UnitRange{<:Integer}
     distance::Int
@@ -95,7 +95,7 @@ end
 "
 Removes PAM from the seq.
 "
-function removepam(seq::LongDNASeq, pam::UnitRange{<:Integer})
+function removepam(seq::LongDNA{4}, pam::UnitRange{<:Integer})
     x = copy(seq)
     deleteat!(x, pam)
     return x
@@ -114,18 +114,18 @@ function Motif(alias::String,
     if forward_strand
         # where is PAM located?
         pam_loci_fwd = findall(r"[^X]+", fwdpam)[1]
-        fwd = LongDNASeq(merge)
+        fwd = LongDNA{4}(merge)
     else
         pam_loci_fwd = UnitRange{Int64}()
-        fwd = LongDNASeq("")
+        fwd = LongDNA{4}("")
     end
 
     if reverse_strand
         pam_loci_rve = findall(r"[^X]+", reverse(fwdpam))[1]
-        rve = reverse_complement(LongDNASeq(merge))
+        rve = reverse_complement(LongDNA{4}(merge))
     else
         pam_loci_rve = UnitRange{Int64}()
-        rve = LongDNASeq("")
+        rve = LongDNA{4}("")
     end
 
     return Motif(alias, fwd, rve, pam_loci_fwd, pam_loci_rve, distance, extends5, ambig_max)

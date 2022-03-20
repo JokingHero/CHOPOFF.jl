@@ -14,7 +14,7 @@ genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..",
     "test", "sample_data", "genome", "semirandom.fa")
 #genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
 guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
-guides = LongDNASeq.(guides_s)
+guides = LongDNA{4}.(guides_s)
 
 motif = Motif("Cas9")
 tdir = tempname()

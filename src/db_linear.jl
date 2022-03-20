@@ -3,15 +3,15 @@ Final SuffixDB unit that contains all guides from
 all chromosomes that start with the `prefix` and their locations.
 "
 struct SuffixDB
-    prefix::LongDNASeq
-    suffix::Vector{LongDNASeq}
+    prefix::LongDNA{4}
+    suffix::Vector{LongDNA{4}}
     suffix_loci_idx::Vector{LociRange}
     loci::Vector{Loc}
 end
 
 
 function unique_guides(
-    guides::Vector{LongDNASeq}, 
+    guides::Vector{LongDNA{4}}, 
     loci::Vector{Loc})
     order = sortperm(guides)
     guides = guides[order]
@@ -23,7 +23,7 @@ end
 
 struct LinearDB
     dbi::DBInfo
-    prefixes::Set{LongDNASeq}
+    prefixes::Set{LongDNA{4}}
 end
 
 
@@ -75,7 +75,7 @@ function build_linearDB(
     @info "Step 2: Constructing per prefix db."
     # Iterate over all prefixes and merge different chromosomes
     ThreadsX.map(prefixes) do prefix
-        guides = Vector{LongDNASeq}()
+        guides = Vector{LongDNA{4}}()
         loci = Vector{Loc}()
         for chrom in dbi.gi.chrom
             p = joinpath(storagedir, string(prefix), string(prefix) * "_" * chrom * ".bin")
@@ -99,11 +99,11 @@ end
 
 
 function search_prefix(
-    prefix::LongDNASeq,
+    prefix::LongDNA{4},
     dist::Int,
     dbi::DBInfo,
     detail::String,
-    guides::Vector{LongDNASeq},
+    guides::Vector{LongDNA{4}},
     storagedir::String)
 
     res = zeros(Int, length(guides), dist + 1)
@@ -161,7 +161,7 @@ end
 
 
 """
-`search_linearDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")`
+`search_linearDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")`
 
 Will search the previously build database for the off-targets of the `guides`. 
 Assumes your guides do not contain PAM, and are all in the same direction as 
@@ -184,7 +184,7 @@ files which will have same name as detail, but with a sequence prefix. Final fil
 will contain all those intermediate files. Leave `detail` empty if you are only 
 interested in off-target counts returned by the linearDB.  
 """
-function search_linearDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")
+function search_linearDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")
     ldb = load(joinpath(storagedir, "linearDB.bin"))
     prefixes = collect(ldb.prefixes)
     if dist > length(first(prefixes)) || dist > ldb.dbi.motif.distance

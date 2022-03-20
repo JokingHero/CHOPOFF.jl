@@ -119,7 +119,7 @@ end
 """
 `search_hashDB(
     storagedir::String,
-    guides::Vector{LongDNASeq},
+    guides::Vector{LongDNA{4}},
     dist::Int = 1)`
 
 Results are estimations of offtarget counts in the genome.
@@ -155,7 +155,7 @@ and therefore are overestimating extensively with increasing `distance`.
 """
 function search_hashDB(
     storagedir::String,
-    guides::Vector{LongDNASeq},
+    guides::Vector{LongDNA{4}},
     right::Bool)
 
     if any(isambig.(guides))

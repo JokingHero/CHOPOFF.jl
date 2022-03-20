@@ -69,7 +69,7 @@ function Base.findall(pat::T, seq::T,
 end
 
 
-function strandedguide(guide::LongDNASeq, reverse_comp::Bool, extends5::Bool)
+function strandedguide(guide::LongDNA{4}, reverse_comp::Bool, extends5::Bool)
     if extends5 && reverse_comp
         # CCN ... EXT
         guide = complement(guide)
@@ -87,8 +87,8 @@ function strandedguide(guide::LongDNASeq, reverse_comp::Bool, extends5::Bool)
 end
 
 
-add_guides!(vec::Vector{String}, guides::Vector{LongDNASeq}) = append!(vec, string.(guides))
-add_guides!(vec::Vector{DNAMer{20}}, guides::Vector{LongDNASeq}) = append!(vec, DNAMer{20}.(guides))
+add_guides!(vec::Vector{String}, guides::Vector{LongDNA{4}}) = append!(vec, string.(guides))
+#add_guides!(vec::Vector{DNAMer{20}}, guides::Vector{LongDNA{4}}) = append!(vec, DNAMer{20}.(guides))
 add_guides!(vec::Vector{UInt128}, guides::Vector{UInt128}) = append!(vec, guides)
 add_guides!(vec::Vector{UInt64}, guides::Vector{UInt64}) = append!(vec, guides)
 
@@ -100,12 +100,12 @@ Guides do not contain PAM sequence here.
 "
 function pushguides!(
     output::T,
-    ambig::Vector{LongDNASeq},
+    ambig::Vector{LongDNA{4}},
     dbi::DBInfo,
     chrom::K,
     reverse_comp::Bool) where {
         T<:Union{
-            Vector{String}, Vector{DNAMer{20}},
+            Vector{String}, #Vector{DNAMer{20}},
             Vector{UInt128}, Vector{UInt64}}, 
         K<:BioSequence}
 
@@ -116,7 +116,7 @@ function pushguides!(
     if length(dbi.motif) != 0
         guides_pos = findguides(dbi, chrom, reverse_comp)
         guides = ThreadsX.map(guides_pos) do x 
-            guide = LongDNASeq(chrom[x])
+            guide = LongDNA{4}(chrom[x])
             guide = removepam(guide, pam_loci)
             return guide
         end
@@ -152,7 +152,7 @@ function gatherofftargets!(
 
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
-    ambig = Vector{LongDNASeq}()
+    ambig = Vector{LongDNA{4}}()
     for chrom_name in dbi.gi.chrom
         record = reader[chrom_name] # this is possible only with index!
         @info "Working on $chrom_name"
@@ -167,12 +167,12 @@ end
 
 
 function gatherofftargets(
-    seq::LongDNASeq,
+    seq::LongDNA{4},
     dbi::DBInfo)
 
     guides_pos_fwd = findguides(dbi, seq, false)
     guides_fwd = ThreadsX.map(guides_pos_fwd) do x 
-        guide = LongDNASeq(seq[x])
+        guide = LongDNA{4}(seq[x])
         guide = removepam(guide, dbi.motif.pam_loci_fwd)
         return guide
     end
@@ -182,7 +182,7 @@ function gatherofftargets(
 
     guides_pos_rve = findguides(dbi, seq, true)
     guides_rve = ThreadsX.map(guides_pos_rve) do x 
-        guide = LongDNASeq(seq[x])
+        guide = LongDNA{4}(seq[x])
         guide = removepam(guide, dbi.motif.pam_loci_rve)
         return guide
     end

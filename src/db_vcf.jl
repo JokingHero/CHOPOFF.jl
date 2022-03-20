@@ -14,7 +14,7 @@ function parse_vcf(vcf_filepath::String)
     rs_chroms = Vector{String}()
     rs_ref = Vector{String}()
     rs_ranges = Vector{UnitRange{Int64}}()
-    rs_alt = Vector{Vector{LongDNASeq}}()
+    rs_alt = Vector{Vector{LongDNA{4}}}()
     recordNum = 1
     for record in reader
         push!(rs_ids, isempty(record.id) ? Vector([string(recordNum)]) : VCF.id(record))
@@ -24,13 +24,13 @@ function parse_vcf(vcf_filepath::String)
         if  isempty(record.alt)
             push!(rs_alt, Vector([dna""]))
         else
-            r_alt = LongDNASeq.(VCF.alt(record))
+            r_alt = LongDNA{4}.(VCF.alt(record))
             # compress using ambiguity codes
             r_len = length.(r_alt)
-            r_alt_compr = Vector{LongDNASeq}()
+            r_alt_compr = Vector{LongDNA{4}}()
             for l in unique(r_len)
                 this_l = r_len .== l
-                li = LongDNASeq()
+                li = LongDNA{4}()
                 for i in 1:l
                     push!(li, TO_AMBIGUOUS[join(sort(getindex.(r_alt[this_l], i)))])
                 end
@@ -61,7 +61,7 @@ function build_vcfDB(
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
 
-    all_guides = Vector{LongDNASeq}()
+    all_guides = Vector{LongDNA{4}}()
     guide_annot = Vector{String}()
 
     for ch in unique(rs_chroms)
@@ -88,7 +88,7 @@ function build_vcfDB(
             if length(idxs) == 1 # simple case - singular snp - potentially many alternate alleles
                 idxs = idxs[1]
                 seq = chrom_seq[(rs_ranges[idxs].start - motif_len + 1):(rs_ranges[idxs].stop + motif_len)]
-                guides = Vector{LongDNASeq}()
+                guides = Vector{LongDNA{4}}()
                 for alt in rs_alt[idxs]
                     seq_alt = copy(seq)
                     seq_alt = seq_alt[1:(motif_len - 1)] * alt * seq_alt[(motif_len + length(rs_ref[idxs])):end - 1]
@@ -102,7 +102,7 @@ function build_vcfDB(
                 end
             else # complex case multiple overlapping snps, can have multiple alternate alleles
                 alt_combs = Iterators.product(rs_alt[idxs]...)
-                temp_guides = Vector{LongDNASeq}() # before aplying unique filter!
+                temp_guides = Vector{LongDNA{4}}() # before aplying unique filter!
                 temp_annot = Vector{String}()
                 # we need to track which regions belong to which snp
                 # and which guide overlaps which snps - 
@@ -169,7 +169,7 @@ end
 
 function search_vcfDB(
     storagedir::String,
-    guides::Vector{LongDNASeq})
+    guides::Vector{LongDNA{4}})
 
     db = load(joinpath(storagedir, "vcfDB.bin"))
     guides_ = copy(guides)
@@ -184,7 +184,7 @@ function search_vcfDB(
     for (i, s) in enumerate(guides_)
         res[i, 1] += sum(findbits(s, db.ambig))
         
-        d1_combs = LongDNASeq.(comb_of_d1_extended(string(s))) # 1 distance
+        d1_combs = LongDNA{4}.(comb_of_d1_extended(string(s))) # 1 distance
         bits_mapped = map(x -> findbits(x, db.ambig), d1_combs)
         res[i, 2] += sum(reduce(.|, bits_mapped))
     end

@@ -20,7 +20,7 @@ end
 
 
 "Find which guides are matched with the `seq`."
-function findbits(seq::LongDNASeq, cols::Vector{BitVector})
+function findbits(seq::LongDNA{4}, cols::Vector{BitVector})
     seq_len = length(seq) * 2
     seq = BitVector(digits(convert(UInt64, seq), base=2, pad=64) |> reverse)
     idx = BitVector(ones(Bool, length(cols[1])))
@@ -79,7 +79,7 @@ end
 
 function search_noHashDB(
     storagedir::String,
-    guides::Vector{LongDNASeq})
+    guides::Vector{LongDNA{4}})
 
     if any(isambig.(guides))
         throw("Ambiguous bases are not allowed in guide queries.")
@@ -100,7 +100,7 @@ function search_noHashDB(
         res[i, 1] += isnothing(sdb.ambig) ? 0 : sum(findbits(s, sdb.ambig))
         res[i, 1] += sum(sdb.counts[idx0]) # 0 distance
         
-        d1_combs = LongDNASeq.(comb_of_d1_extended(string(s))) # 1 distance
+        d1_combs = LongDNA{4}.(comb_of_d1_extended(string(s))) # 1 distance
         idx1 = reduce(.|, map(x -> findbits(x, sdb.guides), d1_combs))
         idx1 = idx1 .& .!idx0 # remove 0D index inside 1D indexes
         res[i, 2] = sum(sdb.counts[idx1])

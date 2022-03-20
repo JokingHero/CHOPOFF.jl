@@ -4,19 +4,19 @@ Final CSuffixDB unit that contains all guides from
 all chromosomes that start with the `prefix` and their locations.
 "
 struct CSuffixDB
-    prefix::LongDNASeq
+    prefix::LongDNA{4}
     #vcf expected max 5M
 
     # these are 1 to 1, guide to Loci
-    ambig_suffixes::Vector{LongDNASeq}
+    ambig_suffixes::Vector{LongDNA{4}}
     ambig_loci::Vector{Loc}
     
     # the ones that are repeated very often - around 10M max
-    overflow_suffixes::Vector{LongDNASeq}
+    overflow_suffixes::Vector{LongDNA{4}}
     overflow_loci_range::Vector{LociRange}
     overflow_loci::Vector{Loc}
 
-    suffix1::LongDNASeq
+    suffix1::LongDNA{4}
     n_changes::Vector{UInt8}
     changes::Vector{UInt8}
     suffix_loci_count::Vector{UInt8}
@@ -26,7 +26,7 @@ end
 
 struct CompactDB
     dbi::DBInfo
-    prefixes::Set{LongDNASeq}
+    prefixes::Set{LongDNA{4}}
 end
 
 
@@ -44,7 +44,7 @@ const SEQ_DIFF = vec(collect(Iterators.product(1:30, [DNA_A, DNA_C, DNA_G, DNA_T
 end
 
 
-@inline function next_suffix!(suffix::LongDNASeq, changes::Vector{UInt8})
+@inline function next_suffix!(suffix::LongDNA{4}, changes::Vector{UInt8})
     aln_start_idx = 1
     if length(changes) > 0
         aln_start_idx = first(SEQ_DIFF[changes[1]])
@@ -57,7 +57,7 @@ end
 end
 
 
-function guide_diff(p::LongDNASeq, n::LongDNASeq)
+function guide_diff(p::LongDNA{4}, n::LongDNA{4})
     diff = Vector{UInt8}()
     @inbounds for (i, g) in enumerate(p)
         if !iscompatible(g, n[i]) # TODO?!
@@ -68,7 +68,7 @@ function guide_diff(p::LongDNASeq, n::LongDNASeq)
 end
 
 
-function guide_changes(guides::Vector{LongDNASeq})
+function guide_changes(guides::Vector{LongDNA{4}})
     n_changes = zeros(UInt8, length(guides))
     changes = Vector{UInt8}()
     for i in 2:length(guides)
@@ -130,7 +130,7 @@ function build_compressedDB(
     @info "Step 2: Constructing per prefix compressedDB."
     # Iterate over all prefixes and merge different chromosomes
     @showprogress 60 for prefix in prefixes
-        guides = Vector{LongDNASeq}()
+        guides = Vector{LongDNA{4}}()
         loci = Vector{Loc}()
         for chrom in dbi.gi.chrom
             p = joinpath(storagedir, string(prefix), string(prefix) * "_" * chrom * ".bin")
@@ -183,7 +183,7 @@ end
 
 function write_detail(
     detail_file::IOStream, offtargets::Vector{T}, dbi::DBInfo, 
-    guide_stranded::LongDNASeq, aln_guide::String, 
+    guide_stranded::LongDNA{4}, aln_guide::String, 
     aln_ref::String, aln_dist::Int) where T <: Loc
     if dbi.motif.extends5
         guide_stranded = reverse(guide_stranded)
@@ -202,12 +202,12 @@ end
 function search_compact_prefix!(
     res::Matrix{Int64},
     is_early_stopped::Vector{Bool},
-    prefix::LongDNASeq,
+    prefix::LongDNA{4},
     dist::Int,
     early_stop::Vector{Int},
     dbi::DBInfo,
     detail::String,
-    guides::Vector{LongDNASeq},
+    guides::Vector{LongDNA{4}},
     storagedir::String)
 
     if detail != ""
@@ -307,7 +307,7 @@ end
 
 
 """
-`search_linearDB(storagedir::String, guides::Vector{LongDNASeq}, dist::Int = 4; detail::String = "")`
+`search_linearDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")`
 
 Will search the previously build database for the off-targets of the `guides`. 
 Assumes your guides do not contain PAM, and are all in the same direction as 
@@ -332,7 +332,7 @@ interested in off-target counts returned by the compressedDB.
 """
 function search_compressedDB(
     storagedir::String, 
-    guides::Vector{LongDNASeq}, 
+    guides::Vector{LongDNA{4}}, 
     dist::Int = 4,
     early_stop::Vector{Int} = repeat([250], dist + 1); 
     detail::String = "")

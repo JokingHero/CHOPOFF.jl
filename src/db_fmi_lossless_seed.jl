@@ -51,7 +51,7 @@ end
 # this takes only closest PAM upstream of the two seq - suboptimal? optimal?
 function search_pamDB(
     fmidbdir::String, genomepath::String, pamdbpath::String,
-    guides::Vector{LongDNASeq}; detail::String = "", distance::Int = 3)
+    guides::Vector{LongDNA{4}}; detail::String = "", distance::Int = 3)
 
     pamDB = CRISPRofftargetHunter.load(pamdbpath)
     if distance > pamDB.motif.distance

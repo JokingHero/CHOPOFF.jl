@@ -38,8 +38,7 @@ end
 "
 Hamming distance
 
-Using BioSequences is faster than other implementations. Using LongDNASeq is
-faster than DNAmer and allows for all IUPAC codes. This is faster than
+This is faster than
 pairalign(HammingDistance(), s, t)
 and faster than
 pairalign(EditDistance(), s3, t3, CostModel(match=0, mismatch=1, insertion=1, deletion=1))
@@ -79,7 +78,7 @@ Medium benchmark on random 20bp guide vs 24bp ref:
 
 Random.seed!(42)
 function getseq(N = 20, letters = ['A', 'C', 'G', 'T'])
-	return LongDNASeq(randstring(letters, N))
+	return LongDNA{4}(randstring(letters, N))
 end
 
 setSeq =(g=getseq();r=getseq(24))
@@ -617,7 +616,7 @@ end
 Created for testing purposes, performs prefix alignment followed
 by suffix alignment.
 "
-function pa_sa(guide::LongDNASeq, ref::LongDNASeq, d::Int, prefix_len::Int)
+function pa_sa(guide::LongDNA{4}, ref::LongDNA{4}, d::Int, prefix_len::Int)
     if prefix_len > length(guide)
         prefix_len = length(guide)
     end

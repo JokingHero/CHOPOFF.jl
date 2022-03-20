@@ -54,7 +54,7 @@ using Combinatorics
         all_comb = [join(x) for x in multiset_permutations(repeat(['A', 'C', 'T', 'G'], d), d)]
         for i in 1:iter
             seq = rand(all_comb)
-            all_comb_dist = [levenshtein(LongDNASeq(seq), LongDNASeq(x), 4) for x in all_comb]
+            all_comb_dist = [levenshtein(LongDNA{4}(seq), LongDNA{4}(x), 4) for x in all_comb]
             for dist in [0, 1, 2, 3]
                 all_comb_d = all_comb[all_comb_dist .== dist]
                 combd, combd_b = comb_of_d(seq, dist)
@@ -88,19 +88,33 @@ using Combinatorics
         @test isempty(findall(dna"AAANN", dna"ACTGAAANACTG"; ambig_max = 0))
     end
 
+    @testset "UInt64 conversion" begin
+        x = dna"AAAAAATGCTACTG"
+        @test LongDNA{4}(convert(UInt64, x), length(x)) == x
+        @test_throws BioSequences.EncodeError convert(UInt64, dna"A-A")
+        @test_throws String convert(UInt64, dna"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+
+        for i in 1:10000
+            for j in 1:32
+                x = getseq(ceil(Int, rand()*j), ['A', 'C', 'G', 'T'])
+                @test String(LongDNA{4}(convert(UInt64, x), length(x))) == String(copy(x))
+            end
+        end
+    end
+
     @testset "UInt128 conversion" begin
         x = dna"AAANRAAATGCTACTG"
         y = convert(UInt128, x)
-        @test x == convert(LongDNASeq, y)
-        x = LongDNASeq("GGAAATGCCCCGCGAACAGG")
-        @test convert(LongDNASeq, convert(UInt128, x)) == x
+        @test x == convert(LongDNA{4}, y)
+        x = LongDNA{4}("GGAAATGCCCCGCGAACAGG")
+        @test convert(LongDNA{4}, convert(UInt128, x)) == x
         @test_throws String convert(UInt128, dna"A-A")
         @test_throws String convert(UInt128, dna"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 
         for i in 1:10000
             x = getseq(ceil(Int, rand()*24), ['N', 'A', 'C', 'G', 'T'])
-            @test convert(LongDNASeq, convert(UInt128, x)) == x
-            @test LongDNASeq(convert(UInt128, x), length(x)) == x
+            @test convert(LongDNA{4}, convert(UInt128, x)) == x
+            @test LongDNA{4}(convert(UInt128, x), length(x)) == x
         end
     end
 
@@ -117,7 +131,7 @@ using Combinatorics
     end
 
     @testset "as_kmers" begin
-        @test first(as_kmers(LongDNASeq(repeat('A', 20)), 3)) == dna"AAA"
+        @test first(as_kmers(LongDNA{4}(repeat('A', 20)), 3)) == dna"AAA"
         @test isempty(setdiff(
             Set(as_kmers(dna"ACTGR", 4)), 
             Set([dna"ACTG", dna"CTGA", dna"CTGG"])))
@@ -127,13 +141,13 @@ using Combinatorics
     end
 
     @testset "as_bitvector_of_kmers" begin
-        kmers = LongDNASeq.(all_kmers(2))
+        kmers = all_kmers(2)
         kmers = Dict(zip(kmers, 1:length(kmers)))
         b = as_bitvector_of_kmers(dna"AAAAAA", kmers)
         @test sum(b) == 1
         @test b[kmers[dna"AA"]]
 
-        kmers = LongDNASeq.(all_kmers(3))
+        kmers = all_kmers(3)
         kmers = Dict(zip(kmers, 1:length(kmers)))
         b = as_bitvector_of_kmers(dna"ACTG", kmers)
         @test sum(b) == 2
