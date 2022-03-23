@@ -183,24 +183,6 @@ end
         hdb_path2)
     hdb_res2 = search_hashDB(hdb_path2, guides, false)
 
-    # make and run default noHashDB
-    nhdb_path = joinpath(tdir, "noHashDB")
-    mkpath(nhdb_path)
-    build_noHashDB(
-        "samirandom", genome, 
-        Motif("Cas9"; distance = 1, ambig_max = 0),
-        nhdb_path)
-    nhdb_res = search_noHashDB(nhdb_path, guides)
-
-    # noHashDB with ambig
-    nhdb_path2 = joinpath(tdir, "noHashDBambig")
-    mkpath(nhdb_path2)
-    build_noHashDB(
-        "samirandom", genome, 
-        Motif("Cas9"; distance = 1, ambig_max = 1),
-        nhdb_path2)
-    nhdb_res2 = search_noHashDB(nhdb_path2, guides)
-
     len_noPAM = CRISPRofftargetHunter.length_noPAM(Motif("Cas9"))
 
 
@@ -290,24 +272,6 @@ end
                 @info "Failed at guideS $i " * string(guides[i])
                 @info "linearDB result: " * string(ldb_res2[i, :])
                 @info "sketchDB result: " * string(hdb_res2[i, :])
-            end
-        end
-    end
-
-
-    @testset "linearDB vs noHashDB" begin
-        @test nrow(nhdb_res) == length(guides)
-        @test all(nhdb_res.guide .== guides)
-        @test all(ldb_res.guide .== guides)
-        ldb_res2 = Matrix(ldb_res[:, 1:2])
-        nhdb_res2 = Matrix(nhdb_res[:, 1:2])
-        for i in 2:length(guides) # we skip the first guide as we have different Motif definitions!
-            compare = ldb_res2[i, :] .== nhdb_res2[i, :]
-            @test all(compare)
-            if !all(compare)
-                @info "Failed at guideS $i " * string(guides[i])
-                @info "linearDB result: " * string(ldb_res2[i, :])
-                @info "noHashDB result: " * string(nhdb_res2[i, :])
             end
         end
     end

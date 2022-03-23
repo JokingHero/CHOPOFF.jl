@@ -52,7 +52,6 @@ include("db_compressed.jl")
 include("db_tree.jl")
 include("db_bins.jl")
 include("db_hash.jl")
-include("db_large_nohash.jl")
 include("db_vcf.jl")
 
 include("db_fmi.jl")
@@ -66,7 +65,6 @@ export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 export build_binDB, search_binDB # db_bins
 export build_hashDB, search_hashDB # db_hash
-export build_noHashDB, search_noHashDB # db_large_nohash
 export build_vcfDB, search_vcfDB # db_vcf
 export build_motifTemplates
 export build_motifDB, search_motifDB, build_fmiDB, search_fmiDB, search_fmiDB_raw
@@ -116,9 +114,6 @@ function parse_commandline(args::Array{String})
             action = :command
             help = "binDB is a binned bloom filter, it is very space efficient " * 
                 "and carries small error during estimations."
-        "noHashDB"
-            action = :command
-            help = "noHashDB is similar to dictDB, but more efficient at storage and matching."
         "vcfDB"
             action = :command
             help = "vcfDB is similar specialized database to handle .vcf files and personalized off-target search."
@@ -305,8 +300,7 @@ function parse_commandline(args::Array{String})
             help = "Type of the database: treeDB, sketchDB or linearDB."
             arg_type = String
             range_tester = (
-                x -> x == "noHashDB" || 
-                x == "vcfDB" || 
+                x -> x == "vcfDB" || 
                 x == "hashDB" || 
                 x == "compressedDB" || 
                 x == "binDB" || 
@@ -382,8 +376,6 @@ function main(args::Array{String})
             build_binDB(args["name"], args["genome"], motif, args["output"], 
                 probability_of_error = args["binDB"]["probability_of_error"]; 
                 max_count = args["binDB"]["max_count"])
-        elseif args["%COMMAND%"] == "noHashDB"
-            build_noHashDB(args["name"], args["genome"], motif, args["output"])
         elseif args["%COMMAND%"] == "vcfDB"
             build_vcfDB(args["name"], args["genome"], args["vcfDB"]["vcf"], motif, args["output"])
         else
@@ -409,8 +401,6 @@ function main(args::Array{String})
             res = search_dictDB(args["database"], guides, args["distance"])
         elseif args["type"] == "binDB"
             res = search_binDB(args["database"], guides)
-        elseif args["type"] == "noHashDB"
-            res = search_noHashDB(args["database"], guides)
         elseif args["type"] == "vcfDB"
             res = search_vcfDB(args["database"], guides)
         elseif args["type"] == "pamDB"

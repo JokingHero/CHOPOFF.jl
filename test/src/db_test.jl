@@ -52,18 +52,6 @@ guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
 guides = LongDNA{4}.(guides_s)
 tdir = tempname()
 mkpath(tdir)
-
-nhdb_path = joinpath(tdir, "noHashDB")
-mkpath(nhdb_path)
-build_noHashDB(
-    "samirandom", genome, 
-    Motif("Cas9"; distance = 1, ambig_max = 0), 
-    nhdb_path)
-
-guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
-guides = LongDNA{4}.(guides_s)
-
-search_noHashDB(nhdb_path, guides)
 =#
 
 #=

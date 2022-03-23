@@ -116,6 +116,24 @@ function build_hashDB(
 end
 
 
+"Find which guides are matched with the `seq`."
+function findbits(seq::LongDNA{4}, cols::Vector{BitVector})
+    seq_len = length(seq) * 2
+    seq = BitVector(digits(convert(UInt64, seq), base=2, pad=64) |> reverse)
+    idx = BitVector(ones(Bool, length(cols[1])))
+    j = 1
+    for i in seq_len:-1:1
+        if seq[65 - i] # is true
+            idx = idx .& cols[j]
+        else
+            idx = idx .& (.!cols[j])
+        end
+        j += 1
+    end
+    return idx
+end
+
+
 """
 `search_hashDB(
     storagedir::String,
