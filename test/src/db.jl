@@ -375,21 +375,4 @@ end
         failed = antijoin(ldb, tdb, on = [:guide, :distance, :chromosome, :start, :strand])
         @test nrow(failed) == 0
     end
-    
-
-    @testset "linearDB vs compressedDB" begin
-        cdb_path = joinpath(tdir, "compressedDB")
-        mkpath(cdb_path)
-        build_compressedDB("samirandom", genome, Motif("Cas9"), cdb_path, 7)
-
-        detail_path = joinpath(cdb_path, "detail.csv")
-        cdb_res = search_compressedDB(cdb_path, guides, 3; detail = detail_path)
-        cdb = DataFrame(CSV.File(detail_path))
-
-        @test nrow(cdb_res) == length(guides)
-        @test all(cdb_res.guide .== guides)
-        @test all(ldb_res.guide .== guides)
-        failed = antijoin(ldb, cdb, on = [:guide, :distance, :chromosome, :start, :strand])
-        @test nrow(failed) == 0
-    end
 end

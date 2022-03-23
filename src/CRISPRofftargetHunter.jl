@@ -48,7 +48,6 @@ include("find_offtargets.jl")
 include("db_helpers.jl")
 include("db_dict.jl")
 include("db_linear.jl")
-include("db_compressed.jl")
 include("db_tree.jl")
 include("db_bins.jl")
 include("db_hash.jl")
@@ -60,7 +59,6 @@ include("db_fmi_lossless_seed.jl")
 
 export Motif # motif
 export build_linearDB, search_linearDB # db_linear
-export build_compressedDB, search_compressedDB # db_compressed
 export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 export build_binDB, search_binDB # db_bins
@@ -101,9 +99,6 @@ function parse_commandline(args::Array{String})
         "motifDB"
             action = :command
             help = "motifDB utilizes prefixes to decrease search time, and also lossless seeds."
-        "compressedDB"
-            action = :command
-            help = "compressedDB utilizes previous guide alignment and focuses only on the differences between consecutive guides."
         "hashDB"
             action = :command
             help = "hashDB is extremally fast, but only estimates off-targets within distance of 1"
@@ -201,14 +196,6 @@ function parse_commandline(args::Array{String})
             default = 7
     end
 
-    @add_arg_table! s["build"]["compressedDB"] begin
-        "--prefix_length"
-        help = "Defines length of the prefix. " * 
-            "For each possible prefix there will be " *
-            "one linearDB instance."
-        arg_type = Int
-        default = 7
-    end
 
     @add_arg_table! s["build"]["hashDB"] begin
         "--max_count"
@@ -301,8 +288,7 @@ function parse_commandline(args::Array{String})
             arg_type = String
             range_tester = (
                 x -> x == "vcfDB" || 
-                x == "hashDB" || 
-                x == "compressedDB" || 
+                x == "hashDB" ||
                 x == "binDB" || 
                 x == "dictDB" || 
                 x == "treeDB" || 
@@ -361,9 +347,6 @@ function main(args::Array{String})
             build_fmiDB(args["genome"], args["output"])
         elseif args["%COMMAND%"] == "pamDB"
             build_pamDB(args["fmidir"], motif; storagedir = joinpath(args["output"], args["name"] * ".bin"))
-        elseif args["%COMMAND%"] == "compressedDB"
-            build_compressedDB(args["name"], args["genome"], motif, args["output"], 
-                args["compressedDB"]["prefix_length"])
         elseif args["%COMMAND%"] == "hashDB"
             build_hashDB(args["name"], args["genome"], motif, args["output"]; 
                 seed = args["hashDB"]["seed"], 
@@ -393,8 +376,6 @@ function main(args::Array{String})
         elseif args["type"] == "fmi"
             template = load(args["template"])
             res = search_fmiDB_patterns(args["database"], "", template, guides; distance = args["distance"])
-        elseif args["type"] == "compressedDB"
-            res = search_compressedDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "hashDB"
             res = search_hashDB(args["database"], guides, args["right"])
         elseif args["type"] == "dictDB"
