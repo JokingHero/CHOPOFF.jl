@@ -107,7 +107,7 @@ end
         ldb_res2 = Matrix(ldb_res)
         mdb_res2 = Matrix(mdb_res)
         for i in 1:length(guides)
-            compare = mdb_res2[i, 1:4] .<= ldb_res2[i, 1:4]
+            compare = mdb_res2[i, 1:4] .== ldb_res2[i, 1:4]
             @test all(compare)
             if !all(compare)
                 @info "Failed at guideS $i " * string(guides[i])
