@@ -1,9 +1,3 @@
-struct SeedDB
-    dbi::DBInfo
-    prefixes::Set{LongDNA{4}}
-    kmer_size::Int
-    kmers::Dict{LongDNA{4}, Int}
-end
 
 
 function build_fmiDB(

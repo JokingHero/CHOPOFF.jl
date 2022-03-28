@@ -9,6 +9,14 @@ struct MotifPos
 end
 
 
+struct SeedDB
+    dbi::DBInfo
+    prefixes::Set{LongDNA{4}}
+    kmer_size::Int
+    kmers::Dict{LongDNA{4}, Int}
+end
+
+
 function Base.convert(::Type{BitVector}, x::Vector{LociRange})
     x_ = BitVector()
     bitflip = true
@@ -55,7 +63,7 @@ function get_ug_ranges(bv::BitVector, idx::Int)
     while stop != len && val == bv[stop + 1]
         stop += 1
     end
-    return (start, stop)
+    return start:stop
 end
 
 
@@ -146,7 +154,7 @@ function guide_to_bitvector(guide::Vector{LongDNA{4}}, bits::BitMatrix, kmers::D
     for i in 2:length(guide)
         in_guide += bits[kmers[guide[i]], :]
     end
-    return in_guide .> min_count
+    return findall(in_guide .> min_count)
 end
 
 
@@ -190,16 +198,16 @@ function search_prefix(
             # maximum allowed distance is dist
             min_count = length(gskipmers[i]) - (dist - row_min[i])
             g_bits = guide_to_bitvector(gskipmers[i], sdb.bits, kmers, min_count)
-            if any(g_bits)
+            if length(g_bits) > 0
                 offtargets = sdb.sequences[g_bits]
                 sdb_counts_g = sdb_counts[g_bits]
                 for (j, suffix) in enumerate(offtargets)
                     suffix_aln = suffix_align(suffix, prefix_aln[i])
+
                     if suffix_aln.dist <= dist
                         res[i, suffix_aln.dist + 1] += sdb_counts_g[j]
+
                         if detail != ""
-                            #=
-                            offtargets = sdb.loci[sl_idx.start:sl_idx.stop]
                             if dbi.motif.extends5
                                 guide_stranded = reverse(prefix_aln[i].guide)
                                 aln_guide = reverse(suffix_aln.guide)
@@ -211,10 +219,19 @@ function search_prefix(
                             end
                             noloc = string(guide_stranded) * "," * aln_guide * "," * 
                                     aln_ref * "," * string(suffix_aln.dist) * ","
-                            for offt in offtargets
-                                write(detail_file, noloc * decode(offt, dbi) * "\n")
+
+                            for o in get_ug_ranges(sdb.ug, sum(sdb_counts[1:g_bits[j]]))
+                                strand = "-"
+                                if sdb.isplus[o]
+                                    strand = "+"
+                                end
+                                write(
+                                    detail_file, 
+                                    noloc * 
+                                    dbi.gi.chrom[sdb.chroms[o]] * "," * 
+                                    string(sdb.pos[o]) * "," * 
+                                    strand * "\n")
                             end
-                            =#
                         end
                     end
                 end

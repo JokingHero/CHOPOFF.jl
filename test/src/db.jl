@@ -84,38 +84,13 @@ end
         @test all(Matrix(vcf_res[:, 1:2]) == Matrix(ar[:, 1:2]))
     end
 
-    # make and run default linearDB
-    ldb_path = joinpath(tdir, "linearDB")
+    # make and run default motifDB
+    ldb_path = joinpath(tdir, "motifDB")
     mkpath(ldb_path)
-    build_linearDB("samirandom", genome, Motif("Cas9"), ldb_path, 7)
+    build_motifDB("samirandom", genome, Motif("Cas9"), ldb_path, 7)
     detail_path = joinpath(ldb_path, "detail.csv")
-    ldb_res = search_linearDB(ldb_path, guides, 3; detail = detail_path)
+    ldb_res = search_motifDB(ldb_path, guides, 3; detail = detail_path)
     ldb = DataFrame(CSV.File(detail_path))
-
-    @testset "linearDB vs motifDB" begin
-        mdb_path = joinpath(tdir, "motifDB")
-        mkpath(mdb_path)
-        build_motifDB("samirandom", genome, Motif("Cas9"), mdb_path, 7)
-
-        #detail_path = joinpath(tdb_path, "detail.csv")
-        mdb_res = search_motifDB(mdb_path, guides, 3)
-        #mdb = DataFrame(CSV.File(detail_path))
-
-        @test nrow(mdb_res) == length(guides)
-        @test all(mdb_res.guide .== guides)
-        @test all(mdb_res.guide .== guides)
-        ldb_res2 = Matrix(ldb_res)
-        mdb_res2 = Matrix(mdb_res)
-        for i in 1:length(guides)
-            compare = mdb_res2[i, 1:4] .== ldb_res2[i, 1:4]
-            @test all(compare)
-            if !all(compare)
-                @info "Failed at guideS $i " * string(guides[i])
-                @info "linearDB result: " * string(ldb_res2[i, :])
-                @info "motifDB result: " * string(mdb_res2[i, :])
-            end
-        end
-    end
 
     @testset "linearDB vs fmidx" begin
         dist = 2
@@ -142,7 +117,7 @@ end
             if !all(compare)
                 @info "Failed at guideS $i " * string(guides[i])
                 @info "linearDB result: " * string(ldb_res2[i, :])
-                @info "motifDB result: " * string(fmidb_res2[i, :])
+                @info "fmi result: " * string(fmidb_res2[i, :])
             end
         end
     end
@@ -372,6 +347,8 @@ end
         @test nrow(tdb_res) == length(guides)
         @test all(tdb_res.guide .== guides)
         @test all(ldb_res.guide .== guides)
+        @test Matrix(ldb_res[:, 1:4]) == Matrix(tdb_res[:, 1:4])
+
         failed = antijoin(ldb, tdb, on = [:guide, :distance, :chromosome, :start, :strand])
         @test nrow(failed) == 0
     end
