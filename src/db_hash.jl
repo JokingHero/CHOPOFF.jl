@@ -1,14 +1,14 @@
-struct HashDB{T<:Unsigned}
+struct HashDB{T<:Unsigned, K<:Union{UInt8, UInt16, UInt32}}
     dbi::DBInfo
-    bins_d0::Vector{BinaryFuseFilter{UInt8}}
+    bins_d0::Vector{BinaryFuseFilter{K}}
     counts_d0::Vector{T}
-    bins_d1::Vector{BinaryFuseFilter{UInt8}}
+    bins_d1::Vector{BinaryFuseFilter{K}}
     counts_d1::Vector{T}
     ambig::Union{AmbigIdx, Nothing}
 end
 
 
-function get_count_idx(bins::Vector{BinaryFuseFilter{UInt8}}, guide::UInt64, right::Bool)
+function get_count_idx(bins::Vector{BinaryFuseFilter{UInt16}}, guide::UInt64, right::Bool)
     direction = right ? (1:length(bins)) : (length(bins):-1:1)
     for i in direction
         if guide in bins[i]
@@ -27,13 +27,13 @@ function guides_to_bins(
     guides, counts = ranges(guides)
     counts = convert.(max_count_type, min.(length.(counts), max_count))
 
-    bins = Vector{BinaryFuseFilter{UInt8}}()
+    bins = Vector{BinaryFuseFilter{UInt16}}()
     bins_counts = Vector{max_count_type}()
     for count in 1:max_count
         idx = ThreadsX.findall(x -> x == count, counts)
         if length(idx) != 0
             push!(bins_counts, convert(max_count_type, count))
-            push!(bins, BinaryFuseFilter{UInt8}(guides[idx]; seed = seed, max_iterations = max_iterations))
+            push!(bins, BinaryFuseFilter{UInt16}(guides[idx]; seed = seed, max_iterations = max_iterations))
         end
     end
     # now order from smallest to largest
