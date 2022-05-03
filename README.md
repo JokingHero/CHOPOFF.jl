@@ -1,4 +1,4 @@
-[![Tests & Release](https://github.com/JokingHero/CRISPRofftargetHunter.jl/actions/workflows/build_standalone.yml/badge.svg?branch=master)](https://github.com/JokingHero/CRISPRofftargetHunter.jl/actions/workflows/build_standalone.yml)
+[![Tests & Release](https://github.com/JokingHero/CRISPRofftargetHunter.jl/actions/workflows/build_standalone.yml/badge.svg?branch=master)](https://github.com/JokingHero/CRISPRofftargetHunter.jl/releases/tag/latest)
 
 # CRISPRofftargetHunter  
 
@@ -11,6 +11,17 @@ of interest while allowing for arbitrary distance
 
 The goal is to make it fast and reliable.
 
+We provide methods that deal mainly with levenshtain distance (indels + mismatches), but FMI
+based index method can be also used for hamming distance (only mismatches).
+
+We support:
+- quick space efficient filter method to almost instantly pre-rank guides (hashDB, binDB)
+- personal genome off-target search (vcfDB)
+- motifDB - search off-targets within levenshtain distance quickly
+- fmiDB - search off-targets within hamming/levenshtain distance quickly for small distances (slowly for larger distances),
+ very elastic option supporting alternate PAMs with little overhead
+ - treeDB - vantage point solution similar to motifDB, but slower - use only as a method of cross-method verification of the guides to other methods
+
 ## TODO
 
 # Must do
@@ -20,7 +31,6 @@ The goal is to make it fast and reliable.
     * partially seed on the prefix and then + lossless seed?/alignment -> search_fmiDB_raw
 * improve motifDB with chunked lossless seed?
 * what is the probability that guide and off-target will be within certain distance, based only on some sort of transform of their letters - or rather figure out 0 probability in a fast way!
-
 
 * test small motifDB with UInt128, test cashe on hgv38!, test search_pamDB
 

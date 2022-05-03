@@ -170,6 +170,85 @@ function levenshtein(
 end
 
 
+# same as above but additionally
+# returns how many bases of the ref were NOT used!
+# how many bases of ref are left out! can be 0 - can be more than extension
+function levenshtein2(
+    guide::T,
+    ref::K,
+    k::Int = 4,
+    ismatch::Function = iscompatible) where {T <: BioSequence, K <: BioSequence}
+
+    len1, len2 = length(guide), length(ref)
+    # prefix common to both strings can be ignored
+    f = commonprefix(guide, ref, ismatch)
+    f == len1 && return 0, (len2 - len1)
+    guide, ref = guide[f+1:len1], ref[f+1:len2]
+    len1, len2 = len1 - f, len2 - f
+    if k > len2
+        k = len2
+    end
+
+    v = collect(1:len2)
+    v_min = len2
+    j_start_max = len2 - k
+    if !(j_start_max > 0)
+        j_start_max = 1
+    end
+    j_end = k
+
+    @inbounds for (i, ch1) in enumerate(guide)
+        # minimum v value for calculated rows - for early termination 
+        # when we are outside of k dist
+        v_min = len2
+
+        j_start = max(1, i - k)
+        if j_start > j_start_max
+            j_start = j_start_max
+        end
+        if j_end < len2
+            j_end += 1
+        end
+
+        top_left = j_start > 1 ? v[j_start - 1] : i - 1
+        left = i # this in first iteration is always i at best
+        @inbounds for j = j_start:j_end
+            # compute future above
+            current = top_left
+            if !ismatch(ch1, ref[j])
+                # mismatch when all options equal
+                if current < v[j]
+                    if current < left # mismatch
+                        current += 1
+                    else
+                        current = left + 1
+                    end
+                else
+                    if v[j] < left
+                        current = v[j] + 1
+                    else
+                        current = left + 1
+                    end
+                end
+            end
+
+            if current < v_min
+                v_min = current
+            end
+
+            top_left = v[j]
+            left = current
+            v[j] = current          
+        end
+        # we return v_min as we can "truncate" reference
+        # which means we are interested in the best alignment 
+        # for the lowest row
+        v_min > k && return k + 1, (len2 - findlast(isequal(v_min), v))
+    end
+    return v_min, (len2 - findlast(isequal(v_min), v))
+end
+
+
 # left topleft top
 @enum AlnPath ref_ nogap g_
 

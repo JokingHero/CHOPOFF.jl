@@ -105,15 +105,15 @@ using BioSequences
         # test gaps in the ref
         # AGGACC
         # TGG-CCAA
-        levenshtein(dna"AGGACC", dna"TGGCCAA", 4) == 2
+        @test levenshtein(dna"AGGACC", dna"TGGCCAA", 4) == 2
 
         # AGGACCT
         # TGG-CCAA
-        levenshtein(dna"AGGACCT", dna"TGGCCAA", 5) == 3
+        @test levenshtein(dna"AGGACCT", dna"TGGCCAA", 5) == 3
 
         # ACCC
         # -CCCGGG
-        levenshtein(dna"ACCC", dna"CCCGGG", 5) == 1
+        @test levenshtein(dna"ACCC", dna"CCCGGG", 5) == 1
 
         # random values tested with results from
         # pairalign(LevenshteinDistance(), s, t)

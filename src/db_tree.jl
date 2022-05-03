@@ -195,11 +195,17 @@ function search_prefixtree(
             queue = Vector{UInt32}([1])
             while length(queue) > 0
                 node = sdb.nodes[popfirst!(queue)]
-                dist_i = levenshtein(g, prefix * node.suffix, length(g)) # TODO adjust k, merge prefix-suffix in node?
+                # we only need to know whether to search inside/outside
+                dist_i, ref_left = levenshtein2(g, prefix * node.suffix, node.radius + dist)
+                ext = 0
+                if dbi.motif.distance > ref_left
+                    ext = dbi.motif.distance - ref_left
+                end
+
                 if dist_i <= dist
                     res[i, dist_i + 1] += length(node.loci_idx)
                     if detail != ""
-                        aln = align(g, prefix * node.suffix, length(g))
+                        aln = align(g, prefix * node.suffix, dist)
                         offtargets = sdb.loci[node.loci_idx.start:node.loci_idx.stop]
                         if dbi.motif.extends5
                             guide_stranded = reverse(g)
@@ -218,15 +224,13 @@ function search_prefixtree(
                     end
                 end
 
-                # * 2 is to account for the shifted guide 
-                # ACCTAATTTTGGGGGGTCGG--- 3 gaps next to PAM shift the reference guide
-                # ACCTAATTTTGGGGGGTCGGGGG
-                # perform more research on this - any strategy to circumvent this issue?
-                if (node.inside != 0) && ((dist_i - dist * 2) <= node.radius)
+                
+                # ext is not zero only when ext is used for alignment between VP and guide
+                if (node.inside != 0) && ((dist_i - dist - ext - 1) <= node.radius)
                     push!(queue, node.inside)
                 end
     
-                if (node.outside != 0) && ((dist_i + dist * 2) > node.radius)
+                if (node.outside != 0) && ((dist_i + dist + ext + 1) > node.radius)
                     push!(queue, node.outside)
                 end
             end
