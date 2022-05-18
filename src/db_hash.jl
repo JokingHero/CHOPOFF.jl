@@ -8,7 +8,7 @@ struct HashDB{T<:Unsigned, K<:Union{UInt8, UInt16, UInt32}}
 end
 
 
-function get_count_idx(bins::Vector{BinaryFuseFilter{UInt16}}, guide::UInt64, right::Bool)
+function get_count_idx(bins::Vector{BinaryFuseFilter{K}}, guide::UInt64, right::Bool) where K<:Union{UInt8, UInt16, UInt32} 
     direction = right ? (1:length(bins)) : (length(bins):-1:1)
     for i in direction
         if guide in bins[i]
@@ -20,20 +20,20 @@ end
 
 
 function guides_to_bins(
-    guides::Vector{UInt64}, seed::UInt64, max_iterations::Int, max_count::Int)
+    guides::Vector{UInt64}, seed::UInt64, max_iterations::Int, max_count::Int; precision::DataType = UInt16)
     max_count_type = smallestutype(unsigned(max_count))
     max_count = convert(max_count_type, max_count)
     guides = sort(guides)
     guides, counts = ranges(guides)
     counts = convert.(max_count_type, min.(length.(counts), max_count))
 
-    bins = Vector{BinaryFuseFilter{UInt16}}()
+    bins = Vector{BinaryFuseFilter{precision}}()
     bins_counts = Vector{max_count_type}()
     for count in 1:max_count
         idx = ThreadsX.findall(x -> x == count, counts)
         if length(idx) != 0
             push!(bins_counts, convert(max_count_type, count))
-            push!(bins, BinaryFuseFilter{UInt16}(guides[idx]; seed = seed, max_iterations = max_iterations))
+            push!(bins, BinaryFuseFilter{precision}(guides[idx]; seed = seed, max_iterations = max_iterations))
         end
     end
     # now order from smallest to largest
@@ -79,7 +79,8 @@ function build_hashDB(
     storagedir::String;
     seed::UInt64 = UInt64(0x726b2b9d438b9d4d),
     max_iterations::Int = 10,
-    max_count::Int = 10)
+    max_count::Int = 10,
+    precision::DataType = UInt16)
 
     dbi = DBInfo(genomepath, name, motif)
     if motif.distance != 1
@@ -94,12 +95,12 @@ function build_hashDB(
 
     # guides are here of length 21
     bins_d1, counts_d1, error_d1_right, error_d1_left = 
-        guides_to_bins(guides, seed, max_iterations, max_count)
+        guides_to_bins(guides, seed, max_iterations, max_count; precision = precision)
 
     # now D0
     guides = guides .>> 2 # removes extension
     bins_d0, counts_d0, error_d0_right, error_d0_left = 
-        guides_to_bins(guides, seed, max_iterations, max_count)
+        guides_to_bins(guides, seed, max_iterations, max_count; precision = precision)
 
     db = HashDB(dbi, bins_d0, counts_d0, bins_d1, counts_d1, ambig)
     save(db, joinpath(storagedir, "hashDB.bin"))

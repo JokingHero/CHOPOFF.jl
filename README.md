@@ -5,55 +5,25 @@
 
 ## About
 
-Julia package that allows to search for guideRNA off-targets within genome
-of interest while allowing for arbitrary distance
-(allows for insertions, deletions and mismatches).
+Julia framework for all work related to off-targets:
+* alignment alghoritms optimized for CRISPR
+* find quickly all off-targets on the arbitrairly large genomes, with arbitrary distances, and ambiogous bases support
+* VCF support - with multiple overlapping SNPs
+* near-instant alignment-free off-target filtering
+* pruning of off-targets by their location (remove overlapping, competing off-targets)
+* extensively tested
 
-The goal is to make it fast and reliable.
+We have chosen Julia because it is possible to quickly prototype new
+alghoritms and not compromise the speed, but also, Julia's syntax is python like and it is easy to jump right into coding.
 
-We provide methods that deal mainly with levenshtain distance (indels + mismatches), but FMI
-based index method can be also used for hamming distance (only mismatches).
+Documentation is available here.
 
-We support:
-- quick space efficient filter method to almost instantly pre-rank guides (hashDB, binDB)
-- personal genome off-target search (vcfDB)
-- motifDB - search off-targets within levenshtain distance quickly
-- fmiDB - search off-targets within hamming/levenshtain distance quickly for small distances (slowly for larger distances),
- very elastic option supporting alternate PAMs with little overhead
- - treeDB - vantage point solution similar to motifDB, but slower - use only as a method of cross-method verification of the guides to other methods
 
-## TODO
+## Requirements
 
-# Must do
+* Some of the alghoritms generate as many files as there are prefixes (e.g. for prefix 7 - this will make 4^7 - 16384) when using '--detail' option. This strategy allows us to operate the searches independently on multiple cores and not get throtled when querying large number of the guides. However, some systems have artificial limits on the number of open files, for example in ubuntu 'ulimit -n' will show the limit. Increase the limits, if it creates problems for you.
 
-* fmi index searches
-    * lossless seed  + indexed pam loci -> search_pamDB
-    * partially seed on the prefix and then + lossless seed?/alignment -> search_fmiDB_raw
-* improve motifDB with chunked lossless seed?
-* what is the probability that guide and off-target will be within certain distance, based only on some sort of transform of their letters - or rather figure out 0 probability in a fast way!
-
-* test small motifDB with UInt128, test cashe on hgv38!, test search_pamDB
-
-* add EARLY stopping!!! 
-* VCF support (5 d) 
-* Loci Range alternative where we have default value of just one UInt32, else we have UInt8/UInt16 as width! - will decrease the database sizes considerably because most of the guides are unique!
-
-* bloom filter paralelization?!
-* implement xor or ribbon filters with upgrade that allows 
-* prepare pipeline for benchmark of speed against hg38v34!!! (~1 week)
-* code review and cleanup (3 d)
-* test for EVERY function (2 d)
-* more guides for tests - currently we have 20 - we want large range of guides with different properties (1 d)
-* add tests for Cpf1 style PAMs (1 d)
-* add optimizations: @inbounds, @inline etc. (2 d)
-* more testing against CRISPRitz (2 d - 2 weeks)
-* publish code and package!
-* finish writing paper!!!
-
-# Maybe
-
-* paralelize binDB! sketchDB (aromic arrays of some sort)?
-* implement faster, non-recurent version of comb_of_d
+* When using many cores for building the indexes - you have to have around ~1GB of RAM per thread.
 
 
 ## License  

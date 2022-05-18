@@ -213,6 +213,14 @@ function parse_commandline(args::Array{String})
             help = "Initial seed for database build."
             arg_type = UInt64
             default = UInt64(0x726b2b9d438b9d4d)
+        "--precision"
+            help = "Whether to use UInt8, UInt16 or UInt32 to store the keys."
+            arg_type = String
+            range_tester = (
+                x -> x == "UInt8" || 
+                x == "UInt16" ||
+                x == "UInt32")
+            default = "UInt16"
     end
 
     @add_arg_table! s["build"]["dictDB"] begin
@@ -349,10 +357,16 @@ function main(args::Array{String})
         elseif args["%COMMAND%"] == "pamDB"
             build_pamDB(args["fmidir"], motif; storagedir = joinpath(args["output"], args["name"] * ".bin"))
         elseif args["%COMMAND%"] == "hashDB"
+            prec = UInt16
+            if args["hashDB"]["precision"] == "UInt8"
+                prec = UInt8
+            elseif args["hashDB"]["precision"] == "UInt32"
+                prec = UInt32
+            end
             build_hashDB(args["name"], args["genome"], motif, args["output"]; 
                 seed = args["hashDB"]["seed"], 
                 max_iterations = args["hashDB"]["max_iterations"],
-                max_count = args["hashDB"]["max_count"])
+                max_count = args["hashDB"]["max_count"], precision = prec)
         elseif args["%COMMAND%"] == "dictDB"
             build_dictDB(args["name"], args["genome"], motif, args["output"]; 
                 max_count = args["dictDB"]["max_count"])
@@ -378,6 +392,7 @@ function main(args::Array{String})
             template = load(args["template"])
             res = search_fmiDB_patterns(args["database"], "", template, guides; distance = args["distance"])
         elseif args["type"] == "hashDB"
+            @info "Right set as" * string(args["right"])
             res = search_hashDB(args["database"], guides, args["right"])
         elseif args["type"] == "dictDB"
             res = search_dictDB(args["database"], guides, args["distance"])

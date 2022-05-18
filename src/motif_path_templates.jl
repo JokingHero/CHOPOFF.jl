@@ -32,30 +32,13 @@ function remove_gap!(x::Vector{Int}, gap_idx::Int)
 end
 
 
-function build_motifTemplates(motif::Motif; storagepath::String = "")
-    len = length_noPAM(motif)
-    d = motif.distance
-
-    # guide + not guide + N + Gap
-    # 1:20    21:30       31  32
-    # 1:len   len+1:len*2 len*2 + 1, len*2 + 2
-
-    f_g = 1 # guide bases first
+function adj_matrix_of_guide(len::Int, d::Int; mismatch_only::Bool = false) 
     l_g = len * (d + 1) # guide bases last
     l_idm = l_g + (len - 1) * 3 * d #  all ins, del, mm last
 
-    adj = zeros(Bool, l_idm, l_idm)
-    ngp = repeat([len * 2 + 1, len * 2 + 2, len * 2 + 3], (len - 1) * d)
-    # replace noParents with proper links to noParents
-    for di in 1:d
-        for i in 1:(len - 1)
-            ngp[((len - 1) * (di - 1) * 3) + i * 3] = len + i 
-        end
-    end
-    adj_map_to_guide = vcat(repeat(f_g:len, d + 1), ngp)
-
     # fill up all connections
     # horizontal connections (between) guide bases
+    adj = zeros(Bool, l_idm, l_idm)
     for di in 1:(d + 1)
         for i in 1:(len-1)
             adj[len * (di - 1) + i, len * (di - 1) + i + 1] = 1
@@ -67,19 +50,43 @@ function build_motifTemplates(motif::Motif; storagepath::String = "")
             parent = len * (di - 1) + i
             parent_d_next = len * di + i
             n = l_g + (len - 1) * (di - 1) * 3 + (i - 1) * 3 + 1
-            # N
-            adj[parent, n] = 1
-            adj[n, parent_d_next] = 1
-            
-            # Gap
-            adj[parent, n + 1] = 1
-            adj[n + 1, parent_d_next + 1] = 1
+
+            if !mismatch_only
+                # N
+                adj[parent, n] = 1
+                adj[n, parent_d_next] = 1
+
+                # Gap
+                adj[parent, n + 1] = 1
+                adj[n + 1, parent_d_next + 1] = 1
+            end
 
             # notParent
             adj[parent, n + 2] = 1
             adj[n + 2, parent_d_next + 1] = 1
         end
     end
+    return adj
+end
+
+
+function build_motifTemplates(motif::Motif; storagepath::String = "", mismatch_only::Bool = false)
+    len = length_noPAM(motif)
+    d = motif.distance
+
+    # guide + not guide + N + Gap
+    # 1:20    21:30       31  32
+    # 1:len   len+1:len*2 len*2 + 1, len*2 + 2
+    adj = adj_matrix_of_guide(len, d; mismatch_only = mismatch_only)
+
+    ngp = repeat([len * 2 + 1, len * 2 + 2, len * 2 + 3], (len - 1) * d)
+    # replace noParents with proper links to noParents
+    for di in 1:d
+        for i in 1:(len - 1)
+            ngp[((len - 1) * (di - 1) * 3) + i * 3] = len + i 
+        end
+    end
+    adj_map_to_guide = vcat(repeat(1:len, d + 1), ngp)
 
     paths = IdDict{Int64, Vector{Vector{Int64}}}()
     gap_idx = len * 2 + 2
