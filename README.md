@@ -2,11 +2,10 @@
 
 # CRISPRofftargetHunter  
 
-
 ## About
 
-Julia framework for all work related to off-targets:
-* alignment alghoritms optimized for CRISPR
+Julia framework related to CRISPR off-targets:
+* fast alignment alghoritms optimized for CRISPR
 * find quickly all off-targets on the arbitrairly large genomes, with arbitrary distances, and ambiogous bases support
 * VCF support - with multiple overlapping SNPs
 * near-instant alignment-free off-target filtering
