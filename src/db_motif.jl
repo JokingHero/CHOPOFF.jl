@@ -154,7 +154,7 @@ function guide_to_bitvector(guide::Vector{LongDNA{4}}, bits::BitMatrix, kmers::D
     for i in 2:length(guide)
         in_guide += bits[kmers[guide[i]], :]
     end
-    return findall(in_guide .> min_count)
+    return findall(in_guide .>= min_count)
 end
 
 

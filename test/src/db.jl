@@ -84,12 +84,12 @@ end
         @test all(Matrix(vcf_res[:, 1:2]) == Matrix(ar[:, 1:2]))
     end
 
-    # make and run default motifDB
-    ldb_path = joinpath(tdir, "motifDB")
+    # make and run default linearDB
+    ldb_path = joinpath(tdir, "linearDB")
     mkpath(ldb_path)
-    build_motifDB("samirandom", genome, Motif("Cas9"), ldb_path, 7)
+    build_linearDB("samirandom", genome, Motif("Cas9"), ldb_path, 7)
     detail_path = joinpath(ldb_path, "detail.csv")
-    ldb_res = search_motifDB(ldb_path, guides, 3; detail = detail_path)
+    ldb_res = search_linearDB(ldb_path, guides, 3; detail = detail_path)
     ldb = DataFrame(CSV.File(detail_path))
 
     @testset "linearDB vs fmidx" begin
@@ -292,7 +292,7 @@ end
         end
     end
 
-    #=
+    
     @testset "hashDB vs dictDB" begin
         @test nrow(hdb_res) == nrow(ddb_res)
         @test all(hdb_res.guide .== guides)
@@ -300,7 +300,7 @@ end
         ddb_res2 = Matrix(ddb_res)
         hdb_res2 = Matrix(hdb_res)
         for i in 1:length(guides)
-            compare = ddb_res2[i, :] .<= hdb_res2[i, :]
+            compare = ddb_res2[i, 1:2] .<= hdb_res2[i, 1:2]
             # TODO fix this bug
             # @test all(compare)
             if !all(compare)
@@ -310,46 +310,60 @@ end
             end
         end
         
-        # Now check complete dictionary vs sketch
+        # Now check complete dictionary vs hashDB - never underestimate
         dDB = CRISPRofftargetHunter.load(joinpath(ddb_path, "dictDB.bin"))
         bDB = CRISPRofftargetHunter.load(joinpath(hdb_path, "hashDB.bin"))
-        conflict = 0
-        error = Vector{Int}()
         for (key, value) in dDB.dict
-            key = LongDNA{4}(key, len_noPAM)
+            key = LongDNA{4}(key, len_noPAM) # all same length - check with D0
             if iscertain(key)
-                svalue = CRISPRofftargetHunter.estimate(bDB, key)
+                # right false, means it can never underestimate
+                svalue = CRISPRofftargetHunter.get_count_idx(bDB.bins_d0, convert(UInt64, key), false)
                 @test value <= svalue
-                if svalue != value
-                    conflict += 1
-                    push!(error, svalue - value)
-                end
             end
         end
-        true_error_rate = conflict / length(dDB.dict)
-        @info "True error rate is: $true_error_rate"
-        if length(error) > 0
-            @info "Maximum error: " * string(maximum(error))
-        end
     end
-    =#
 
     
     @testset "linearDB vs treeDB" begin
         tdb_path = joinpath(tdir, "treeDB")
         mkpath(tdb_path)
         build_treeDB("samirandom", genome, Motif("Cas9"), tdb_path, 7)
-
         detail_path = joinpath(tdb_path, "detail.csv")
-        tdb_res = search_treeDB(tdb_path, guides, 3; detail = detail_path)
+
+        for d in 1:3
+            tdb_res = search_treeDB(tdb_path, guides, d; detail = detail_path)
+            tdb = DataFrame(CSV.File(detail_path))
+            @test nrow(tdb_res) == length(guides)
+            @test all(ldb_res.guide .== guides)
+            @test all(tdb_res.guide .== guides)
+            @test Matrix(ldb_res[:, 1:(d + 1)]) == Matrix(tdb_res[:, 1:(d + 1)])
+        end
+
+        # for final distance check also detail output
         tdb = DataFrame(CSV.File(detail_path))
-
-        @test nrow(tdb_res) == length(guides)
-        @test all(tdb_res.guide .== guides)
-        @test all(ldb_res.guide .== guides)
-        @test Matrix(ldb_res[:, 1:4]) == Matrix(tdb_res[:, 1:4])
-
         failed = antijoin(ldb, tdb, on = [:guide, :distance, :chromosome, :start, :strand])
+        @test nrow(failed) == 0
+    end
+
+
+    @testset "linearDB vs motifDB" begin
+        mdb_path = joinpath(tdir, "motifDB")
+        mkpath(mdb_path)
+        build_motifDB("samirandom", genome, Motif("Cas9"), mdb_path, 7)
+        detail_path = joinpath(mdb_path, "detail.csv")
+
+        for d in 1:3
+            mdb_res = search_motifDB(mdb_path, guides, d; detail = detail_path)
+            mdb = DataFrame(CSV.File(detail_path))
+            @test nrow(mdb_res) == length(guides)
+            @test all(ldb_res.guide .== guides)
+            @test all(mdb_res.guide .== guides)
+            @test Matrix(ldb_res[:, 1:(d + 1)]) == Matrix(mdb_res[:, 1:(d + 1)])
+        end
+
+        # for final distance check also detail output
+        mdb = DataFrame(CSV.File(detail_path))
+        failed = antijoin(ldb, mdb, on = [:guide, :distance, :chromosome, :start, :strand])
         @test nrow(failed) == 0
     end
 end
