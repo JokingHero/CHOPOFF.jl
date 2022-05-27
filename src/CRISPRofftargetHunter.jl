@@ -208,6 +208,10 @@ function parse_commandline(args::Array{String})
                 "one motifDB instance."
             arg_type = Int
             default = 7
+        "--skipmer_size"
+            help = "Defines length of skipmer. "
+            arg_type = Int
+            required = false
     end
 
 
@@ -301,6 +305,11 @@ function parse_commandline(args::Array{String})
             help = "Path to the file with pamDB. - Make with build_pamDB."
             arg_type = String
             required = false
+        "--adjust"
+            help = "Adjust parameter for motifDB."
+            arg_type = Int
+            default = 0
+            required = false
         "database"
             help = "Path to the folder where the database is stored. Same as used when building."
             arg_type = String
@@ -363,8 +372,11 @@ function main(args::Array{String})
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
                 args["linearDB"]["prefix_length"])
         elseif args["%COMMAND%"] == "motifDB"
+            if args["motifDB"]["skipmer_size"] === nothing
+                skipmer = Int(floor(length_noPAM(motif) / (motif.distance + 3)))
+            end
             build_motifDB(args["name"], args["genome"], motif, args["output"], 
-                args["motifDB"]["prefix_length"])
+                args["motifDB"]["prefix_length"]; skipmer_size = skipmer)
         elseif args["%COMMAND%"] == "fmi"
             build_fmiDB(args["genome"], args["output"])
         elseif args["%COMMAND%"] == "pamDB"
@@ -400,7 +412,9 @@ function main(args::Array{String})
         elseif args["type"] == "linearDB"
             res = search_linearDB(args["database"], guides, args["distance"]; detail = args["detail"])
         elseif args["type"] == "motifDB"
-            res = search_motifDB(args["database"], guides, args["distance"]; detail = args["detail"])
+            res = search_motifDB(
+                args["database"], guides, args["distance"]; 
+                detail = args["detail"], adjust = args["adjust"])
         elseif args["type"] == "fmi"
             template = load(args["template"])
             res = search_fmiDB_patterns(args["database"], "", template, guides; distance = args["distance"])
