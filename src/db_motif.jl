@@ -9,7 +9,7 @@ struct MotifPos
 end
 
 
-struct SeedDB
+struct MotifDB
     dbi::DBInfo
     prefixes::Set{LongDNA{4}}
     kmer_size::Int
@@ -88,12 +88,82 @@ function gatherofftargets(
 end
 
 
+"""
+```
+build_motifDB(
+    name::String,
+    genomepath::String,
+    motif::Motif,
+    storagedir::String,
+    prefix_len::Int = 7;
+    skipmer_size::Int = Int(floor(length_noPAM(motif) / (motif.distance + 3))))
+```
+
+Prepare motifDB index for future searches using `search_motifDB`.
+
+Will return a path to the database location, same as `storagedir`.
+When this database is used for the guide off-target scan it is similar 
+to `search_linearDB`, however additional filter is applied on top of 
+prefix filtering. Suffixes are used for next filter, similarly to 
+pidgeon hole principle - depending on the size of the skipkmer `skipkmer_size`.
+For example, Cas9 off-target within distance 4 (d) might be 20bp long.
+We skip `prefix_len` of 7, and are left with 13bp which can be split into 3 
+skipmers (r) of size 4, 1bp will be left unused. However when searching within 
+distance of 4 and for prefix where initial alignment was of distance 3 (m) and
+adjustment paramter is 0 (a). We are obliged to find at least **k - (d - m + a)** 
+which is **3 - (4 - 3 + 0) = 2** this many skimpers inside the off-targets. 
+
+There exist also another approach which builds on the idea that it might be more efficient
+to find at least two kmers of smaller size (named 01*0 seed) rather than one larger kmer 
+(pidgeon hole principle). You can use the `adjust` option for that during `search_linearDB` step.
+
+Be sure to understand implications of using `motifDB` as using wrong parameters 
+on `skipmer_size` might result in leaky filtering in relation to the asumed 
+distance `dist` and adjustment `adjust` during search step in `search_motifDB`.
+
+# Arguments
+
+`name` - Your prefered name for this index for easier identification.
+
+`genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
+               also prepare fasta index file with ".fai" extension.
+
+`motif`   - Motif deines what kind of gRNA to search for.
+
+`storagedir`  - Folder path to the where index will be saved with name `linearDB.bin` and many prefix files.
+
+`prefix_len`  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,
+                however it will also result in large number of files. 
+
+`skipmer_size` - Size of the skipmer as described above. Be carefull when setting this too large!
+
+# Examples
+```julia-repl
+# make a temporary directory
+tdir = tempname()
+mdb_path = joinpath(tdir, "motifDB")
+mkpath(mdb_path)
+
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        "test", "sample_data", "genome", "semirandom.fa"))
+
+# finally, build a motifDB
+build_motifDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 3, ambig_max = 0), 
+    mdb_path)
+```
+"""
 function build_motifDB(
     name::String,
     genomepath::String,
     motif::Motif,
     storagedir::String,
-    prefix_len = 7)
+    prefix_len::Int = 7;
+    skipmer_size::Int = Int(floor(length_noPAM(motif) / (motif.distance + 3))))
 
     dbi = CRISPRofftargetHunter.DBInfo(genomepath, name, motif)
 
@@ -111,8 +181,7 @@ function build_motifDB(
     # step 2
     @info "Step 2: Constructing per prefix db."
     # Iterate over all prefixes and merge different chromosomes
-    kmer_size = Int(floor(length_noPAM(motif) / (motif.distance + 3))) # lossless seed 01*0 + 1
-    kmers = all_kmers(kmer_size)
+    kmers = all_kmers(skipmer_size)
     kmers = Dict(zip(kmers, 1:length(kmers)))
     @showprogress 60 for prefix in prefixes # can be paralelized here ?! memory?!
         guides = Vector{LongDNA{4}}()
@@ -143,8 +212,8 @@ function build_motifDB(
             joinpath(storagedir, string(prefix) * ".bin"))
     end
 
-    save(SeedDB(dbi, prefixes, kmer_size, kmers), joinpath(storagedir, "seedDB.bin"))
-    @info "Finished constructing seedDB in " * storagedir
+    save(MotifDB(dbi, prefixes, skipmer_size, kmers), joinpath(storagedir, "motifDB.bin"))
+    @info "Finished constructing motifDB in " * storagedir
     return storagedir
 end
 
@@ -166,6 +235,7 @@ function search_prefix(
     guides::Vector{LongDNA{4}},
     gskipmers::Vector{Vector{LongDNA{4}}},
     kmers::Dict{LongDNA{4}, Int},
+    adjust::Int,
     storagedir::String)
 
     res = zeros(Int, length(guides), dist + 1)
@@ -196,7 +266,7 @@ function search_prefix(
             # but that means
             # some distance can be eaten by prefix -row_min[i]
             # maximum allowed distance is dist
-            min_count = length(gskipmers[i]) - (dist - row_min[i])
+            min_count = length(gskipmers[i]) - (dist - row_min[i] + adjust)
             g_bits = guide_to_bitvector(gskipmers[i], sdb.bits, kmers, min_count)
             if length(g_bits) > 0
                 offtargets = sdb.sequences[g_bits]
@@ -246,13 +316,84 @@ function search_prefix(
 end
 
 
+"""
+```
+search_motifDB(
+    storagedir::String, 
+    guides::Vector{LongDNA{4}}, 
+    dist::Int = 4; 
+    detail::String = "",
+    adjust::Int = 0)
+```
+
+Find all off-targets for `guides` within distance of `dist` using motifDB located at `storagedir`.
+
+Assumes your guides do not contain PAM, and are all in the same direction as 
+you would order from the lab e.g.:
+
+```
+5' - ...ACGTCATCG NGG - 3'  -> will be input: ...ACGTCATCG
+     guide        PAM
+    
+3' - CCN GGGCATGCT... - 5'  -> will be input: ...AGCATGCCC
+     PAM guide
+```
+
+# Arguments
+
+`dist` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
+which off-targets are considered.  
+
+`detail` - Path and name for the output file. This search will create intermediate 
+files which will have same name as detail, but with a sequence prefix. Final file
+will contain all those intermediate files. Leave `detail` empty if you are only 
+interested in off-target counts returned by the motifDB. 
+
+`adjust` - This will be crutial parameter for tightening second layer of filtering after, 
+the initial prefix alignment. For example, Cas9 off-target within distance 4 (d) might be 20bp long.
+We skip `prefix_len` of 7, and are left with 13bp which can be split into 3 skipmers (r) of size 4, 
+1bp will be left unused. However when searching within distance of 4 and for prefix where initial 
+alignment was of distance 3 (m) and adjustment paramter is 0 (a). We are obliged to find at least 
+`k - (d - m + a)` which is `3 - (4 - 3 + 0) = 2` this many skimpers inside the off-targets. 
+
+
+# Examples
+```julia-repl
+# make a temporary directory
+tdir = tempname()
+mdb_path = joinpath(tdir, "motifDB")
+mkpath(mdb_path)
+
+# use CRISPRofftargetHunter example genome
+coh_path = splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1]
+genome = joinpath(
+    vcat(
+        coh_path, 
+        "test", "sample_data", "genome", "semirandom.fa"))
+
+# build a motifDB
+build_motifDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 3, ambig_max = 0), 
+    mdb_path)
+
+# load up example gRNAs
+using BioSequences
+guides_s = Set(readlines(joinpath(vcat(coh_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides = LongDNA{4}.(guides_s)
+    
+# finally, get results!
+mdb_res = search_motifDB(mdb_path, guides, 3)
+```
+"""
 function search_motifDB(
     storagedir::String, 
     guides::Vector{LongDNA{4}}, 
     dist::Int = 4; 
-    detail::String = "")
+    detail::String = "",
+    adjust::Int = 0)
 
-    sdb = load(joinpath(storagedir, "seedDB.bin"))
+    sdb = load(joinpath(storagedir, "motifDB.bin"))
     if dist > sdb.dbi.motif.distance
         error("Maximum distance is " * string(sdb.dbi.motif.distance))
     end
@@ -270,7 +411,7 @@ function search_motifDB(
     gskipmers = ThreadsX.map(x -> collect(Set(as_skipkmers(x[(prefix_len + 1):end], sdb.kmer_size))), guides_)
     #res = zeros(Int, length(guides_), dist + 1)
     res = ThreadsX.mapreduce(p -> search_prefix(
-        p, dist, sdb.dbi, dirname(detail), guides_, gskipmers, sdb.kmers, storagedir), +, sdb.prefixes)
+        p, dist, sdb.dbi, dirname(detail), guides_, gskipmers, sdb.kmers, adjust, storagedir), +, sdb.prefixes)
     #for p in prefixes
     #    res += search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storagedir)
     #end

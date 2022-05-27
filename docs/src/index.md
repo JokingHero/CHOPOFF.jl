@@ -1,22 +1,57 @@
 # CRISPRofftargetHunter
 
-Software designed for efficient, precise and fast identification of all off-targets for given CRISPR guideRNA's. It leverages couple of alghoritms designed specifically for this purpose.
+## About
 
-CRISPRofftargetHunter is **extensively tested**:
+Julia framework related to CRISPR off-targets:
+* fast alignment alghoritms optimized for CRISPR
+* find quickly all off-targets on the arbitrairly large genomes, with arbitrary distances, and ambiogous bases support
+* VCF support - with multiple overlapping SNPs
+* near-instant alignment-free off-target filtering
+* pruning of off-targets by their location (remove overlapping, competing off-targets)
+* extensively tested
 
-* unit tests for each function
-* friction tests where three different implementations of the same functionality must report the same results
-* end-to-end tests where we run whole pipeline on specially designed sample genome and compare results with CRISPRitz software
+We have chosen Julia because it is possible to quickly prototype new
+alghoritms and not compromise the speed, but also, Julia's syntax is python like and it is easy to jump right into coding.
 
-CRISPRofftargetHunter is designed specifically for CRISPR alignments of guideRNA's, **allowing for deletions, insretions and mismatches**. Implemented alghoritms allow you to find off-targets within **distance as large as you want**!
+Documentation is available here.
 
-CRISPRofftargetHunter has an alghoritm (see: `build_sketchDB` and `search_sketchDB`) designed for **super fast estimation of number of off-targets** in the genome. These estimations can never report counts less than reality, but can only over-estimate! This can be used to quickly design libraries of guideRNA's for the entire genomes, as promising guides can be quickly sorted using CRISPRofftargetHunter.
 
-CRISPRofftargetHunter has **support for multiple-cores**, we use standard julia configuration for that.
+## Requirements
 
-## Citation
+* Some of the alghoritms generate as many files as there are prefixes (e.g. for prefix 7 - this will make 4^7 - 16384) when using '--detail' option. This strategy allows us to operate the searches independently on multiple cores and not get throtled when querying large number of the guides. However, some systems have artificial limits on the number of open files, for example in ubuntu 'ulimit -n' will show the limit. Increase the limits, if it creates problems for you.
 
-TODO
+* When using many cores for building the indexes - you have to have around ~1GB of RAM per thread.
+
+## Build application
+
+It is possible to build CRISPRofftargetHunter into standalone application - which includes all dependencies and Julia into one compiled software. This is **recommended** method for using of CRISPRofftargetHunter when you are not a developer. If you know how to code in Julia, you might make use of the whole framework using CRISPRofftargetHunter as a package.
+
+To build a standalone application run `./build_standalone.sh` script from the main directory. Script will
+produce binary in a new folder outside the main directory. Then you can run from inside that folder `./bin/CRISPRofftargetHunter --help`. To learn about possible indexes run `./bin/CRISPRofftargetHunter build --help` and to use existing index check out `./bin/CRISPRofftargetHunter search --help`. It is possible to skip testing + precompile step to speed up the build process with `./build_standalone.sh --noprecompile`.
+
+You can alternatively download latest release from the releases page on the github.
+
+When using application as self-contained, you can control number of cores by setting `JULIA_NUM_THREADS` environment variable.
+
+## No-build application
+
+Run CRISPRofftargetHunter as an **application without compilation**. From the directory of the package run:
+
+```bash
+julia --threads 4 --project="." ./src/CRISPRofftargetHunter.jl --help
+```
+
+## Quick Use
+
+If you would like to **filter** gRNAs to only those that are most likely off-target free you want to use `hashDB`. 
+
+For search of off-targets you have a couple of options:
+- `linearDB` - most rigorously tested
+- `treeDB` - will work best for very long gRNAs
+- `motifDB` - the fastest
+
+For VCF file support use `vcfDB`. 
+For use of the framework as a Julia package consult the documentation - Public Interface section.
 
 ## LICENSE
 
@@ -34,36 +69,3 @@ GNU Affero General Public License for more details.
 
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-## Self-contained build
-
-It is possible to build CRISPRofftargetHunter into standalone application.
-This can be achieved by running `./build_standalone.sh` script from the main directory. Script will
-produce binary in a new folder outside the main directory. Then you can run from inside that folder `./bin/CRISPRofftargetHunter --help` or `./bin/CRISPRofftargetHunter build --help`.
-
-## Main API
-
-Run CRISPRofftargetHunter as an application. From the directory of the package run:
-
-```bash
-julia --threads 4 --project="." CRISPRofftargetHunter.jl --help
-```
-
-## Example
-
-TODO
-
-## Public Interface
-
-You can also use CRISPRofftargetHunter as a normal julia package with the exported functions.
-
-```@docs
-Motif
-build_linearDB
-search_linearDB
-build_sketchDB
-search_sketchDB
-build_treeDB
-search_treeDB
-inspect_treeDB
-```

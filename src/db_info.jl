@@ -66,12 +66,7 @@ function GenomeInfo(filepath::String)
     return GenomeInfo(now(Dates.UTC), filepath, checksum, chrom, chrom_type, pos_type, is_fa)
 end
 
-"
-Contains basic information about the
-genome for which databases were indexed.
 
-vcf_filepath - path to the file with snp annotations, or ''
-"
 struct DBInfo
     name::String
     date::DateTime
@@ -80,16 +75,51 @@ struct DBInfo
     motif::Motif
 end
 
+
+"""
+`DBInfo(filepath::String, name::String, motif::Motif; vcf_filepath::String = "")`
+
+
+Motif defines what genome file is being used for searches.
+
+
+# Arguments
+`filepath` - Path to the genome file, if file is fasta (ends with .fa or .fasta or .fna) 
+make sure you also have fasta index file with extension .fai. Alternatively, you can use .2bit 
+genome file.  
+
+`name` - Your name for this instance of DBInfo: the genome with connection to the motif and vcf file.
+
+`motif`   - `Motif` object defining search parameters
+
+`vcf_filepath`  - Optional. Path to the VCF file to include in the searches.
+
+
+Alignments will be performed from opposite to the extension direction (which is deifned by extend5).
+
+# Examples
+```julia-repl
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        "test", "sample_data", "genome", "semirandom.fa"))
+# construct example DBInfo
+DBInfo(genome, "Cas9_semirandom_noVCF", Motif("Cas9"))
+```
+"""
 function DBInfo(filepath::String, name::String, motif::Motif; vcf_filepath::String = "")
     gi = GenomeInfo(filepath::String)
     return DBInfo(name, now(Dates.UTC), gi, vcf_filepath, motif)
 end
+
 
 struct Loc{T<:Unsigned,K<:Unsigned}
     chrom::T
     pos::K
     isplus::Bool
 end
+
 
 function decode(loc::Loc, dbi::DBInfo)
     strand = loc.isplus ? "+" : "-"

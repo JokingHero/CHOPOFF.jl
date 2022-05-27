@@ -105,8 +105,9 @@ function pushguides!(
     chrom::K,
     reverse_comp::Bool) where {
         T<:Union{
-            Vector{String}, #Vector{DNAMer{20}},
-            Vector{UInt128}, Vector{UInt64}}, 
+            Vector{String},
+            Vector{UInt128}, 
+            Vector{UInt64}}, 
         K<:BioSequence}
 
     pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
@@ -146,9 +147,35 @@ function pushguides!(
 end
 
 
+"""
+```
+gatherofftargets!(output::T, dbi::DBInfo) 
+    where {T<:Union{Vector{String}, Vector{UInt64}, Vector{UInt128}}}
+```
+
+Gathers all off-targets that conform to the given `dbi` Motif.
+
+This function appends to the `output` during the run, however it will also return all ambiguous 
+guides in return object. We use UInt64 and UInt128 to compress space that the gRNAs use. When using 
+large genomes or non-specific PAMs you might run out of memory when using this function.
+
+# Examples
+```julia-repl
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        "test", "sample_data", "genome", "semirandom.fa"))
+# construct example DBInfo
+dbi = DBInfo(genome, "Cas9_semirandom_noVCF", Motif("Cas9"))
+# finally gather all off-targets
+guides = Vector{String}()
+ambig = gatherofftargets!(guides, dbi)
+```
+"""
 function gatherofftargets!(
-    output::Any,
-    dbi::DBInfo)
+    output::T,
+    dbi::DBInfo) where {T<:Union{Vector{String}, Vector{UInt64}, Vector{UInt128}}}
 
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)

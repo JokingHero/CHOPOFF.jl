@@ -28,24 +28,59 @@ end
 
 
 """
-`build_linearDB(
+```
+build_linearDB(
     name::String,
     genomepath::String,
     motif::Motif,
     storagedir::String,
-    prefix_len::Int = 7)`
+    prefix_len::Int = 7)
+```
 
-Build a DB of offtargets for the given `motif`,
-DB groups off-targets by their prefixes.
+Prepare linearDB index for future searches using `search_linearDB`.
 
 Will return a path to the database location, same as `storagedir`.
 When this database is used for the guide off-target scan it is similar 
-to linear in performance, hence the name.
-
-There is an optimization that if the alignment becomes imposible against
+to linear in performance, hence the name. There is an optimization that 
+if the alignment becomes imposible against
 the prefix we don't search the off-targets grouped inside the prefix.
-Therefore it is advantageous to select larger prefix than maximum 
-search distance, however in that case number of files also grows.
+Therefore, it is advantageous to select much larger prefix than maximum 
+search distance, however in that case number of files also grows. For example,
+if interested with searches within distance 4, preferably use prefix length of 
+7 or 8.
+
+# Arguments
+`name` - Your prefered name for this index for easier identification.
+
+`genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
+               also prepare fasta index file with ".fai" extension.
+
+`motif`   - Motif deines what kind of gRNA to search for.
+
+`storagedir`  - Folder path to the where index will be saved with name `linearDB.bin` and many prefix files.
+
+`prefix_len`  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,
+                however it will also result in large number of files.
+
+# Examples
+```julia-repl
+# make a temporary directory
+tdir = tempname()
+ldb_path = joinpath(tdir, "linearDB")
+mkpath(ldb_path)
+
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        "test", "sample_data", "genome", "semirandom.fa"))
+
+# finally, build a linearDB
+build_linearDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 1, ambig_max = 0), 
+    ldb_path)
+```
 """
 function build_linearDB(
     name::String,
@@ -161,28 +196,65 @@ end
 
 
 """
-`search_linearDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")`
+```
+search_linearDB(
+    storagedir::String, 
+    guides::Vector{LongDNA{4}}, 
+    dist::Int = 4; 
+    detail::String = "")
+```
 
-Will search the previously build database for the off-targets of the `guides`. 
+Find all off-targets for `guides` within distance of `dist` using linearDB located at `storagedir`.
+
 Assumes your guides do not contain PAM, and are all in the same direction as 
 you would order from the lab e.g.:
 
-`
+```
 5' - ...ACGTCATCG NGG - 3'  -> will be input: ...ACGTCATCG
      guide        PAM
-
+    
 3' - CCN GGGCATGCT... - 5'  -> will be input: ...AGCATGCCC
      PAM guide
-`
+```
 
 # Arguments
 
-`dist` - defines maximum levenshtein distance (insertions, deletions, mismatches) for
+`dist` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
 which off-targets are considered.  
-`detail` - path and name for the output file. This search will create intermediate 
+
+`detail` - Path and name for the output file. This search will create intermediate 
 files which will have same name as detail, but with a sequence prefix. Final file
 will contain all those intermediate files. Leave `detail` empty if you are only 
-interested in off-target counts returned by the linearDB.  
+interested in off-target counts returned by the linearDB. 
+
+# Examples
+```julia-repl
+# make a temporary directory
+tdir = tempname()
+ldb_path = joinpath(tdir, "linearDB")
+mkpath(ldb_path)
+
+# use CRISPRofftargetHunter example genome
+coh_path = splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1]
+genome = joinpath(
+    vcat(
+        coh_path, 
+        "test", "sample_data", "genome", "semirandom.fa"))
+
+# build a linearDB
+build_linearDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 3, ambig_max = 0), 
+    ldb_path)
+
+# load up example gRNAs
+using BioSequences
+guides_s = Set(readlines(joinpath(vcat(coh_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides = LongDNA{4}.(guides_s)
+    
+# finally, get results!
+ldb_res = search_linearDB(ldb_path, guides, 3)
+```
 """
 function search_linearDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")
     ldb = load(joinpath(storagedir, "linearDB.bin"))

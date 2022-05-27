@@ -1,18 +1,21 @@
-"
-x contains all options of y
-or
-y contains all options of x
+"""
+`isinclusive(x::S, y::S) where {S<:BioSymbol}`
 
-e.g.
-N      , anything -> True
-W (A/T), R (A/G)  -> False
-W      , A        -> True
+Check whether `x` contains all options of `y` or `y` contains all options of `x`.
+Can be used as replacement in place of `BioSequences.iscompatible` or `BioSequences.isequal`.
 
-see also
+# Examples
+```jldoctest
+julia> isinclusive(DNA_N, DNA_A)
+true
 
-isequal
-iscompatible
-"
+julia> isinclusive(DNA_W, DNA_R) # W is (A/T), R is (A/G)
+false
+
+julia> isinclusive(DNA_W, DNA_A)
+true
+```
+"""
 @inline function isinclusive(x::S, y::S) where {S<:BioSymbol}
     if x == DNA_Gap || y == DNA_Gap 
         return false
@@ -35,64 +38,50 @@ end
 end
 
 
-"
-Hamming distance
+"""
+`hamming(s1::T, s2::K, ismatch = iscompatible) where {T <: BioSequence, K <: BioSequence}`
 
-This is faster than
-pairalign(HammingDistance(), s, t)
-and faster than
-pairalign(EditDistance(), s3, t3, CostModel(match=0, mismatch=1, insertion=1, deletion=1))
+Check Hamming distance between `s1` and `s2` using as matching definition `ismatch`.
+Should be faster than `pairalign(HammingDistance(), s1, s2)`. Make sure inputs are of the 
+same length.
 
-For all human genome we have 304794990 guides NGG, median hamming distance speed
-is 24e-9 seconds -> 7.3 second per query on full linear scan for all
-off-targets.
-"
+# Examples
+```jldoctest
+julia> hamming(dna"ACGC", dna"AWRC")
+1
+```
+"""
 function hamming(s1::T, s2::K, ismatch = iscompatible) where {T <: BioSequence, K <: BioSequence}
     return count(!ismatch, s1, s2)
 end
 
 
 """
-Levenshtein distance with a twist for guide + off-target comparisons.
-Keeps the triangle inequality principle with bounded by k maximum edit
-distance.
+```
+levenshtein(guide::T, ref::K, k::Int = 4,
+    ismatch::Function = iscompatible) where {T <: BioSequence, K <: BioSequence}
+```
 
-guide ATGA
-ref   A-GACCT
-Score: 1 (CCT as extension of the genomic reference
-does not count towards the score)
+Calculate Levenshtein distance bounded by `k` maximum edit distance with a twist for guide + off-target comparisons.
+    
+Levenshtein distance is the minimum number of operations (consisting of insertions, deletions,
+substitutions of a single character) required to change one string into the other.
+`guide` input seqeunce is a gRNA sequence, `ref` input is reference sequence with expansion on the 3'
+end of `k` bases. This extension will not count toward the score, if it is not covered with aligned guide.
+Return k + 1, if distance is higher than k and terminate early. This function should be 10x faster than
+`pairalign(LevenshteinDistance(), guide, ref, distance_only = true)`.
 
-guide ATGA--TCG
-ref   A-GAAATCGATG
-Score: 3 (ATG does not count)
+Notice that `guide` and `ref` have to be oriented towards left side e.g. PAM-guide, and PAM-offtarget-extension!
+Take a look at the examples below to understand why.
 
-Levenshtein distance is the minimum number of operations
-(consisting of insertions, deletions, substitutions of a single character)
-required to change one string into the other.
-Left input seqeunce is guide sequence, right input is reference sequence
-with expansion on the 3' end of max_dist bases. This extension will not
-count toward the score if it is not covered with aligned guide.
+# Examples
+```jldoctest
+julia> levenshtein(dna"ATGA", dna"AGACCT") # CCT as extension of the ref does not count towards the score in optimal alignment
+1
 
-Return k + 1 if distance higher than k and terminate early.
-Medium benchmark on random 20bp guide vs 24bp ref:
-
-Random.seed!(42)
-function getseq(N = 20, letters = ['A', 'C', 'G', 'T'])
-	return LongDNA{4}(randstring(letters, N))
-end
-
-setSeq =(g=getseq();r=getseq(24))
-m1 = median(@benchmark pairalign(LevenshteinDistance(), g, r, distance_only = true) setup=setSeq)
-m2 = median(@benchmark levenshtein(g, r) setup=setSeq)
-
-BenchmarkTools.TrialEstimate:
-  time:             225.705 ns
-  gctime:           0.000 ns (0.00%)
-  memory:           336 bytes
-  allocs:           3
-
-print(judge(m1, m2))
-TrialJudgement(+1126.73% => regression)
+julia> levenshtein(dna"ATGATCG", dna"AGAAATCGATG") # ATG does not count in optimal alignment ATG--ATCG/A-GAAATCG
+3
+```
 """
 function levenshtein(
     guide::T,
@@ -252,21 +241,52 @@ end
 # left topleft top
 @enum AlnPath ref_ nogap g_
 
+"""
+```
 struct Aln
-    # can contain "-"
+    guide::String
+    ref::String
+    dist::Int
+end
+```
+
+Simple data structure to hold information on the optimal alignment. Therefore `guide` and
+`ref` may contain `DNA_Gap` as these are aligned sequences. Function `align` returns this object.
+"""
+struct Aln
     guide::String
     ref::String
     dist::Int
 end
 
-"
-Same as above, BUT 
-v is along the guide, not the reference,
-large loop is along reference
-small loop along guide.
 
-Also return alignment.
-"
+"""
+```
+align(guide::T, ref::K, k::Int = 4,
+    ismatch::Function = iscompatible) where {T <: BioSequence, K <: BioSequence}
+```
+
+Calculate Levenshtein distance bounded by `k` maximum edit distance with a twist for guide + off-target comparisons, but
+return also the alignment as an `Align` object.
+
+Levenshtein distance is the minimum number of operations (consisting of insertions, deletions,
+substitutions of a single character) required to change one string into the other.
+`guide` input seqeunce is a gRNA sequence, `ref` input is reference sequence with expansion on the 3'
+end of `k` bases. This extension will not count toward the score, if it is not covered with aligned guide.
+Return k + 1, if distance is higher than k and terminate early.
+
+Notice that `guide` and `ref` have to be oriented towards left side e.g. PAM-guide, and PAM-offtarget-extension!
+Take a look at the examples below to understand why.
+
+# Examples
+```jldoctest
+julia> align(dna"ATGA", dna"AGACCT") # CCT as extension of the ref does not count towards the score in optimal alignment
+Aln("ATGA", "A-GA", 1)
+
+julia> align(dna"ATGATCG", dna"AGAAATCGATG") # ATG does not count
+Aln("ATG--ATCG", "A-GAAATCG", 3)
+```
+"""
 function align(
     guide::T,
     ref::K,

@@ -72,6 +72,65 @@ function guides_to_bins(
 end
 
 
+"""
+```
+build_hashDB(
+    name::String,
+    genomepath::String, 
+    motif::Motif,
+    storagedir::String;
+    seed::UInt64 = UInt64(0x726b2b9d438b9d4d),
+    max_iterations::Int = 10,
+    max_count::Int = 10,
+    precision::DataType = UInt16)
+```
+
+Prepare hashDB index for future searches using `search_hashDB`.
+
+
+# Arguments
+`name` - Your prefered name for this index for easier identification.
+
+`genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
+               also prepare fasta index file with ".fai" extension.
+
+`motif`   - Motif deines what kind of gRNA to search for.
+
+`storagedir`  - Folder path to the where index will be saved with name `hashDB.bin`.
+
+`seed`  - Optional. Seed is used during hashing for randomization.
+
+`max_iterations` - When finding hashing structure for binary fuse filter it might fail sometimes, 
+                   we will retry `max_iterations` number of times though.
+             
+`max_count`  - Above this count we put all unique off-targets into one bin. 
+               Put number here that is the minimum number of off-targets that you think is fine
+               for the distance of 1.
+                
+`precision`- The higher the precision the larger the database, but also chances for error decrease dramatically.
+             We support UInt8, UInt16, and UInt32.
+
+
+# Examples
+```julia-repl
+# make a temporary directory
+tdir = tempname()
+hdb_path = joinpath(tdir, "hashDB")
+mkpath(hdb_path)
+
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        "test", "sample_data", "genome", "semirandom.fa"))
+
+# finally, build a hashDB
+build_hashDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 1, ambig_max = 0), 
+    hdb_path)
+```
+"""
 function build_hashDB(
     name::String, 
     genomepath::String, 
@@ -136,41 +195,62 @@ end
 
 
 """
-`search_hashDB(
+```
+search_hashDB(
     storagedir::String,
     guides::Vector{LongDNA{4}},
-    dist::Int = 1)`
+    right::Bool)
+```
 
-Results are estimations of offtarget counts in the genome.
+Estimate off-target counts for `guides` using hashDB stored at `storagedir`.
 
-If CMS column is 0, it is guaranteed this guide has 
-no 0-distance off-targets in the genome!
+Probabilistic filter offers a guarantee that it will always be correct when a sequence 
+is in the set (no false negatives), but may overestimate that a sequence is in the set 
+while it is not (false positive) with low probability. If both columns in the results are 0, 
+it is guaranteed this gRNA has no off-targets in the genome!
 
 Also, maximum count for each off-target in the database is capped,
-to `max_count` specified during building of binsDB. This means 
-that counts larger than `max_count` (default 50) are no longer
-estimating correctly, but we know at least 50 off-targets exist in 
-the genome. Its likely you would not care for those guides anyhow.
+to `max_count` specified during building of hashDB. This means 
+that counts larger than `max_count` are no longer estimating correctly.
+Its likely you would not care for those guides anyhow.
 
-In principle, you can use `distance` of any size, but for each increasing distance value
-we have recurent solution that slows down significantly from distance 3 and upwards. These estimations
-should be used normally just as prefiltering step for the guideRNA's, therefore checking just distance 0,
-and distance 1 off-targets should be enough to rank the guides. For increasing distances partial errors in
-estimations are stacking and overwhelm real estimations quickly.
+`right` argument specifies whether the databse should be checked in direction from 
+unique off-targets which occur once to increasingly more occuring off-targets up until 
+`max_count` is reached, which may result in assuming lower than real off-target counts 
+(underestimate) for some of the sequences, however this approach will not reject any 
+gRNAs that should not be rejected and is suitable for filtering of gRNAs we do not need. 
+Left (`right = false`, or hight-counts to low-counts) approach is also supported, 
+which can be used for ordering of gRNAs to the best of database ability. 
+Left approach may overestimate counts for some gRNAs. When gRNA is reported as 
+off-target free it is also guaranteed to be true in both cases (low-to-high and high-to-low).
 
-## Result
+# Examples
+```julia-repl
+# prepare libs
+using CRISPRofftargetHunter, BioSequences
 
-Returns .csv table with the following columns:
+# make a temporary directory
+tdir = tempname()
+hdb_path = joinpath(tdir, "hashDB")
+mkpath(hdb_path)
 
-D0, D1 ... D`distance` - these are estimated counts of off-targets for given guideRNA, 
-each column for increasing `distance`, these is also a sum of the corresponding DN and DB columns
+# use CRISPRofftargetHunter example genome
+coh_path = splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1]
+genome = joinpath(vcat(coh_path, "test", "sample_data", "genome", "semirandom.fa"))
 
-DN1, DN2, ... DN`distance`- these values are estimated counts of off-targets for given guideRNA,
-each column for increasing `distance`, but these values are for guaranteed "within" distance off-targets
+# build a hashDB
+build_hashDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 1, ambig_max = 0), 
+    hdb_path)
 
-DB1, DB2, ... DB`distance` - same as above, but these values are representing "borderline cases" where 
-genomic extension is not known and only asummed the worse case. These values are assuming worst case, 
-and therefore are overestimating extensively with increasing `distance`.
+# load up example gRNAs
+guides_s = Set(readlines(joinpath(vcat(coh_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides = LongDNA{4}.(guides_s)
+
+# finally, get results!
+hdb_res = search_hashDB(hdb_path, guides, false)
+```
 """
 function search_hashDB(
     storagedir::String,

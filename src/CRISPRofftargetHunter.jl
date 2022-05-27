@@ -57,8 +57,21 @@ include("db_vcf.jl")
 include("db_fmi.jl")
 include("db_fmi_lossless_seed.jl")
 
+export Motif, length_noPAM, length, setambig, setdist # motif
+export save, load # persistence
+export minkmersize, getseq, expand_ambiguous, all_kmers, as_kmers, as_skipkmers # utils
+# export AmbigIdx, findbits # ambig_index
+export DBInfo # db_info
+export gatherofftargets!, gatherofftargets # find_offtargets
+export isinclusive, hamming, levenshtein, Aln, align # distance_metrics
 
-export Motif # motif
+# TODO
+# 1. describe other methods - finish docs
+# 2. add size of the kmer to motifDB - optimization for distance 4 and distance 3
+# 2. decide what to do with the FM-index stuff
+# 3. Fix hashes to use the latest indexing?
+# 4. Figure out status of VCF?!
+
 export build_linearDB, search_linearDB # db_linear
 export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree

@@ -1,13 +1,15 @@
 """
-`Motif(
-    alias::String,
+```
+Motif(
+    alias::String, 
     fwdmotif::String, 
     fwdpam::String, 
     forward_strand::Bool = true, 
     reverse_strand::Bool = true, 
     distance::Int = 4, 
     extends5::Bool = true,
-    ambig_max::Int = 5)`
+    ambig_max::Int = 5)
+```
 
 `Motif(alias::String)`
 
@@ -54,9 +56,12 @@ Example for Cas9 where we want to search for off-targets within distance of 4:
 Alignments will be performed from opposite to the extension direction (which is deifned by extend5).
 
 # Examples
-```julia-repl
-Motif('Cas9')
-Motif('Cas9', 'NNNNNNNNNNNNNNNNNNNNXXX', 'XXXXXXXXXXXXXXXXXXXXNGG'. true, true, 3, true, 5)
+```jldoctest
+julia> Motif("Cas9")
+Motif("Cas9", NNNNNNNNNNNNNNNNNNNNNGG, CCNNNNNNNNNNNNNNNNNNNNN, 21:23, 1:3, 3, true, 0)
+
+julia> Motif("test name", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 3, true, 5)
+Motif("test name", NNNNNNNNNNNNNNNNNNNNNGG, CCNNNNNNNNNNNNNNNNNNNNN, 21:23, 1:3, 3, true, 5)
 ```
 """
 struct Motif
@@ -132,10 +137,18 @@ function Motif(alias::String,
 end
 
 
-"
+"""
+`length_noPAM(motif::Motif)`
+
 Calculate what is the length of the motif, with extension, but without PAM.
 Effectively, size of the off-target on the genome.
-"
+
+# Examples
+```jldoctest
+julia> length_noPAM(Motif("Cas9"))
+20
+```
+"""
 function length_noPAM(motif::Motif)
     fwd_len = length(motif.fwd) - length(motif.pam_loci_fwd)
     rve_len = length(motif.rve) - length(motif.pam_loci_rve)
@@ -143,11 +156,33 @@ function length_noPAM(motif::Motif)
 end
 
 
+"""
+`length(motif::Motif)`
+
+Length of the motif, with extension, and with PAM.
+
+# Examples
+```jldoctest
+julia> length(Motif("Cas9"))
+23
+```
+"""
 function length(motif::Motif)
     return max(length(motif.fwd), length(motif.rve))
 end
 
 
+"""
+`setambig(motif::Motif, ambig::Int)`
+
+Set the ambiguity (how many ambigous bases are allowed) level for `motif`.
+
+# Examples
+```jldoctest
+julia> setambig(Motif("Cas9"), 15)
+Motif("Cas9", NNNNNNNNNNNNNNNNNNNNNGG, CCNNNNNNNNNNNNNNNNNNNNN, 21:23, 1:3, 3, true, 15)
+```
+"""
 function setambig(motif::Motif, ambig::Int)
     return Motif(motif.alias, motif.fwd, motif.rve, 
         motif.pam_loci_fwd, motif.pam_loci_rve, 
@@ -155,44 +190,23 @@ function setambig(motif::Motif, ambig::Int)
 end
 
 
+"""
+`setdist(motif::Motif, distance::Int)`
+
+Set the distance (maximum value of allowed mismatches, deletion, insertions) 
+that are allowed during alignment.
+
+# Examples
+```jldoctest
+julia> setdist(Motif("Cas9"), 15)
+Motif("Cas9", NNNNNNNNNNNNNNNNNNNNNGG, CCNNNNNNNNNNNNNNNNNNNNN, 21:23, 1:3, 15, true, 0)
+```
+"""
 function setdist(motif::Motif, distance::Int)
     return Motif(motif.alias, motif.fwd, motif.rve, 
         motif.pam_loci_fwd, motif.pam_loci_rve, 
         distance, motif.extends5, motif.ambig_max)
 end
-
-
-
-# function print_rgb(io::IO, t::String, r = 235, g = 79, b = 52)
-#     print(io, "\e[1m\e[38;2;$r;$g;$b;249m", t)
-# end
-#
-# function print_pam(io::IO, s::LongSequence, pam_idx::Vector{Int})
-#     for i in eachindex(s)
-#         if i in pam_idx
-#             print_rgb(io, s[i])
-#         else
-#             print_rgb(io, s[i], 52, 207, 235)
-#         end
-#     end
-# end
-#
-# function Base.show(io::IO, mime::MIME"text/plain", motif::Motif)
-#     compact = get(io, :compact, false)
-#
-#     if !compact
-#         alias = join(["\nMotif:", motif.alias, "\n"])
-#         print_rgb(io, alias, 176, 176, 176)
-#         print_rgb(io, "\nForward pattern:\n", 176, 176, 176)
-#         pam_idx = vcat(map(collect, motif.pam_loci_fwd)...)
-#         print_rgb(io, string(motif.fwd.seq), pam_idx)
-#         print_rgb(io, "\nReverse pattern:\n", 176, 176, 176)
-#         pam_idx = vcat(map(collect, motif.pam_loci_rve)...)
-#         print_rgb(io, string(motif.rve.seq), pam_idx)
-#     else
-#         show(io, motif)
-#     end
-# end
 
 # TODO add more motifs
 const motif_db = Dict(

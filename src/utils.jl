@@ -2,9 +2,11 @@
 safeadd(x::T, y::T) where {T} = ifelse(x + y ≥ x, x + y, typemax(T))
 
 
-"
+"""
+`getseq(n = 20, letters = ['A', 'C', 'G', 'T'])`
+
 Randomize sequence of length `n` from `letters`.
-"
+"""
 function getseq(n = 20, letters = ['A', 'C', 'G', 'T'])
     return LongDNA{4}(randstring(letters, n))
 end
@@ -268,11 +270,22 @@ function comb_of_d(s::String, d::Int = 1, alphabet::Vector{Char} = ['A', 'C', 'T
 end
 
 
-"
+"""
+`minkmersize(len::Int = 20, d::Int = 4)`
+
 Pidgeon hole principle: minimum
 k-mer size that is required for two strings of
 size `len` to be aligned within distance of `d`.
-"
+
+# Examples
+```jldoctest
+julia> minkmersize(20, 3)
+5
+
+julia> minkmersize(20, 6)
+2
+```
+"""
 function minkmersize(len::Int = 20, d::Int = 4)
     return Int(floor(len / (d + 1)))
 end
@@ -449,6 +462,21 @@ const FROM_AMBIGUOUS = IdDict(
     )
 
 
+"""
+`expand_ambiguous(x::LongDNA{4})`
+
+Turn ambiguous bases e.g. N, into all possible combinations.
+
+# Examples
+```jldoctest
+julia> expand_ambiguous(dna"AN")
+4-element Vector{LongSequence{DNAAlphabet{4}}}:
+ AA
+ AC
+ AT
+ AG
+ ```
+"""
 function expand_ambiguous(x::LongDNA{4})
     amb_dna = Vector{Vector{DNA}}()
     amb_idx = Vector{Int64}()
@@ -512,6 +540,21 @@ function order_by_hamming_and_prefix(guides::Vector{LongDNA{4}}, i::Int64 = 1)
 end
 
 
+"""
+`all_kmers(size = 4; alphabet = [DNA_A, DNA_C, DNA_G, DNA_T]`
+
+Make a list of all possible kmers with given`size` using bases in the `alphabet`. 
+
+# Examples
+```jldoctest
+julia> all_kmers(2; alphabet = [DNA_A, DNA_N])
+4-element Vector{LongSequence{DNAAlphabet{4}}}:
+ AA
+ AN
+ NA
+ NN
+```
+"""
 function all_kmers(size = 4; alphabet = [DNA_A, DNA_C, DNA_G, DNA_T])
     iters = Iterators.product(ntuple(_ -> alphabet, size)...)
     iters = LongDNA{4}.(collect(iters)[:])
@@ -538,6 +581,21 @@ function as_bitvector_of_kmers(x::LongDNA{4}, kmers::Dict{LongDNA{4}, Int})
 end
 
 
+
+"""
+`as_kmers(x::LongDNA{4}, kmer_size::Int)`
+
+Transforms `x` into vector of kmers of size `kmer_size`. 
+All ambiguous bases will be expanded.
+
+# Examples
+```jldoctest
+julia> as_kmers(dna"ACTGG", 4)
+2-element Vector{LongSequence{DNAAlphabet{4}}}:
+ ACTG
+ CTGG
+```
+"""
 function as_kmers(x::LongDNA{4}, kmer_size::Int)
     kmers = Vector{LongDNA{4}}()
     for i in 1:(length(x) - kmer_size + 1)
@@ -555,8 +613,21 @@ function as_kmers(x::LongDNA{4}, kmer_size::Int)
 end
 
 
-# TODO what to do when there are leftovers after kmerizing?
-# I think we should simply add 1 more k-mer from the other side?
+"""
+`as_skipkmers(x::LongDNA{4}, kmer_size::Int)`
+
+Transforms `x` into vector of skip-kmers of size `kmer_size`. 
+All ambiguous bases will be expanded. 
+Leftover-bases are ignored!
+
+# Examples
+```jldoctest
+julia> as_skipkmers(dna"ACTGG", 2)
+2-element Vector{LongSequence{DNAAlphabet{4}}}:
+ AC
+ TG
+```
+"""
 function as_skipkmers(x::LongDNA{4}, kmer_size::Int)
     kmers = Vector{LongDNA{4}}()
     for i in 1:kmer_size:(length(x) - kmer_size + 1)

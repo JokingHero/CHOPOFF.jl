@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>API · CRISPRofftargetHunter.jl</title><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.039/juliamono-regular.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.13.11/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../">CRISPRofftargetHunter.jl</a></span></div><form class="docs-search" action="../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../">General</a></li><li class="is-active"><a class="tocitem" href>API</a><ul class="internal"><li><a class="tocitem" href="#Abstract-gRNA"><span>Abstract gRNA</span></a></li><li><a class="tocitem" href="#Find-off-targets"><span>Find off-targets</span></a></li><li><a class="tocitem" href="#Align-gRNA-and-off-target"><span>Align gRNA and off-target</span></a></li><li><a class="tocitem" href="#Utils"><span>Utils</span></a></li><li><a class="tocitem" href="#Alignment-free-filters-for-gRNAs"><span>Alignment-free filters for gRNAs</span></a></li><li><a class="tocitem" href="#Find-all-off-targets"><span>Find all off-targets</span></a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>API</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>API</a></li></ul></nav><div class="docs-right"><a class="docs-edit-link" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/master/docs/src/api.md" title="Edit on GitHub"><span class="docs-icon fab"></span><span class="docs-label is-hidden-touch">Edit on GitHub</span></a><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><h1 id="Public-Interface"><a class="docs-heading-anchor" href="#Public-Interface">Public Interface</a><a id="Public-Interface-1"></a><a class="docs-heading-anchor-permalink" href="#Public-Interface" title="Permalink"></a></h1><p>When using CRISPRofftargetHunter as a normal julia package with the exported functions we provide many methods for working with CRISPR gRNA and off-targets for your convenience.</p><h2 id="Abstract-gRNA"><a class="docs-heading-anchor" href="#Abstract-gRNA">Abstract gRNA</a><a id="Abstract-gRNA-1"></a><a class="docs-heading-anchor-permalink" href="#Abstract-gRNA" title="Permalink"></a></h2><p>To encapsulate motifs that we search for on the genome, we can use abstract definition of gRNA/off-target, which is defined in <code>Motif</code> data structure.</p><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.Motif" href="#CRISPRofftargetHunter.Motif"><code>CRISPRofftargetHunter.Motif</code></a> — <span class="docstring-category">Type</span></header><section><div><pre><code class="language-julia hljs">Motif(
+    alias::String, 
+    fwdmotif::String, 
+    fwdpam::String, 
+    forward_strand::Bool = true, 
+    reverse_strand::Bool = true, 
+    distance::Int = 4, 
+    extends5::Bool = true,
+    ambig_max::Int = 5)</code></pre><p><code>Motif(alias::String)</code></p><p>Motif defines what we search on the genome, what can be identified as an off-target.</p><p><strong>Arguments</strong></p><p><code>alias</code> - alias of the motif for easier identification e.g. Cas9</p><p><code>fwdmotif</code> - Motif that indicates where is PAM inside <code>fwdpam</code>.     For example for Cas9 it is 20*N + XXX: NNNNNNNNNNNNNNNNNNNNXXX</p><p><code>fwdpam</code>   - Motif in 5&#39;-3&#39; that will be matched on the reference (without the X).              For example for Cas9 it is 20*X + NGG:              XXXXXXXXXXXXXXXXXXXXNGG</p><p><code>forward</code>  - If false will not match to the forward reference strand.</p><p><code>reverse</code>  - If false will not match to the reverse reference strand.</p><p><code>distance</code> - How many extra nucleotides are needed for a search? This              will indicate within what distance we can search for off-targets.              When we don&#39;t have those bases we use DNA_Gap.</p><p><code>extend5</code>  - Defines how off-targets will be aligned to the guides and where              extra nucleotides will be added for alignment within distance. Whether              to extend in the 5&#39; and 3&#39; direction. Cas9 is extend5 = true. <code>ambig_max</code>- How many ambiguous bases are allowed in the pattern?</p><pre><code class="nohighlight hljs">Example for Cas9 where we want to search for off-targets within distance of 4:
+  alias:    Cas9
+  fwdmotif: NNNNNNNNNNNNNNNNNNNNXXX
+  fwdpam:   XXXXXXXXXXXXXXXXXXXXNGG
+  forward:  true
+  reverse:  true
+  distance: 4
+  extend5:  true
+  ambig_max:5 </code></pre><p>Alignments will be performed from opposite to the extension direction (which is deifned by extend5).</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; Motif(&quot;Cas9&quot;)
+Motif(&quot;Cas9&quot;, NNNNNNNNNNNNNNNNNNNNNGG, CCNNNNNNNNNNNNNNNNNNNNN, 21:23, 1:3, 3, true, 0)
+
+julia&gt; Motif(&quot;test name&quot;, &quot;NNNNNNNNNNNNNNNNNNNNXXX&quot;, &quot;XXXXXXXXXXXXXXXXXXXXNGG&quot;, true, true, 3, true, 5)
+Motif(&quot;test name&quot;, NNNNNNNNNNNNNNNNNNNNNGG, CCNNNNNNNNNNNNNNNNNNNNN, 21:23, 1:3, 3, true, 5)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/motif.jl#L1-L66">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.length_noPAM" href="#CRISPRofftargetHunter.length_noPAM"><code>CRISPRofftargetHunter.length_noPAM</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>length_noPAM(motif::Motif)</code></p><p>Calculate what is the length of the motif, with extension, but without PAM. Effectively, size of the off-target on the genome.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; length_noPAM(Motif(&quot;Cas9&quot;))
+20</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/motif.jl#L140-L151">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.setdist" href="#CRISPRofftargetHunter.setdist"><code>CRISPRofftargetHunter.setdist</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>setdist(motif::Motif, distance::Int)</code></p><p>Set the distance (maximum value of allowed mismatches, deletion, insertions)  that are allowed during alignment.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; setdist(Motif(&quot;Cas9&quot;), 15)
+Motif(&quot;Cas9&quot;, NNNNNNNNNNNNNNNNNNNNNGG, CCNNNNNNNNNNNNNNNNNNNNN, 21:23, 1:3, 15, true, 0)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/motif.jl#L193-L204">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.setambig" href="#CRISPRofftargetHunter.setambig"><code>CRISPRofftargetHunter.setambig</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>setambig(motif::Motif, ambig::Int)</code></p><p>Set the ambiguity (how many ambigous bases are allowed) level for <code>motif</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; setambig(Motif(&quot;Cas9&quot;), 15)
+Motif(&quot;Cas9&quot;, NNNNNNNNNNNNNNNNNNNNNGG, CCNNNNNNNNNNNNNNNNNNNNN, 21:23, 1:3, 3, true, 15)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/motif.jl#L175-L185">source</a></section></article><h2 id="Find-off-targets"><a class="docs-heading-anchor" href="#Find-off-targets">Find off-targets</a><a id="Find-off-targets-1"></a><a class="docs-heading-anchor-permalink" href="#Find-off-targets" title="Permalink"></a></h2><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.DBInfo" href="#CRISPRofftargetHunter.DBInfo"><code>CRISPRofftargetHunter.DBInfo</code></a> — <span class="docstring-category">Type</span></header><section><div><p><code>DBInfo(filepath::String, name::String, motif::Motif; vcf_filepath::String = &quot;&quot;)</code></p><p>Motif defines what genome file is being used for searches.</p><p><strong>Arguments</strong></p><p><code>filepath</code> - Path to the genome file, if file is fasta (ends with .fa or .fasta or .fna)  make sure you also have fasta index file with extension .fai. Alternatively, you can use .2bit  genome file.  </p><p><code>name</code> - Your name for this instance of DBInfo: the genome with connection to the motif and vcf file.</p><p><code>motif</code>   - <code>Motif</code> object defining search parameters</p><p><code>vcf_filepath</code>  - Optional. Path to the VCF file to include in the searches.</p><p>Alignments will be performed from opposite to the extension direction (which is deifned by extend5).</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+# construct example DBInfo
+DBInfo(genome, &quot;Cas9_semirandom_noVCF&quot;, Motif(&quot;Cas9&quot;))</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/db_info.jl#L79-L110">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.gatherofftargets!" href="#CRISPRofftargetHunter.gatherofftargets!"><code>CRISPRofftargetHunter.gatherofftargets!</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">gatherofftargets!(output::T, dbi::DBInfo) 
+    where {T&lt;:Union{Vector{String}, Vector{UInt64}, Vector{UInt128}}}</code></pre><p>Gathers all off-targets that conform to the given <code>dbi</code> Motif.</p><p>This function appends to the <code>output</code> during the run, however it will also return all ambiguous  guides in return object. We use UInt64 and UInt128 to compress space that the gRNAs use. When using  large genomes or non-specific PAMs you might run out of memory when using this function.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+# construct example DBInfo
+dbi = DBInfo(genome, &quot;Cas9_semirandom_noVCF&quot;, Motif(&quot;Cas9&quot;))
+# finally gather all off-targets
+guides = Vector{String}()
+ambig = gatherofftargets!(guides, dbi)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/find_offtargets.jl#L150-L175">source</a></section></article><h2 id="Align-gRNA-and-off-target"><a class="docs-heading-anchor" href="#Align-gRNA-and-off-target">Align gRNA and off-target</a><a id="Align-gRNA-and-off-target-1"></a><a class="docs-heading-anchor-permalink" href="#Align-gRNA-and-off-target" title="Permalink"></a></h2><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.isinclusive" href="#CRISPRofftargetHunter.isinclusive"><code>CRISPRofftargetHunter.isinclusive</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>isinclusive(x::S, y::S) where {S&lt;:BioSymbol}</code></p><p>Check whether <code>x</code> contains all options of <code>y</code> or <code>y</code> contains all options of <code>x</code>. Can be used as replacement in place of <code>BioSequences.iscompatible</code> or <code>BioSequences.isequal</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; isinclusive(DNA_N, DNA_A)
+true
+
+julia&gt; isinclusive(DNA_W, DNA_R) # W is (A/T), R is (A/G)
+false
+
+julia&gt; isinclusive(DNA_W, DNA_A)
+true</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/distance_metrics.jl#L1-L18">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.hamming" href="#CRISPRofftargetHunter.hamming"><code>CRISPRofftargetHunter.hamming</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>hamming(s1::T, s2::K, ismatch = iscompatible) where {T &lt;: BioSequence, K &lt;: BioSequence}</code></p><p>Check Hamming distance between <code>s1</code> and <code>s2</code> using as matching definition <code>ismatch</code>. Should be faster than <code>pairalign(HammingDistance(), s1, s2)</code>. Make sure inputs are of the  same length.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; hamming(dna&quot;ACGC&quot;, dna&quot;AWRC&quot;)
+1</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/distance_metrics.jl#L41-L53">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.levenshtein" href="#CRISPRofftargetHunter.levenshtein"><code>CRISPRofftargetHunter.levenshtein</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">levenshtein(guide::T, ref::K, k::Int = 4,
+    ismatch::Function = iscompatible) where {T &lt;: BioSequence, K &lt;: BioSequence}</code></pre><p>Calculate Levenshtein distance bounded by <code>k</code> maximum edit distance with a twist for guide + off-target comparisons.</p><p>Levenshtein distance is the minimum number of operations (consisting of insertions, deletions, substitutions of a single character) required to change one string into the other. <code>guide</code> input seqeunce is a gRNA sequence, <code>ref</code> input is reference sequence with expansion on the 3&#39; end of <code>k</code> bases. This extension will not count toward the score, if it is not covered with aligned guide. Return k + 1, if distance is higher than k and terminate early. This function should be 10x faster than <code>pairalign(LevenshteinDistance(), guide, ref, distance_only = true)</code>.</p><p>Notice that <code>guide</code> and <code>ref</code> have to be oriented towards left side e.g. PAM-guide, and PAM-offtarget-extension! Take a look at the examples below to understand why.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; levenshtein(dna&quot;ATGA&quot;, dna&quot;AGACCT&quot;) # CCT as extension of the ref does not count towards the score in optimal alignment
+1
+
+julia&gt; levenshtein(dna&quot;ATGATCG&quot;, dna&quot;AGAAATCGATG&quot;) # ATG does not count in optimal alignment ATG--ATCG/A-GAAATCG
+3</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/distance_metrics.jl#L59-L85">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.Aln" href="#CRISPRofftargetHunter.Aln"><code>CRISPRofftargetHunter.Aln</code></a> — <span class="docstring-category">Type</span></header><section><div><pre><code class="language-julia hljs">struct Aln
+    guide::String
+    ref::String
+    dist::Int
+end</code></pre><p>Simple data structure to hold information on the optimal alignment. Therefore <code>guide</code> and <code>ref</code> may contain <code>DNA_Gap</code> as these are aligned sequences. Function <code>align</code> returns this object.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/distance_metrics.jl#L244-L255">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.align" href="#CRISPRofftargetHunter.align"><code>CRISPRofftargetHunter.align</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">align(guide::T, ref::K, k::Int = 4,
+    ismatch::Function = iscompatible) where {T &lt;: BioSequence, K &lt;: BioSequence}</code></pre><p>Calculate Levenshtein distance bounded by <code>k</code> maximum edit distance with a twist for guide + off-target comparisons, but return also the alignment as an <code>Align</code> object.</p><p>Levenshtein distance is the minimum number of operations (consisting of insertions, deletions, substitutions of a single character) required to change one string into the other. <code>guide</code> input seqeunce is a gRNA sequence, <code>ref</code> input is reference sequence with expansion on the 3&#39; end of <code>k</code> bases. This extension will not count toward the score, if it is not covered with aligned guide. Return k + 1, if distance is higher than k and terminate early.</p><p>Notice that <code>guide</code> and <code>ref</code> have to be oriented towards left side e.g. PAM-guide, and PAM-offtarget-extension! Take a look at the examples below to understand why.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; align(dna&quot;ATGA&quot;, dna&quot;AGACCT&quot;) # CCT as extension of the ref does not count towards the score in optimal alignment
+Aln(&quot;ATGA&quot;, &quot;A-GA&quot;, 1)
+
+julia&gt; align(dna&quot;ATGATCG&quot;, dna&quot;AGAAATCGATG&quot;) # ATG does not count
+Aln(&quot;ATG--ATCG&quot;, &quot;A-GAAATCG&quot;, 3)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/distance_metrics.jl#L263-L289">source</a></section></article><h2 id="Utils"><a class="docs-heading-anchor" href="#Utils">Utils</a><a id="Utils-1"></a><a class="docs-heading-anchor-permalink" href="#Utils" title="Permalink"></a></h2><h3 id="gRNAs-and-kmers"><a class="docs-heading-anchor" href="#gRNAs-and-kmers">gRNAs and kmers</a><a id="gRNAs-and-kmers-1"></a><a class="docs-heading-anchor-permalink" href="#gRNAs-and-kmers" title="Permalink"></a></h3><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.getseq" href="#CRISPRofftargetHunter.getseq"><code>CRISPRofftargetHunter.getseq</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>getseq(n = 20, letters = [&#39;A&#39;, &#39;C&#39;, &#39;G&#39;, &#39;T&#39;])</code></p><p>Randomize sequence of length <code>n</code> from <code>letters</code>.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/utils.jl#L5-L9">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.as_kmers" href="#CRISPRofftargetHunter.as_kmers"><code>CRISPRofftargetHunter.as_kmers</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>as_kmers(x::LongDNA{4}, kmer_size::Int)</code></p><p>Transforms <code>x</code> into vector of kmers of size <code>kmer_size</code>.  All ambiguous bases will be expanded.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; as_kmers(dna&quot;ACTGG&quot;, 4)
+2-element Vector{LongSequence{DNAAlphabet{4}}}:
+ ACTG
+ CTGG</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/utils.jl#L585-L598">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.as_skipkmers" href="#CRISPRofftargetHunter.as_skipkmers"><code>CRISPRofftargetHunter.as_skipkmers</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>as_skipkmers(x::LongDNA{4}, kmer_size::Int)</code></p><p>Transforms <code>x</code> into vector of skip-kmers of size <code>kmer_size</code>.  All ambiguous bases will be expanded.  Leftover-bases are ignored!</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; as_skipkmers(dna&quot;ACTGG&quot;, 2)
+2-element Vector{LongSequence{DNAAlphabet{4}}}:
+ AC
+ TG</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/utils.jl#L616-L630">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.all_kmers" href="#CRISPRofftargetHunter.all_kmers"><code>CRISPRofftargetHunter.all_kmers</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>all_kmers(size = 4; alphabet = [DNA_A, DNA_C, DNA_G, DNA_T]</code></p><p>Make a list of all possible kmers with given<code>size</code> using bases in the <code>alphabet</code>. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; all_kmers(2; alphabet = [DNA_A, DNA_N])
+4-element Vector{LongSequence{DNAAlphabet{4}}}:
+ AA
+ AN
+ NA
+ NN</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/utils.jl#L543-L557">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.minkmersize" href="#CRISPRofftargetHunter.minkmersize"><code>CRISPRofftargetHunter.minkmersize</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>minkmersize(len::Int = 20, d::Int = 4)</code></p><p>Pidgeon hole principle: minimum k-mer size that is required for two strings of size <code>len</code> to be aligned within distance of <code>d</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">julia&gt; minkmersize(20, 3)
+5
+
+julia&gt; minkmersize(20, 6)
+2</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/utils.jl#L273-L288">source</a></section></article><h3 id="Persistence"><a class="docs-heading-anchor" href="#Persistence">Persistence</a><a id="Persistence-1"></a><a class="docs-heading-anchor-permalink" href="#Persistence" title="Permalink"></a></h3><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.save" href="#CRISPRofftargetHunter.save"><code>CRISPRofftargetHunter.save</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>save(     object::Any,     destination::String)</code></p><p>Uses julia serializer to save the data to binary format. Read more about <a href="https://docs.julialang.org/en/v1/stdlib/Serialization/">serialization</a>. Notice that:</p><ol><li>This function will overwrite <code>destination</code>! </li><li>This serialization is dependent on julia build! This means files can fail to work when reloaded across different julia builds.</li></ol></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/persistence.jl#L1-L12">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.load" href="#CRISPRofftargetHunter.load"><code>CRISPRofftargetHunter.load</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>load(destination::String)</code></p><p>Load file saved with <code>save</code> function. This <strong>may not</strong> load properly files saved in other julia builds.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/persistence.jl#L25-L29">source</a></section></article><h2 id="Alignment-free-filters-for-gRNAs"><a class="docs-heading-anchor" href="#Alignment-free-filters-for-gRNAs">Alignment-free filters for gRNAs</a><a id="Alignment-free-filters-for-gRNAs-1"></a><a class="docs-heading-anchor-permalink" href="#Alignment-free-filters-for-gRNAs" title="Permalink"></a></h2><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.build_hashDB" href="#CRISPRofftargetHunter.build_hashDB"><code>CRISPRofftargetHunter.build_hashDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">build_hashDB(
+    name::String,
+    genomepath::String, 
+    motif::Motif,
+    storagedir::String;
+    seed::UInt64 = UInt64(0x726b2b9d438b9d4d),
+    max_iterations::Int = 10,
+    max_count::Int = 10,
+    precision::DataType = UInt16)</code></pre><p>Prepare hashDB index for future searches using <code>search_hashDB</code>.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your prefered name for this index for easier identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>motif</code>   - Motif deines what kind of gRNA to search for.</p><p><code>storagedir</code>  - Folder path to the where index will be saved with name <code>hashDB.bin</code>.</p><p><code>seed</code>  - Optional. Seed is used during hashing for randomization.</p><p><code>max_iterations</code> - When finding hashing structure for binary fuse filter it might fail sometimes,                     we will retry <code>max_iterations</code> number of times though.</p><p><code>max_count</code>  - Above this count we put all unique off-targets into one bin.                 Put number here that is the minimum number of off-targets that you think is fine                for the distance of 1.</p><p><code>precision</code>- The higher the precision the larger the database, but also chances for error decrease dramatically.              We support UInt8, UInt16, and UInt32.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+tdir = tempname()
+hdb_path = joinpath(tdir, &quot;hashDB&quot;)
+mkpath(hdb_path)
+
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# finally, build a hashDB
+build_hashDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 1, ambig_max = 0), 
+    hdb_path)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/db_hash.jl#L75-L133">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.search_hashDB" href="#CRISPRofftargetHunter.search_hashDB"><code>CRISPRofftargetHunter.search_hashDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">search_hashDB(
+    storagedir::String,
+    guides::Vector{LongDNA{4}},
+    right::Bool)</code></pre><p>Estimate off-target counts for <code>guides</code> using hashDB stored at <code>storagedir</code>.</p><p>Probabilistic filter offers a guarantee that it will always be correct when a sequence  is in the set (no false negatives), but may overestimate that a sequence is in the set  while it is not (false positive) with low probability. If both columns in the results are 0,  it is guaranteed this gRNA has no off-targets in the genome!</p><p>Also, maximum count for each off-target in the database is capped, to <code>max_count</code> specified during building of hashDB. This means  that counts larger than <code>max_count</code> are no longer estimating correctly. Its likely you would not care for those guides anyhow.</p><p><code>right</code> argument specifies whether the databse should be checked in direction from  unique off-targets which occur once to increasingly more occuring off-targets up until  <code>max_count</code> is reached, which may result in assuming lower than real off-target counts  (underestimate) for some of the sequences, however this approach will not reject any  gRNAs that should not be rejected and is suitable for filtering of gRNAs we do not need.  Left (<code>right = false</code>, or hight-counts to low-counts) approach is also supported,  which can be used for ordering of gRNAs to the best of database ability.  Left approach may overestimate counts for some gRNAs. When gRNA is reported as  off-target free it is also guaranteed to be true in both cases (low-to-high and high-to-low).</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># prepare libs
+using CRISPRofftargetHunter, BioSequences
+
+# make a temporary directory
+tdir = tempname()
+hdb_path = joinpath(tdir, &quot;hashDB&quot;)
+mkpath(hdb_path)
+
+# use CRISPRofftargetHunter example genome
+coh_path = splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1]
+genome = joinpath(vcat(coh_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# build a hashDB
+build_hashDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 1, ambig_max = 0), 
+    hdb_path)
+
+# load up example gRNAs
+guides_s = Set(readlines(joinpath(vcat(coh_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides = LongDNA{4}.(guides_s)
+
+# finally, get results!
+hdb_res = search_hashDB(hdb_path, guides, false)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/db_hash.jl#L197-L254">source</a></section></article><h2 id="Find-all-off-targets"><a class="docs-heading-anchor" href="#Find-all-off-targets">Find all off-targets</a><a id="Find-all-off-targets-1"></a><a class="docs-heading-anchor-permalink" href="#Find-all-off-targets" title="Permalink"></a></h2><h3 id="Prefix-Suffix-partial-alignment"><a class="docs-heading-anchor" href="#Prefix-Suffix-partial-alignment">Prefix-Suffix partial alignment</a><a id="Prefix-Suffix-partial-alignment-1"></a><a class="docs-heading-anchor-permalink" href="#Prefix-Suffix-partial-alignment" title="Permalink"></a></h3><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.build_linearDB" href="#CRISPRofftargetHunter.build_linearDB"><code>CRISPRofftargetHunter.build_linearDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">build_linearDB(
+    name::String,
+    genomepath::String,
+    motif::Motif,
+    storagedir::String,
+    prefix_len::Int = 7)</code></pre><p>Prepare linearDB index for future searches using <code>search_linearDB</code>.</p><p>Will return a path to the database location, same as <code>storagedir</code>. When this database is used for the guide off-target scan it is similar  to linear in performance, hence the name. There is an optimization that  if the alignment becomes imposible against the prefix we don&#39;t search the off-targets grouped inside the prefix. Therefore, it is advantageous to select much larger prefix than maximum  search distance, however in that case number of files also grows. For example, if interested with searches within distance 4, preferably use prefix length of  7 or 8.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your prefered name for this index for easier identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>motif</code>   - Motif deines what kind of gRNA to search for.</p><p><code>storagedir</code>  - Folder path to the where index will be saved with name <code>linearDB.bin</code> and many prefix files.</p><p><code>prefix_len</code>  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,                 however it will also result in large number of files.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+tdir = tempname()
+ldb_path = joinpath(tdir, &quot;linearDB&quot;)
+mkpath(ldb_path)
+
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# finally, build a linearDB
+build_linearDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 1, ambig_max = 0), 
+    ldb_path)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/db_linear.jl#L30-L84">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.search_linearDB" href="#CRISPRofftargetHunter.search_linearDB"><code>CRISPRofftargetHunter.search_linearDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">search_linearDB(
+    storagedir::String, 
+    guides::Vector{LongDNA{4}}, 
+    dist::Int = 4; 
+    detail::String = &quot;&quot;)</code></pre><p>Find all off-targets for <code>guides</code> within distance of <code>dist</code> using linearDB located at <code>storagedir</code>.</p><p>Assumes your guides do not contain PAM, and are all in the same direction as  you would order from the lab e.g.:</p><pre><code class="nohighlight hljs">5&#39; - ...ACGTCATCG NGG - 3&#39;  -&gt; will be input: ...ACGTCATCG
+     guide        PAM
+    
+3&#39; - CCN GGGCATGCT... - 5&#39;  -&gt; will be input: ...AGCATGCCC
+     PAM guide</code></pre><p><strong>Arguments</strong></p><p><code>dist</code> - Defines maximum levenshtein distance (insertions, deletions, mismatches) for  which off-targets are considered.  </p><p><code>detail</code> - Path and name for the output file. This search will create intermediate  files which will have same name as detail, but with a sequence prefix. Final file will contain all those intermediate files. Leave <code>detail</code> empty if you are only  interested in off-target counts returned by the linearDB. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+tdir = tempname()
+ldb_path = joinpath(tdir, &quot;linearDB&quot;)
+mkpath(ldb_path)
+
+# use CRISPRofftargetHunter example genome
+coh_path = splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1]
+genome = joinpath(
+    vcat(
+        coh_path, 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# build a linearDB
+build_linearDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 3, ambig_max = 0), 
+    ldb_path)
+
+# load up example gRNAs
+using BioSequences
+guides_s = Set(readlines(joinpath(vcat(coh_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides = LongDNA{4}.(guides_s)
+    
+# finally, get results!
+ldb_res = search_linearDB(ldb_path, guides, 3)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/db_linear.jl#L198-L258">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.build_motifDB" href="#CRISPRofftargetHunter.build_motifDB"><code>CRISPRofftargetHunter.build_motifDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">build_motifDB(
+    name::String,
+    genomepath::String,
+    motif::Motif,
+    storagedir::String,
+    prefix_len::Int = 7;
+    skipmer_size::Int = Int(floor(length_noPAM(motif) / (motif.distance + 3))))</code></pre><p>Prepare motifDB index for future searches using <code>search_motifDB</code>.</p><p>Will return a path to the database location, same as <code>storagedir</code>. When this database is used for the guide off-target scan it is similar  to <code>search_linearDB</code>, however additional filter is applied on top of  prefix filtering. Suffixes are used for next filter, similarly to  pidgeon hole principle - depending on the size of the skipkmer <code>skipkmer_size</code>. For example, Cas9 off-target within distance 4 (d) might be 20bp long. We skip <code>prefix_len</code> of 7, and are left with 13bp which can be split into 3  skipmers (r) of size 4, 1bp will be left unused. However when searching within  distance of 4 and for prefix where initial alignment was of distance 3 (m) and adjustment paramter is 0 (a). We are obliged to find at least <strong>k - (d - m + a)</strong>  which is <strong>3 - (4 - 3 + 0) = 2</strong> this many skimpers inside the off-targets. </p><p>There exist also another approach which builds on the idea that it might be more efficient to find at least two kmers of smaller size (named 01*0 seed) rather than one larger kmer  (pidgeon hole principle). You can use the <code>adjust</code> option for that during <code>search_linearDB</code> step.</p><p>Be sure to understand implications of using <code>motifDB</code> as using wrong parameters  on <code>skipmer_size</code> might result in leaky filtering in relation to the asumed  distance <code>dist</code> and adjustment <code>adjust</code> during search step in <code>search_motifDB</code>.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your prefered name for this index for easier identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>motif</code>   - Motif deines what kind of gRNA to search for.</p><p><code>storagedir</code>  - Folder path to the where index will be saved with name <code>linearDB.bin</code> and many prefix files.</p><p><code>prefix_len</code>  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,                 however it will also result in large number of files. </p><p><code>skipmer_size</code> - Size of the skipmer as described above. Be carefull when setting this too large!</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+tdir = tempname()
+mdb_path = joinpath(tdir, &quot;motifDB&quot;)
+mkpath(mdb_path)
+
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# finally, build a motifDB
+build_motifDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 3, ambig_max = 0), 
+    mdb_path)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/db_motif.jl#L91-L159">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.search_motifDB" href="#CRISPRofftargetHunter.search_motifDB"><code>CRISPRofftargetHunter.search_motifDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">search_motifDB(
+    storagedir::String, 
+    guides::Vector{LongDNA{4}}, 
+    dist::Int = 4; 
+    detail::String = &quot;&quot;,
+    adjust::Int = 0)</code></pre><p>Find all off-targets for <code>guides</code> within distance of <code>dist</code> using motifDB located at <code>storagedir</code>.</p><p>Assumes your guides do not contain PAM, and are all in the same direction as  you would order from the lab e.g.:</p><pre><code class="nohighlight hljs">5&#39; - ...ACGTCATCG NGG - 3&#39;  -&gt; will be input: ...ACGTCATCG
+     guide        PAM
+    
+3&#39; - CCN GGGCATGCT... - 5&#39;  -&gt; will be input: ...AGCATGCCC
+     PAM guide</code></pre><p><strong>Arguments</strong></p><p><code>dist</code> - Defines maximum levenshtein distance (insertions, deletions, mismatches) for  which off-targets are considered.  </p><p><code>detail</code> - Path and name for the output file. This search will create intermediate  files which will have same name as detail, but with a sequence prefix. Final file will contain all those intermediate files. Leave <code>detail</code> empty if you are only  interested in off-target counts returned by the motifDB. </p><p><code>adjust</code> - This will be crutial parameter for tightening second layer of filtering after,  the initial prefix alignment. For example, Cas9 off-target within distance 4 (d) might be 20bp long. We skip <code>prefix_len</code> of 7, and are left with 13bp which can be split into 3 skipmers (r) of size 4,  1bp will be left unused. However when searching within distance of 4 and for prefix where initial  alignment was of distance 3 (m) and adjustment paramter is 0 (a). We are obliged to find at least  <code>k - (d - m + a)</code> which is <code>3 - (4 - 3 + 0) = 2</code> this many skimpers inside the off-targets. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+tdir = tempname()
+mdb_path = joinpath(tdir, &quot;motifDB&quot;)
+mkpath(mdb_path)
+
+# use CRISPRofftargetHunter example genome
+coh_path = splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1]
+genome = joinpath(
+    vcat(
+        coh_path, 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# build a motifDB
+build_motifDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 3, ambig_max = 0), 
+    mdb_path)
+
+# load up example gRNAs
+using BioSequences
+guides_s = Set(readlines(joinpath(vcat(coh_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides = LongDNA{4}.(guides_s)
+    
+# finally, get results!
+mdb_res = search_motifDB(mdb_path, guides, 3)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/db_motif.jl#L319-L388">source</a></section></article><h3 id="Vantage-Point-tree"><a class="docs-heading-anchor" href="#Vantage-Point-tree">Vantage-Point tree</a><a id="Vantage-Point-tree-1"></a><a class="docs-heading-anchor-permalink" href="#Vantage-Point-tree" title="Permalink"></a></h3><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.build_treeDB" href="#CRISPRofftargetHunter.build_treeDB"><code>CRISPRofftargetHunter.build_treeDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">build_treeDB(
+    name::String,
+    genomepath::String,
+    motif::Motif,
+    storagedir::String,
+    prefix_len::Int = 7)</code></pre><p>Build a Vantage Point tree DB of offtargets for the given <code>motif</code>, DB groups off-targets by their prefixes, each prefix has its own Vantage Point tree.</p><p>Will return a path to the database location, same as <code>storagedir</code>.</p><p>There is an optimization that if the alignment becomes imposible against the prefix we don&#39;t search the off-targets grouped inside the prefix. Therefore it is advantageous to select larger prefix than maximum  search distance, however in that case number of files also grows.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your prefered name for this index for easier identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>motif</code>   - Motif deines what kind of gRNA to search for.</p><p><code>storagedir</code>  - Folder path to the where index will be saved with name <code>linearDB.bin</code> and many prefix files.</p><p><code>prefix_len</code>  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,                 however it will also result in large number of files. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+tdir = tempname()
+tdb_path = joinpath(tdir, &quot;treeDB&quot;)
+mkpath(tdb_path)
+
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# finally, build a motifDB
+build_treeDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 3, ambig_max = 0), 
+    tdb_path)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/db_tree.jl#L95-L149">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.inspect_treeDB" href="#CRISPRofftargetHunter.inspect_treeDB"><code>CRISPRofftargetHunter.inspect_treeDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">inspect_treeDB(
+    storagedir::String; 
+    levels::Int = 5, 
+    inspect_prefix::String = &quot;&quot;)</code></pre><p>See small part of the full vantage point tree of the treeDB.</p><p>TreeDB can be split based on the distance to the radius (r)  into inside (left &lt;= r) and right (outside &gt; r) nodes.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+tdir = tempname()
+tdb_path = joinpath(tdir, &quot;treeDB&quot;)
+mkpath(tdb_path)
+
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# finally, build a motifDB
+build_treeDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 3, ambig_max = 0), 
+    tdb_path)
+
+# finally, view some part of the database!
+inspect_treeDB(tdb_path; inspect_prefix = &quot;CCGTCGC&quot;)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/db_tree.jl#L461-L496">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="CRISPRofftargetHunter.search_treeDB" href="#CRISPRofftargetHunter.search_treeDB"><code>CRISPRofftargetHunter.search_treeDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">search_treeDB(
+    storagedir::String, 
+    guides::Vector{LongDNA{4}}, 
+    dist::Int = 4; 
+    detail::String = &quot;&quot;)</code></pre><p>Search previously build treeDB database for the off-targets of the <code>guides</code>. </p><p>Assumes your guides do not contain PAM, and are all in the same direction as  you would order from the lab e.g.:</p><pre><code class="nohighlight hljs">5&#39; - ...ACGTCATCG NGG - 3&#39;  -&gt; will be input: ...ACGTCATCG
+     guide        PAM
+
+3&#39; - CCN GGGCATGCT... - 5&#39;  -&gt; will be input: ...AGCATGCCC
+     PAM guide</code></pre><p><strong>Arguments</strong></p><p><code>dist</code> - Defines maximum levenshtein distance (insertions, deletions, mismatches) for  which off-targets are considered.  </p><p><code>detail</code> - Path and name for the output file. This search will create intermediate  files which will have same name as detail, but with a sequence prefix. Final file will contain all those intermediate files. Leave <code>detail</code> empty if you are only  interested in off-target counts returned by the treeDB. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+tdir = tempname()
+tdb_path = joinpath(tdir, &quot;treeDB&quot;)
+mkpath(tdb_path)
+
+# use CRISPRofftargetHunter example genome
+coh_path = splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1]
+genome = joinpath(
+    vcat(
+        coh_path, 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# build a motifDB
+build_treeDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 3, ambig_max = 0), 
+    tdb_path)
+
+# load up example gRNAs
+using BioSequences
+guides_s = Set(readlines(joinpath(vcat(coh_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides = LongDNA{4}.(guides_s)
+    
+# finally, get results!
+tdb_res = search_treeDB(tdb_path, guides, 3)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JokingHero/CRISPRofftargetHunter.jl/blob/f8844a78c1f5144b0209a2e0c18e0fb249dae90e/src/db_tree.jl#L281-L342">source</a></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« General</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.15 on <span class="colophon-date" title="Friday 27 May 2022 18:37">Friday 27 May 2022</span>. Using Julia version 1.7.2.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

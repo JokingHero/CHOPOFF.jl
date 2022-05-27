@@ -93,13 +93,14 @@ end
 
 
 """
-`build_treeDB(
+```
+build_treeDB(
     name::String,
     genomepath::String,
     motif::Motif,
     storagedir::String,
-    prefix_len::Int = 7)`  
-
+    prefix_len::Int = 7)
+```  
 
 Build a Vantage Point tree DB of offtargets for the given `motif`,
 DB groups off-targets by their prefixes, each prefix has its own
@@ -111,6 +112,40 @@ There is an optimization that if the alignment becomes imposible against
 the prefix we don't search the off-targets grouped inside the prefix.
 Therefore it is advantageous to select larger prefix than maximum 
 search distance, however in that case number of files also grows.
+
+# Arguments
+
+`name` - Your prefered name for this index for easier identification.
+
+`genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
+               also prepare fasta index file with ".fai" extension.
+
+`motif`   - Motif deines what kind of gRNA to search for.
+
+`storagedir`  - Folder path to the where index will be saved with name `linearDB.bin` and many prefix files.
+
+`prefix_len`  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,
+                however it will also result in large number of files. 
+
+# Examples
+```julia-repl
+# make a temporary directory
+tdir = tempname()
+tdb_path = joinpath(tdir, "treeDB")
+mkpath(tdb_path)
+
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        "test", "sample_data", "genome", "semirandom.fa"))
+
+# finally, build a motifDB
+build_treeDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 3, ambig_max = 0), 
+    tdb_path)
+```
 """
 function build_treeDB(
     name::String,
@@ -245,9 +280,16 @@ end
 
 
 """
-`search_treeDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")`
+```
+search_treeDB(
+    storagedir::String, 
+    guides::Vector{LongDNA{4}}, 
+    dist::Int = 4; 
+    detail::String = "")
+```
 
-Will search the previously build database for the off-targets of the `guides`. 
+Search previously build treeDB database for the off-targets of the `guides`. 
+
 Assumes your guides do not contain PAM, and are all in the same direction as 
 you would order from the lab e.g.:
 
@@ -261,13 +303,43 @@ you would order from the lab e.g.:
 
 # Arguments
 
-`dist` - defines maximum levenshtein distance (insertions, deletions, mismatches) 
-for which off-targets are considered.
+`dist` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
+which off-targets are considered.  
 
-`detail` - path and name for the output file. This search will create intermediate 
-files which will have same name as detail, but with a sequence prefix. Final file 
+`detail` - Path and name for the output file. This search will create intermediate 
+files which will have same name as detail, but with a sequence prefix. Final file
 will contain all those intermediate files. Leave `detail` empty if you are only 
-interested in off-target counts returned by the searchDB.
+interested in off-target counts returned by the treeDB. 
+
+
+# Examples
+```julia-repl
+# make a temporary directory
+tdir = tempname()
+tdb_path = joinpath(tdir, "treeDB")
+mkpath(tdb_path)
+
+# use CRISPRofftargetHunter example genome
+coh_path = splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1]
+genome = joinpath(
+    vcat(
+        coh_path, 
+        "test", "sample_data", "genome", "semirandom.fa"))
+
+# build a motifDB
+build_treeDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 3, ambig_max = 0), 
+    tdb_path)
+
+# load up example gRNAs
+using BioSequences
+guides_s = Set(readlines(joinpath(vcat(coh_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides = LongDNA{4}.(guides_s)
+    
+# finally, get results!
+tdb_res = search_treeDB(tdb_path, guides, 3)
+```
 """
 function search_treeDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")
     ldb = load(joinpath(storagedir, "treeDB.bin"))
@@ -387,9 +459,40 @@ end
 
 
 """
-`inspect_treeDB(storagedir::String; levels::Int = 5, inspect_prefix::String = "")`
+```
+inspect_treeDB(
+    storagedir::String; 
+    levels::Int = 5, 
+    inspect_prefix::String = "")
+```
 
 See small part of the full vantage point tree of the treeDB.
+
+TreeDB can be split based on the distance to the radius (r) 
+into inside (left <= r) and right (outside > r) nodes.
+
+# Examples
+```julia-repl
+# make a temporary directory
+tdir = tempname()
+tdb_path = joinpath(tdir, "treeDB")
+mkpath(tdb_path)
+
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        "test", "sample_data", "genome", "semirandom.fa"))
+
+# finally, build a motifDB
+build_treeDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 3, ambig_max = 0), 
+    tdb_path)
+
+# finally, view some part of the database!
+inspect_treeDB(tdb_path; inspect_prefix = "CCGTCGC")
+```
 """
 function inspect_treeDB(storagedir::String; levels::Int = 5, inspect_prefix::String = "")
     ldb = load(joinpath(storagedir, "treeDB.bin"))
