@@ -372,7 +372,8 @@ function main(args::Array{String})
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
                 args["linearDB"]["prefix_length"])
         elseif args["%COMMAND%"] == "motifDB"
-            if args["motifDB"]["skipmer_size"] === nothing
+            skipmer = args["motifDB"]["skipmer_size"]
+            if skipmer === nothing
                 skipmer = Int(floor(length_noPAM(motif) / (motif.distance + 3)))
             end
             build_motifDB(args["name"], args["genome"], motif, args["output"], 
