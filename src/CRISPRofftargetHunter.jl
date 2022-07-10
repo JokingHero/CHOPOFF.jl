@@ -394,8 +394,7 @@ function main(args::Array{String})
                 max_iterations = args["hashDB"]["max_iterations"],
                 max_count = args["hashDB"]["max_count"], precision = prec)
         elseif args["%COMMAND%"] == "dictDB"
-            build_dictDB(args["name"], args["genome"], motif, args["output"]; 
-                max_count = args["dictDB"]["max_count"])
+            build_dictDB(args["name"], args["genome"], motif, args["output"])
         elseif args["%COMMAND%"] == "binDB"
             build_binDB(args["name"], args["genome"], motif, args["output"], 
                 probability_of_error = args["binDB"]["probability_of_error"]; 
@@ -420,7 +419,7 @@ function main(args::Array{String})
             template = load(args["template"])
             res = search_fmiDB_patterns(args["database"], "", template, guides; distance = args["distance"])
         elseif args["type"] == "hashDB"
-            @info "Right set as" * string(args["right"])
+            @info "Right set as: " * string(args["right"])
             res = search_hashDB(args["database"], guides, args["right"])
         elseif args["type"] == "dictDB"
             res = search_dictDB(args["database"], guides, args["distance"])

@@ -129,7 +129,7 @@ end
         "samirandom", genome, 
         Motif("Cas9"; distance = 0, ambig_max = 0),
         ddb_path)
-    ddb_res = search_dictDB(ddb_path, guides, 2)
+    ddb_res = search_dictDB(ddb_path, guides)
 
     # make and run default binDB
     bdb_path = joinpath(tdir, "binDB")

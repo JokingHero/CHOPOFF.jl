@@ -1,5 +1,6 @@
 struct DictDB
     dict::IdDict
+    mtp::MotifPathTemplates
     dbi::DBInfo
 end
 
@@ -19,21 +20,20 @@ function build_dictDB(
     name::String, 
     genomepath::String, 
     motif::Motif,
-    storagedir::String;
-    max_count::Int = 10)
+    storagedir::String)
 
-    if motif.distance != 0 || motif.ambig_max != 0
-        @info "Distance and ambig_max enforced to 0."
-        motif = setdist(motif, 0)
+    if motif.distance != 1 || motif.ambig_max != 0
+        @info "Distance set to 1 and ambig_max set to 0."
+        motif = setdist(motif, 1)
         motif = setambig(motif, 0)
     end
     dbi = DBInfo(genomepath, name, motif)
-
-    # first we measure how many unique guides there are
     @info "Building Dictionary..."
-    dict = build_guide_dict(dbi, max_count, UInt128)
+    dict = build_guide_dict(dbi, Int(typemax(UInt32)), UInt128)
+    @info "Building Motif templates..."
+    mtp = build_motifTemplates(motif)
 
-    db = DictDB(dict, dbi)
+    db = DictDB(dict, mtp, dbi)
     save(db, joinpath(storagedir, "dictDB.bin"))
     @info "Finished constructing dictDB in " * storagedir
     @info "Database size is:" *
@@ -44,10 +44,16 @@ function build_dictDB(
 end
 
 
+function get_path_count(dict::IdDict, path::Path, len::Int)
+    path_seq = path.seq * repeat(dna"N", len - path.seq_len)
+    ext_path = expand_ambiguous(path_seq)
+    return mapreduce(x -> get(dict, convert(UInt128, x), 0), +, ext_path)
+end
+
+
 function search_dictDB(
     storagedir::String,
-    guides::Vector{LongDNA{4}},
-    dist::Int = 1)
+    guides::Vector{LongDNA{4}})
 
     if any(isambig.(guides))
         throw("Ambiguous bases are not allowed in guide queries.")
@@ -55,29 +61,43 @@ function search_dictDB(
 
     sdb = load(joinpath(storagedir, "dictDB.bin"))
     guides_ = copy(guides)
+    len = length(sdb.dbi.motif)
+    len_noPAM_noEXT = length_noPAM(sdb.dbi.motif)
+
+    if any(len_noPAM_noEXT .!= length(guides_))
+        throw("Guide queries are not of the correct length to use with this Motif: " * string(motif))
+    end
     # reverse guides so that PAM is always on the left
     if sdb.dbi.motif.extends5
         guides_ = reverse.(guides_)
     end
 
-    # TODO check that seq is in line with motif
-    res = zeros(Int, length(guides_), (dist + 1) * 3 - 2)
+    res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
-        res[i, 1] += get(sdb.dict, convert(UInt128, s), 0) # 0 distance
-        for d in 1:dist
-            norm_d, border_d = comb_of_d(string(s), d)
-            norm_d_res = ThreadsX.sum(get(sdb.dict, convert(UInt128, LongDNA{4}(sd)), 0) for sd in norm_d)
-            border_d_res = ThreadsX.sum(get(sdb.dict, convert(UInt128, LongDNA{4}(sd)), 0) for sd in border_d)
-            res[i, d + 1] = norm_d_res + border_d_res
-            res[i, dist + d + 1] = norm_d_res
-            res[i, dist * 2 + d + 1] = border_d_res
+
+        pat = CRISPRofftargetHunter.templates_to_sequences(s, sdb.mtp; dist = 1)
+        counts = Base.map(x -> get_path_count(sdb.dict, x, len), pat)
+        # we need to keep track of reducibles
+        # reducible should not include counts from that path
+        # this is simpler as we only have distances of 0 and 1 to worry about
+        d0_loc = 0
+        for (j, p) in enumerate(pat)
+            if p.reducible != 0 && (p.dist < pat[p.reducible].dist)
+                counts[p.reducible] -= counts[j]
+            end
+
+            if p.dist == 0
+                d0_loc = j
+            end
         end
+        
+        res[i, 1] = counts[d0_loc]
+        res[i, 2] = sum(counts) - counts[d0_loc]
     end
 
     res = DataFrame(res, :auto)
-    col_d = [Symbol("D$i") for i in 0:dist]
-    all_col_d = vcat(col_d, [Symbol("DN$i") for i in 1:dist], [Symbol("DB$i") for i in 1:dist])
-    rename!(res, all_col_d)
+    col_d = [Symbol("D0"), Symbol("D1")]
+    rename!(res, col_d)
     res.guide = guides
     sort!(res, col_d)
     return res
