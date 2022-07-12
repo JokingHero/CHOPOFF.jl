@@ -89,12 +89,12 @@ Prepare hashDB index for future searches using `search_hashDB`.
 
 
 # Arguments
-`name` - Your prefered name for this index for easier identification.
+`name` - Your prefered name for this index to ease future identification.
 
 `genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
                also prepare fasta index file with ".fai" extension.
 
-`motif`   - Motif deines what kind of gRNA to search for.
+`motif`   - Motif defines what kind of gRNA to search for.
 
 `storagedir`  - Folder path to the where index will be saved with name `hashDB.bin`.
 

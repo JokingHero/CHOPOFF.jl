@@ -2,17 +2,19 @@ struct DictDB
     dict::IdDict
     mtp::MotifPathTemplates
     dbi::DBInfo
+    ambig::Union{AmbigIdx, Nothing}
 end
 
 
 function build_guide_dict(dbi::DBInfo, max_count::Int, guide_type::Type{T}) where T <: Union{UInt64, UInt128}
     max_count_type = smallestutype(unsigned(max_count))
     guides = Vector{guide_type}()
-    gatherofftargets!(guides, dbi) # we ignore ambig
+    ambig = gatherofftargets!(guides, dbi)
+    ambig = length(ambig) > 0 ? AmbigIdx(ambig, nothing) : nothing
     guides = sort(guides)
     guides, counts = ranges(guides)
     counts = convert.(max_count_type, min.(length.(counts), max_count))
-    return IdDict{guide_type, max_count_type}(zip(guides, counts))
+    return IdDict{guide_type, max_count_type}(zip(guides, counts)), ambig
 end
 
 
@@ -22,18 +24,17 @@ function build_dictDB(
     motif::Motif,
     storagedir::String)
 
-    if motif.distance != 1 || motif.ambig_max != 0
-        @info "Distance set to 1 and ambig_max set to 0."
+    if motif.distance != 1
+        @info "Distance set to 1."
         motif = setdist(motif, 1)
-        motif = setambig(motif, 0)
     end
     dbi = DBInfo(genomepath, name, motif)
     @info "Building Dictionary..."
-    dict = build_guide_dict(dbi, Int(typemax(UInt32)), UInt128)
+    dict, ambig = build_guide_dict(dbi, Int(typemax(UInt32)), UInt64)
     @info "Building Motif templates..."
     mtp = build_motifTemplates(motif)
 
-    db = DictDB(dict, mtp, dbi)
+    db = DictDB(dict, mtp, dbi, ambig)
     save(db, joinpath(storagedir, "dictDB.bin"))
     @info "Finished constructing dictDB in " * storagedir
     @info "Database size is:" *
@@ -60,8 +61,8 @@ function search_dictDB(
 
     sdb = load(joinpath(storagedir, "dictDB.bin"))
     guides_ = copy(guides)
-    len = length(sdb.dbi.motif)
     len_noPAM_noEXT = length_noPAM(sdb.dbi.motif)
+    len = len_noPAM_noEXT + sdb.dbi.motif.distance
 
     if any(len_noPAM_noEXT .!= length(guides_))
         throw("Guide queries are not of the correct length to use with this Motif: " * string(motif))
@@ -81,6 +82,13 @@ function search_dictDB(
 
         res[i, 1] = Base.mapreduce(x -> get(sdb.dict, convert(UInt128, x), 0), +, d0)
         res[i, 2] = Base.mapreduce(x -> get(sdb.dict, convert(UInt128, x), 0), +, d1)
+
+        if !isnothing(sdb.ambig)
+            bits_mapped = Base.map(x -> findbits(x, sdb.ambig), d0)
+            res[i, 1] += sum(reduce(.|, bits_mapped))
+            bits_mapped = Base.map(x -> findbits(x, sdb.ambig), d1)
+            res[i, 2] +=  sum(reduce(.|, bits_mapped))
+        end
     end
 
     res = DataFrame(res, :auto)

@@ -1,12 +1,15 @@
 struct BinDB{T<:Unsigned}
     bins::Vector{BloomFilter}
     counts::Vector{T}
+    mtp::MotifPathTemplates
     dbi::DBInfo
+    ambig::Union{AmbigIdx, Nothing}
 end
 
 
-function estimate(db::BinDB, guide::LongDNA{4})
-    for i in length(db.counts):-1:1
+function estimate(db::BinDB, guide::LongDNA{4}, right::Bool)
+    direction = right ? (1:length(db.bins)) : (length(db.bins):-1:1)
+    for i in direction
         if guide in db.bins[i]
             return db.counts[i]
         end
@@ -15,11 +18,65 @@ function estimate(db::BinDB, guide::LongDNA{4})
 end
 
 
-function estimate(db::BinDB, guide::String)
-    return estimate(db, LongDNA{4}(guide))
+function estimate(db::BinDB, guide::String, right::Bool)
+    return estimate(db, LongDNA{4}(guide), right)
 end
 
 
+"""
+```
+build_binDB(
+    name::String,
+    genomepath::String, 
+    motif::Motif,
+    storagedir::String,
+    dictDB::String = "";
+    probability_of_error::Float64 = 0.001,
+    max_count::Int = 10)
+```
+
+Prepare binDB index for future searches using `search_binDB`.
+
+
+# Arguments
+`name` - Your prefered name for this index to ease future identification.
+
+`genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
+               also prepare fasta index file with ".fai" extension.
+
+`motif`   - Motif defines what kind of gRNA to search for.
+
+`storagedir`  - Folder path to the where index will be saved with name `binDB.bin`.
+
+`dictDB`  - Optional. Supply folder directory where dictDB.bin is located, bypasses normal DB build and reuses dictDB dataset (quicker).
+
+`probability_of_error` - What is the false positive rate that we would like to achieve? 
+             
+`max_count`  - Above this count we put all unique off-targets into one bin. 
+               Put number here that is the minimum number of off-targets that you think is fine
+               for the distance of 1.
+
+
+# Examples
+```julia-repl
+# make a temporary directory
+tdir = tempname()
+bdb_path = joinpath(tdir, "binDB")
+mkpath(bdb_path)
+
+# use CRISPRofftargetHunter example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        "test", "sample_data", "genome", "semirandom.fa"))
+
+# finally, build a binDB
+build_binDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 1, ambig_max = 0), 
+    bdb_path)
+```
+"""
 function build_binDB(
     name::String, 
     genomepath::String, 
@@ -29,28 +86,29 @@ function build_binDB(
     probability_of_error::Float64 = 0.001,
     max_count::Int = 10)
 
-    if motif.distance != 0 || motif.ambig_max != 0
-        @info "Distance and ambig_max enforced to 0."
-        motif = setdist(motif, 0)
-        motif = setambig(motif, 0)
+    if motif.distance != 1
+        @info "Distance and ambig_max enforced to 1."
+        motif = setdist(motif, 1)
     end
-    @info motif
     dbi = DBInfo(genomepath, name, motif)
 
     # first we measure how many unique guides there are
     max_count_type = smallestutype(unsigned(max_count))
     if dictDB == ""
         @info "Building Dictionary..."
-        dict = build_guide_dict(dbi, max_count, UInt128)
+        dict, ambig = build_guide_dict(dbi, max_count, UInt64)
     else 
         dict = load(joinpath(dictDB, "dictDB.bin"))
         dict = dict.dict
+        ambig = dict.ambig
         ktype = valtype(dict)
         if max_count > typemax(ktype)
             throw("Dictionary supports only up to " * string(typemax(ktype)) * 
                 " max_count and current max_count is " * string(max_count))
         end
     end
+    @info "Building Motif templates..."
+    mtp = build_motifTemplates(motif)
     max_count = convert(max_count_type, max_count)
 
     counts = IdDict{UInt8, Int}()
@@ -62,7 +120,7 @@ function build_binDB(
         end
     end
 
-    # we sort size of the key from smallest to biggest
+    # we sort size of the key from small to large
     order = sortperm(collect(keys(counts)))
     counts = collect(counts)
     counts = counts[order]
@@ -77,53 +135,40 @@ function build_binDB(
         push!(bins, BloomFilter(params.m, params.k))
     end
     counts = [x.first for x in counts]
-    len_noPAM = length_noPAM(dbi.motif)
+    len_noPAM = length_noPAM(dbi.motif) + dbi.motif.distance
 
+    # fill up the bins with our guides
     for (guide, real_count) in dict
         if real_count > max_count
             real_count = max_count
         end
         idx = findfirst(x -> x == real_count, counts)
-        guide = LongDNA{4}(guide, len_noPAM)
-        if isambig(guide)
-            guide = expand_ambiguous(guide)
-            for g in guide
-                push!(bins[idx], g)
-            end
-        else
-            push!(bins[idx], guide)
-        end
+        push!(bins[idx], LongDNA{4}(guide, len_noPAM))
     end
     
-    db = BinDB(bins, counts, dbi)
+    db = BinDB(bins, counts, mtp, dbi, ambig)
     save(db, joinpath(storagedir, "binDB.bin"))
 
     # use full db to estimate error rate!
-    conflict = 0
-    error = Vector{Int}()
-    len_noPAM = length_noPAM(dbi.motif)
+    error_right = 0
+    error_left = 0
     for (guide, real_count) in dict
         guide = LongDNA{4}(guide, len_noPAM)
         if iscertain(guide)
-            est_count = estimate(db, guide)
             if real_count >= max_count
                 real_count = max_count
             end
-            if  real_count != est_count
-                conflict += 1
-                push!(error, Int(est_count) - Int(real_count))
-            end
+            error_right += Int(estimate(db, guide, true) != real_count)
+            error_left += Int(estimate(db, guide, false) != real_count)
         end
     end
-    error_rate = conflict / length(dict)
 
     @info "Finished constructing binDB in " * storagedir * " consuming "  * 
         string(round((filesize(joinpath(storagedir, "binDB.bin")) * 1e-6); digits = 3)) * 
         " mb of disk space."
-    @info "Estimated probability of miscounting an element in the bins is " * string(round(error_rate; digits = 6))
-    if length(error) > 1
-        @info "Mean error was " * string(mean(error))
-    end
+    @info "Estimated probability of miscounting an element in the bins is - Right: " * 
+        string(round(error_right / length(dict); digits = 6)) * " Left: " * 
+        string(round(error_left / length(dict); digits = 6))
     @info "Database is consuming: " * 
         string(round((filesize(joinpath(storagedir, "binDB.bin")) * 1e-6); digits = 3)) * 
         " mb of disk space."
@@ -132,44 +177,67 @@ end
 
 
 """
-`search_binDB(
+```
+search_binDB(
     storagedir::String,
-    guides::Vector{LongDNA{4}})`
+    guides::Vector{LongDNA{4}},
+    right::Bool)
+```
 
-Results are estimations of offtarget counts in the genome.
+Estimate off-target counts for `guides` using hashDB stored at `storagedir`.
 
-If CMS column is 0, it is guaranteed this guide has 
-no 0-distance off-targets in the genome!
+Probabilistic filter offers a guarantee that it will always be correct when a sequence 
+is in the set (no false negatives), but may overestimate that a sequence is in the set 
+while it is not (false positive) with low probability. If both columns in the results are 0, 
+it is guaranteed this gRNA has no off-targets in the genome!
 
 Also, maximum count for each off-target in the database is capped,
-to `max_count` specified during building of binsDB. This means 
-that counts larger than `max_count` (default 50) are no longer
-estimating correctly, but we know at least 50 off-targets exist in 
-the genome. Its likely you would not care for those guides anyhow.
+to `max_count` specified during building of hashDB. This means 
+that counts larger than `max_count` are no longer estimating correctly.
+Its likely you would not care for those guides anyhow.
 
-In principle, you can use `distance` of any size, but for each increasing distance value
-we have recurent solution that slows down significantly from distance 3 and upwards. These estimations
-should be used normally just as prefiltering step for the guideRNA's, therefore checking just distance 0,
-and distance 1 off-targets should be enough to rank the guides. For increasing distances partial errors in
-estimations are stacking and overwhelm real estimations quickly.
+`right` argument specifies whether the databse should be checked in direction from 
+unique off-targets which occur once to increasingly more occuring off-targets up until 
+`max_count` is reached, which may result in assuming lower than real off-target counts 
+(underestimate) for some of the sequences, however this approach will not reject any 
+gRNAs that should not be rejected and is suitable for filtering of gRNAs we do not need. 
+Left (`right = false`, or hight-counts to low-counts) approach is also supported, 
+which can be used for ordering of gRNAs to the best of database ability. 
+Left approach may overestimate counts for some gRNAs. When gRNA is reported as 
+off-target free it is also guaranteed to be true in both cases (low-to-high and high-to-low).
 
-## Result
+# Examples
+```julia-repl
+# prepare libs
+using CRISPRofftargetHunter, BioSequences
 
-Returns .csv table with the following columns:
+# make a temporary directory
+tdir = tempname()
+hdb_path = joinpath(tdir, "hashDB")
+mkpath(hdb_path)
 
-D0, D1 ... D`distance` - these are estimated counts of off-targets for given guideRNA, 
-each column for increasing `distance`, these is also a sum of the corresponding DN and DB columns
+# use CRISPRofftargetHunter example genome
+coh_path = splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1]
+genome = joinpath(vcat(coh_path, "test", "sample_data", "genome", "semirandom.fa"))
 
-DN1, DN2, ... DN`distance`- these values are estimated counts of off-targets for given guideRNA,
-each column for increasing `distance`, but these values are for guaranteed "within" distance off-targets
+# build a hashDB
+build_hashDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 1, ambig_max = 0), 
+    hdb_path)
 
-DB1, DB2, ... DB`distance` - same as above, but these values are representing "borderline cases" where 
-genomic extension is not known and only asummed the worse case. These values are assuming worst case, 
-and therefore are overestimating extensively with increasing `distance`.
+# load up example gRNAs
+guides_s = Set(readlines(joinpath(vcat(coh_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides = LongDNA{4}.(guides_s)
+
+# finally, get results!
+hdb_res = search_hashDB(hdb_path, guides, false)
+```
 """
 function search_binDB(
     storagedir::String,
-    guides::Vector{LongDNA{4}})
+    guides::Vector{LongDNA{4}},
+    right::Bool)
 
     if any(isambig.(guides))
         throw("Ambiguous bases are not allowed in guide queries.")
@@ -177,6 +245,12 @@ function search_binDB(
 
     bdb = load(joinpath(storagedir, "binDB.bin"))
     guides_ = copy(guides)
+    len_noPAM_noEXT = length_noPAM(bdb.dbi.motif)
+    len = len_noPAM_noEXT + bdb.dbi.motif.distance
+
+    if any(len_noPAM_noEXT .!= length(guides_))
+        throw("Guide queries are not of the correct length to use with this Motif: " * string(motif))
+    end
     # reverse guides so that PAM is always on the left
     if bdb.dbi.motif.extends5
         guides_ = reverse.(guides_)
@@ -185,23 +259,21 @@ function search_binDB(
     # TODO check that seq is in line with motif
     res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
-        res[i, 1] += estimate(bdb, s) # 0 distance
-        
-        #=
-        for d in 1:dist
-            norm_d, border_d = comb_of_d(string(s), d)
-            norm_d_res = ThreadsX.sum(estimate(bdb, sd) for sd in norm_d)
-            border_d_res = ThreadsX.sum(estimate(bdb, sd) for sd in border_d)
-            res[i, d + 1] = norm_d_res + border_d_res
-            res[i, dist + d + 1] = norm_d_res
-            res[i, dist * 2 + d + 1] = border_d_res
-        end
-        =#
 
-        norm_d, border_d = comb_of_d1(s)
-        border_d = [x[1:end-1] for x in border_d]
-        norm_d = collect(Set(vcat(collect(norm_d), border_d)))
-        res[i, 2] = ThreadsX.sum(estimate(bdb, x) for x in norm_d)
+        pat = CRISPRofftargetHunter.templates_to_sequences(s, bdb.mtp; dist = 1, reducible = false)
+        d0 = Set(expand_path(pat[1], len))
+        d1 = Set(mapreduce(x -> expand_path(x, len), vcat, pat[2:end]))
+        d1 = setdiff(d1, d0) # remove d0 from d1
+
+        res[i, 1] = Base.mapreduce(x -> estimate(bdb, x, right), +, d0)
+        res[i, 2] = Base.mapreduce(x -> estimate(bdb, x, right), +, d1)
+
+        if !isnothing(bdb.ambig)
+            bits_mapped = Base.map(x -> findbits(x, bdb.ambig), d0)
+            res[i, 1] += sum(reduce(.|, bits_mapped))
+            bits_mapped = Base.map(x -> findbits(x, bdb.ambig), d1)
+            res[i, 2] +=  sum(reduce(.|, bits_mapped))
+        end
     end
 
     res = DataFrame(res, :auto)
