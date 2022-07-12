@@ -264,6 +264,8 @@ function search_binDB(
         d0 = Set(expand_path(pat[1], len))
         d1 = Set(mapreduce(x -> expand_path(x, len), vcat, pat[2:end]))
         d1 = setdiff(d1, d0) # remove d0 from d1
+        d0 = collect(d0)
+        d1 = collect(d1)
 
         res[i, 1] = Base.mapreduce(x -> estimate(bdb, x, right), +, d0)
         res[i, 2] = Base.mapreduce(x -> estimate(bdb, x, right), +, d1)

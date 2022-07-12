@@ -1,9 +1,8 @@
 struct HashDB{T<:Unsigned, K<:Union{UInt8, UInt16, UInt32}}
     dbi::DBInfo
-    bins_d0::Vector{BinaryFuseFilter{K}}
-    counts_d0::Vector{T}
-    bins_d1::Vector{BinaryFuseFilter{K}}
-    counts_d1::Vector{T}
+    mtp::MotifPathTemplates
+    bins::Vector{BinaryFuseFilter{K}}
+    counts::Vector{T}
     ambig::Union{AmbigIdx, Nothing}
 end
 
@@ -42,8 +41,8 @@ function guides_to_bins(
     bins_counts = bins_counts[order]
 
     # use full db to estimate error rate!
-    error_right = Vector{Int}()
-    error_left = Vector{Int}()
+    err_r = 0
+    err_l = 0
     for (guide, real_count) in zip(guides, counts)
         est_count_right = get_count_idx(bins, guide, true)
         if isnothing(est_count_right) 
@@ -57,18 +56,12 @@ function guides_to_bins(
         else
             est_count_left = bins_counts[est_count_left]
         end
-
-        if  real_count != est_count_right
-            push!(error_right, Int(est_count_right) - Int(real_count))
-        end
-
-        if  real_count != est_count_left
-            push!(error_left, Int(est_count_left) - Int(real_count))
-        end
+        err_r += Int(real_count != est_count_right)
+        err_l += Int(real_count != est_count_left)
     end
-    error_rate_left = length(error_left) / length(guides)
-    error_rate_right = length(error_right) / length(guides)
-    return bins, bins_counts, error_rate_left, error_rate_right
+    return bins, bins_counts, 
+        length(err_l) / length(guides), 
+        length(err_r) / length(guides)
 end
 
 
@@ -146,6 +139,8 @@ function build_hashDB(
         @info "Distance enforced to 1."
         motif = setdist(motif, 1)
     end
+    @info "Building Motif templates..."
+    mtp = build_motifTemplates(motif)
     
     # gather all unique off-targets
     guides = Vector{UInt64}()
@@ -153,25 +148,17 @@ function build_hashDB(
     ambig = length(ambig) > 0 ? AmbigIdx(ambig, nothing) : nothing
 
     # guides are here of length 21
-    bins_d1, counts_d1, error_d1_right, error_d1_left = 
+    bins, counts, err_left, err_right = 
         guides_to_bins(guides, seed, max_iterations, max_count; precision = precision)
-
-    # now D0
-    guides = guides .>> 2 # removes extension
-    bins_d0, counts_d0, error_d0_right, error_d0_left = 
-        guides_to_bins(guides, seed, max_iterations, max_count; precision = precision)
-
-    db = HashDB(dbi, bins_d0, counts_d0, bins_d1, counts_d1, ambig)
+    db = HashDB(dbi, mtp, bins, counts, ambig)
     save(db, joinpath(storagedir, "hashDB.bin"))
 
     @info "Finished constructing hashDB in " * storagedir * " consuming "  * 
         string(round((filesize(joinpath(storagedir, "hashDB.bin")) * 1e-6); digits = 3)) * 
         " mb of disk space."
     @info "Estimated probability of miscounting an elements in the bins is: " * 
-        "\nRight: D0 " * string(round(error_d0_right; digits = 6)) * 
-        " D1 " * string(round(error_d1_right; digits = 6)) * 
-        "\nLeft: D0 " * string(round(error_d0_left; digits = 6)) * 
-        " D1 " * string(round(error_d1_left; digits = 6))
+        "\nRight: " * string(round(err_right; digits = 6)) *
+        "\nLeft: " * string(round(err_left; digits = 6))
     return storagedir
 end
 
@@ -263,43 +250,51 @@ function search_hashDB(
 
     db = load(joinpath(storagedir, "hashDB.bin"))
     guides_ = copy(guides)
+    len_noPAM_noEXT = length_noPAM(db.dbi.motif)
+    len = len_noPAM_noEXT + db.dbi.motif.distance
+
+    if any(len_noPAM_noEXT .!= length(guides_))
+        throw("Guide queries are not of the correct length to use with this Motif: " * string(motif))
+    end
     # reverse guides so that PAM is always on the left
     if db.dbi.motif.extends5
         guides_ = reverse.(guides_)
     end
 
-    # TODO check that seq is in line with motif
     res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
-        # 0 distance
-        res[i, 1] += isnothing(db.ambig) ? 0 : sum(findbits(s, db.ambig))
-        idx = get_count_idx(db.bins_d0, convert(UInt64, s), right)
-        if !isnothing(idx)
-            res[i, 1] += db.counts_d0[idx]
-        end
-        
-        norm, border = comb_of_d1(s)
-        norm = collect(norm)
-        for comb in convert.(UInt64, norm)
-            idx = get_count_idx(db.bins_d0, comb, right)
+
+        pat = CRISPRofftargetHunter.templates_to_sequences(s, db.mtp; dist = 1, reducible = false)
+        d0 = Set(expand_path(pat[1], len))
+        d1 = Set(mapreduce(x -> expand_path(x, len), vcat, pat[2:end]))
+        d1 = setdiff(d1, d0) # remove d0 from d1
+        d0 = collect(d0)
+        d1 = collect(d1)
+
+        for d0_s in convert.(UInt64, d0)
+            idx = get_count_idx(db.bins, d0_s, right)
             if !isnothing(idx)
-                res[i, 2] += db.counts_d0[idx]
+                res[i, 1] += db.counts[idx]
             end
         end
-        
-        for comb in convert.(UInt64, border)
-            idx = get_count_idx(db.bins_d1, comb, right)
+
+        for d1_s in convert.(UInt64, d1)
+            idx = get_count_idx(db.bins, d1_s, right)
             if !isnothing(idx)
-                idx0 = get_count_idx(db.bins_d0, comb >> 2, right)
-                if !isnothing(idx0)
-                    res[i, 2] += db.counts_d1[idx]
-                end
+                res[i, 2] += db.counts[idx]
             end
         end
 
         if !isnothing(db.ambig)
-            bits_mapped = map(x -> findbits(x, db.ambig), vcat(norm, border))
-            res[i, 2] += sum(reduce(.|, bits_mapped))
+            bits_mapped = Base.map(x -> findbits(x, db.ambig), d0)
+            res[i, 1] += sum(reduce(.|, bits_mapped))
+            bits_mapped = Base.map(x -> findbits(x, db.ambig), d1)
+            res[i, 2] +=  sum(reduce(.|, bits_mapped))
+        end
+
+        idx = get_count_idx(db.bins, convert(UInt64, s), right)
+        if !isnothing(idx)
+            res[i, 1] += db.counts[idx]
         end
     end
 

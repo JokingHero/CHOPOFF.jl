@@ -79,9 +79,11 @@ function search_dictDB(
         d0 = Set(expand_path(pat[1], len))
         d1 = Set(mapreduce(x -> expand_path(x, len), vcat, pat[2:end]))
         d1 = setdiff(d1, d0) # remove d0 from d1
+        d0 = collect(d0)
+        d1 = collect(d1)
 
-        res[i, 1] = Base.mapreduce(x -> get(sdb.dict, convert(UInt128, x), 0), +, d0)
-        res[i, 2] = Base.mapreduce(x -> get(sdb.dict, convert(UInt128, x), 0), +, d1)
+        res[i, 1] = Base.mapreduce(x -> get(sdb.dict, convert(UInt64, x), 0), +, d0)
+        res[i, 2] = Base.mapreduce(x -> get(sdb.dict, convert(UInt64, x), 0), +, d1)
 
         if !isnothing(sdb.ambig)
             bits_mapped = Base.map(x -> findbits(x, sdb.ambig), d0)

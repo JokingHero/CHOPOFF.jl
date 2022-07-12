@@ -299,8 +299,7 @@ end
         hdb_res2 = Matrix(hdb_res)
         for i in 1:length(guides)
             compare = ddb_res2[i, 1:2] .<= hdb_res2[i, 1:2]
-            # TODO fix this bug
-            # @test all(compare)
+            @test all(compare)
             if !all(compare)
                 @info "Failed at guideS $i " * string(guides[i])
                 @info "dictDB result: " * string(ddb_res2[i, :])
@@ -308,19 +307,18 @@ end
             end
         end
         
-        # TODO fixme
         # Now check complete dictionary vs hashDB - never underestimate
-        #dDB = CRISPRofftargetHunter.load(joinpath(ddb_path, "dictDB.bin"))
-        #bDB = CRISPRofftargetHunter.load(joinpath(hdb_path, "hashDB.bin"))
-        #len_noPAM = CRISPRofftargetHunter.length_noPAM(dDB.dbi.motif) + dDB.dbi.motif.distance
-        #for (key, value) in dDB.dict
-        #    key = LongDNA{4}(key, len_noPAM) # all same length - check with D0
-        #    if iscertain(key)
-        #        # right false, means it can never underestimate
-        #        svalue = CRISPRofftargetHunter.get_count_idx(bDB.bins_d0, convert(UInt64, key), false)
-        #       @test value <= svalue
-        #    end
-        #end
+        dDB = CRISPRofftargetHunter.load(joinpath(ddb_path, "dictDB.bin"))
+        bDB = CRISPRofftargetHunter.load(joinpath(hdb_path, "hashDB.bin"))
+        len_noPAM = CRISPRofftargetHunter.length_noPAM(dDB.dbi.motif) + dDB.dbi.motif.distance
+        for (key, value) in dDB.dict
+            key = LongDNA{4}(key, len_noPAM) # all same length - check with D0
+            if iscertain(key)
+                # right false, means it can never underestimate
+                svalue = CRISPRofftargetHunter.get_count_idx(bDB.bins, convert(UInt64, key), false)
+               @test value <= svalue
+            end
+        end
     end
 
     
