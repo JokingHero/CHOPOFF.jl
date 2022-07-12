@@ -44,10 +44,9 @@ function build_dictDB(
 end
 
 
-function get_path_count(dict::IdDict, path::Path, len::Int)
+function expand_path(path::Path, len::Int)
     path_seq = path.seq * repeat(dna"N", len - path.seq_len)
-    ext_path = expand_ambiguous(path_seq)
-    return mapreduce(x -> get(dict, convert(UInt128, x), 0), +, ext_path)
+    return expand_ambiguous(path_seq)
 end
 
 
@@ -75,24 +74,13 @@ function search_dictDB(
     res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
 
-        pat = CRISPRofftargetHunter.templates_to_sequences(s, sdb.mtp; dist = 1)
-        counts = Base.map(x -> get_path_count(sdb.dict, x, len), pat)
-        # we need to keep track of reducibles
-        # reducible should not include counts from that path
-        # this is simpler as we only have distances of 0 and 1 to worry about
-        d0_loc = 0
-        for (j, p) in enumerate(pat)
-            if p.reducible != 0 && (p.dist < pat[p.reducible].dist)
-                counts[p.reducible] -= counts[j]
-            end
+        pat = CRISPRofftargetHunter.templates_to_sequences(s, sdb.mtp; dist = 1, reducible = false)
+        d0 = Set(expand_path(pat[1], len))
+        d1 = Set(mapreduce(x -> expand_path(x, len), vcat, pat[2:end]))
+        d1 = setdiff(d1, d0) # remove d0 from d1
 
-            if p.dist == 0
-                d0_loc = j
-            end
-        end
-        
-        res[i, 1] = counts[d0_loc]
-        res[i, 2] = sum(counts) - counts[d0_loc]
+        res[i, 1] = Base.mapreduce(x -> get(sdb.dict, convert(UInt128, x), 0), +, d0)
+        res[i, 2] = Base.mapreduce(x -> get(sdb.dict, convert(UInt128, x), 0), +, d1)
     end
 
     res = DataFrame(res, :auto)

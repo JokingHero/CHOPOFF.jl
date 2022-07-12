@@ -111,7 +111,8 @@ end
 function templates_to_sequences(
     guide::LongDNA{4}, 
     template::CRISPRofftargetHunter.MotifPathTemplates;
-    dist::Int = length(template) - 1)
+    dist::Int = length(template) - 1,
+    reducible::Bool = true)
 
     if length(guide) != CRISPRofftargetHunter.length_noPAM(template.motif)
         throw("Wrong guide length.")
@@ -144,6 +145,9 @@ function templates_to_sequences(
         append!(ps, ThreadsX.map(x -> Path(x, length(x), di, 0), seq))
     end
 
+    if !reducible # this will return simply seqeuences which can be repeats, D0 in front
+        return ThreadsX.sort!(ps, by = p -> (p.dist, p.seq))
+    end
     ThreadsX.sort!(ps, by = p -> (p.seq, p.dist))
 
     to_remove = zeros(Bool, length(ps))
