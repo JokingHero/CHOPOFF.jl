@@ -248,8 +248,8 @@ function search_binDB(
     len_noPAM_noEXT = length_noPAM(bdb.dbi.motif)
     len = len_noPAM_noEXT + bdb.dbi.motif.distance
 
-    if any(len_noPAM_noEXT .!= length(guides_))
-        throw("Guide queries are not of the correct length to use with this Motif: " * string(motif))
+    if any(len_noPAM_noEXT .!= length.(guides_))
+        throw("Guide queries are not of the correct length to use with this Motif: " * string(bdb.dbi.motif))
     end
     # reverse guides so that PAM is always on the left
     if bdb.dbi.motif.extends5

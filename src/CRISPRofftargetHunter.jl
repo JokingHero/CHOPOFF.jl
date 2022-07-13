@@ -424,6 +424,7 @@ function main(args::Array{String})
         elseif args["type"] == "dictDB"
             res = search_dictDB(args["database"], guides)
         elseif args["type"] == "binDB"
+            @info "Right set as: " * string(args["right"])
             res = search_binDB(args["database"], guides, args["right"])
         elseif args["type"] == "vcfDB"
             res = search_vcfDB(args["database"], guides)

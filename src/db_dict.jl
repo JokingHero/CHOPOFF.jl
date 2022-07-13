@@ -64,8 +64,8 @@ function search_dictDB(
     len_noPAM_noEXT = length_noPAM(sdb.dbi.motif)
     len = len_noPAM_noEXT + sdb.dbi.motif.distance
 
-    if any(len_noPAM_noEXT .!= length(guides_))
-        throw("Guide queries are not of the correct length to use with this Motif: " * string(motif))
+    if any(len_noPAM_noEXT .!= length.(guides_))
+        throw("Guide queries are not of the correct length to use with this Motif: " * string(sdb.dbi.motif))
     end
     # reverse guides so that PAM is always on the left
     if sdb.dbi.motif.extends5
