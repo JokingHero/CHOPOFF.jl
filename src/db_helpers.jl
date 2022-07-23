@@ -176,7 +176,9 @@ function gatherofftargets(
     if length(dbi.motif) != 0
         guides_pos = findguides(dbi, chrom, reverse_comp)
         guides = ThreadsX.map(x -> removepam(chrom[x], pam_loci), guides_pos)
-        guides = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
+        if dbi.motif.distance > 0
+            guides = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
+        end
         guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, reverse_comp)
         guides_pos = convert.(dbi.gi.pos_type, guides_pos)
         loc = Loc.(chrom_name_, guides_pos, !reverse_comp)

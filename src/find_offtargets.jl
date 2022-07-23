@@ -126,6 +126,7 @@ function pushguides!(
             guides = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
         end
         guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, reverse_comp)
+        guides_pos = nothing # not needed for anything and uses a lot of space
         
         idx = ThreadsX.map(isambig, guides)
         if sum(idx) != 0

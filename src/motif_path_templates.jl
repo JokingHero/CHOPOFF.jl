@@ -32,24 +32,49 @@ function remove_gap!(x::Vector{Int}, gap_idx::Int)
 end
 
 
+"""
+```
+adj_matrix_of_guide(
+    len::Int, d::Int; 
+    mismatch_only::Bool = false)
+```
+
+Builds up a shortened version of the alignment graph.
+Bases are numbered as: all guide bases (1:len) + Ending times
+all the distance we want to extend to, afterwards we add numbering for 
+Insertions, Gap and Mismatches - 3 for each distance.
+Then for finding all possible alignment with distance 0, you would check
+path from node 1 to node (guide length + 1). For distance 1, you would check
+all paths from node 1 to (guide length + 1) * 2.
+
+# Arguments
+`len` - length of the seqeunce (e.g. guide)
+
+`d` - Maximal distance on which to build the graph.
+
+`mismatch_only`   -  Whether to skip insertions/deletions.
+
+"""
 function adj_matrix_of_guide(len::Int, d::Int; mismatch_only::Bool = false) 
-    l_g = len * (d + 1) # guide bases last
-    l_idm = l_g + (len - 1) * 3 * d #  all ins, del, mm last
+    # notParent is a description for mismatch - it is a base that is not the base of parent node
+    l_g = (len + 1) * (d + 1) # guide bases + Ending/Nothing/E - last position
+    # + 1 below is last mm from last base to last base on next distance
+    l_idm = l_g + (len * 3) * d #  all ins, del, mm - last position
 
     # fill up all connections
     # horizontal connections (between) guide bases
     adj = zeros(Bool, l_idm, l_idm)
     for di in 1:(d + 1)
-        for i in 1:(len-1)
-            adj[len * (di - 1) + i, len * (di - 1) + i + 1] = 1
+        for i in 1:len
+            adj[(len + 1) * (di - 1) + i, (len + 1) * (di - 1) + i + 1] = 1
         end
     end
     # vertical connections (between) guide bases - N/Gap/notParent - base on another level
     for di in 1:d
-        for i in 1:(len-1)
-            parent = len * (di - 1) + i
-            parent_d_next = len * di + i
-            n = l_g + (len - 1) * (di - 1) * 3 + (i - 1) * 3 + 1
+        for i in 1:len
+            parent = (len + 1) * (di - 1) + i
+            parent_d_next = (len + 1) * di + i
+            n = l_g + len * (di - 1) * 3 + (i - 1) * 3 + 1
 
             if !mismatch_only
                 # N
@@ -74,27 +99,31 @@ function build_motifTemplates(motif::Motif; storagepath::String = "", mismatch_o
     len = length_noPAM(motif)
     d = motif.distance
 
-    # guide + not guide + N + Gap
-    # 1:20    21:30       31  32
-    # 1:len   len+1:len*2 len*2 + 1, len*2 + 2
-    adj = adj_matrix_of_guide(len, d; mismatch_only = mismatch_only)
+    # path is mapped to these numbers, path numbers are
+    # (len + end) * (dist  + 1) and
+    # (Ins (N) + Gap + MM) * len * dist
+    # and they should be mapped to
+    # guide + not guide + N + Gap + remove last index as it is ending node
+    # 1:20    21:40       41  42
+    # 1:len   len+1:len*2 len*2 + 1, len*2 + 2, len*2 + 3
 
-    ngp = repeat([len * 2 + 1, len * 2 + 2, len * 2 + 3], (len - 1) * d)
-    # replace noParents with proper links to noParents
+    adj = adj_matrix_of_guide(len, d; mismatch_only = mismatch_only)
+    ngp = repeat([len * 2 + 1, len * 2 + 2, len * 2 + 3], len * d)
+    # replace noParents (mismatches - not guide) with proper links to noParents
     for di in 1:d
-        for i in 1:(len - 1)
-            ngp[((len - 1) * (di - 1) * 3) + i * 3] = len + i 
+        for i in 1:len
+            ngp[((len) * (di - 1) * 3) + i * 3] = len + i 
         end
     end
-    adj_map_to_guide = vcat(repeat(1:len, d + 1), ngp)
+    adj_map_to_guide = vcat(repeat(vcat(1:len, 0), d + 1), ngp)
 
     paths = IdDict{Int64, Vector{Vector{Int64}}}()
     gap_idx = len * 2 + 2
     is_seq_idx = collect(1:len)
     for di in 1:(d + 1)
-        pd = path_enumeration(1, len * di, adj)
-        #pd = map(x -> x.path, pd)
-        pd = map(x -> adj_map_to_guide[x.path], pd)
+        pd = path_enumeration(1, (len + 1) * di, adj)
+        pd = map(x -> adj_map_to_guide[x.path[1:end-1]], pd)
+        # this is to remove 1bp before insertion/mm/gap
         map(x -> remove_1_before_non_horizontal!(x, is_seq_idx), pd)
         map(x -> remove_gap!(x, gap_idx), pd)
         paths[di - 1] = pd
