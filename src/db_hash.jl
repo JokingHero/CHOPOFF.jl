@@ -291,11 +291,6 @@ function search_hashDB(
             bits_mapped = Base.map(x -> findbits(x, db.ambig), d1)
             res[i, 2] +=  sum(reduce(.|, bits_mapped))
         end
-
-        idx = get_count_idx(db.bins, convert(UInt64, s), right)
-        if !isnothing(idx)
-            res[i, 1] += db.counts[idx]
-        end
     end
 
     res = DataFrame(res, :auto)
