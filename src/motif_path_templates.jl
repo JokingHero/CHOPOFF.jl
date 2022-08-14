@@ -137,10 +137,55 @@ function build_motifTemplates(motif::Motif; storagepath::String = "", mismatch_o
 end
 
 
+
+function templates_to_sequences_by_dist(
+    guide::LongDNA{4}, 
+    template::CRISPRofftargetHunter.MotifPathTemplates;
+    dist::Int = template.motif.distance)
+    len = length_noPAM(template.motif) + template.motif.distance
+
+    if length(guide) != length_noPAM(template.motif)
+        throw("Wrong guide length.")
+    end
+
+    g_ = copy(guide)
+    for (i, base) in enumerate(guide)
+        if base == DNA_A
+            not_base = DNA_B
+        elseif base == DNA_C 
+            not_base = DNA_D
+        elseif base == DNA_T
+            not_base = DNA_V
+        elseif base == DNA_G 
+            not_base = DNA_H
+        end
+        push!(g_, not_base)
+    end
+    push!(g_, DNA_N)
+    push!(g_, DNA_Gap)
+    g_ = collect(g_)
+
+    ps = Vector{Set{LongDNA{4}}}()
+    for di in 0:dist
+        push!(ps, Set(ThreadsX.mapreduce(
+            x -> CRISPRofftargetHunter.expand_ambiguous(
+                LongDNA{4}(g_[x]) * repeat(dna"N", len - length(x))), 
+            vcat,
+            template.paths[di]; init = Vector{LongDNA{4}}())))
+    end
+    # if a sequence can exist in lower distance it belongs there rather than higher distance
+    # dist 0 is at position 1 in ps, d1 at 2
+    for di in 1:dist
+        ps[di + 1] = setdiff(ps[di + 1], union(ps[1:di]...))
+    end
+    return ps
+end
+
+
 function templates_to_sequences(
     guide::LongDNA{4}, 
     template::CRISPRofftargetHunter.MotifPathTemplates;
-    dist::Int = length(template) - 1,
+    dist::Int = template.motif.distance,
     reducible::Bool = true)
 
     if length(guide) != CRISPRofftargetHunter.length_noPAM(template.motif)

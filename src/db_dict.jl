@@ -24,10 +24,10 @@ function build_dictDB(
     motif::Motif,
     storagedir::String)
 
-    if motif.distance != 1
-        @info "Distance set to 1."
-        motif = setdist(motif, 1)
+    if motif.dist > 2 
+        @info "Searches on distances of more than 2 will be very slow! Be warned!"
     end
+
     dbi = DBInfo(genomepath, name, motif)
     @info "Building Dictionary..."
     dict, ambig = build_guide_dict(dbi, Int(typemax(UInt32)), UInt64)
@@ -55,16 +55,11 @@ function search_dictDB(
     storagedir::String,
     guides::Vector{LongDNA{4}})
 
-    if any(isambig.(guides))
-        throw("Ambiguous bases are not allowed in guide queries.")
-    end
-
     sdb = load(joinpath(storagedir, "dictDB.bin"))
     guides_ = copy(guides)
-    len_noPAM_noEXT = length_noPAM(sdb.dbi.motif)
-    len = len_noPAM_noEXT + sdb.dbi.motif.distance
+    dist = sdb.mtp.motif.distance # use maximal distance as the performance is always bottlenecked by that
 
-    if any(len_noPAM_noEXT .!= length.(guides_))
+    if any(length_noPAM(sdb.dbi.motif) .!= length.(guides_))
         throw("Guide queries are not of the correct length to use with this Motif: " * string(sdb.dbi.motif))
     end
     # reverse guides so that PAM is always on the left
@@ -72,29 +67,21 @@ function search_dictDB(
         guides_ = reverse.(guides_)
     end
 
-    res = zeros(Int, length(guides_), 2)
+    res = zeros(Int, length(guides_), dist + 1)
     for (i, s) in enumerate(guides_)
 
-        pat = CRISPRofftargetHunter.templates_to_sequences(s, sdb.mtp; dist = 1, reducible = false)
-        d0 = Set(expand_path(pat[1], len))
-        d1 = Set(mapreduce(x -> expand_path(x, len), vcat, pat[2:end]))
-        d1 = setdiff(d1, d0) # remove d0 from d1
-        d0 = collect(d0)
-        d1 = collect(d1)
+        pat = CRISPRofftargetHunter.templates_to_sequences_by_dist(s, sdb.mtp)
+        for di in 1:(dist + 1)
+            res[i, di] = Base.mapreduce(x -> get(sdb.dict, convert(UInt64, x), 0), +, pat[di])
 
-        res[i, 1] = Base.mapreduce(x -> get(sdb.dict, convert(UInt64, x), 0), +, d0)
-        res[i, 2] = Base.mapreduce(x -> get(sdb.dict, convert(UInt64, x), 0), +, d1)
-
-        if !isnothing(sdb.ambig)
-            bits_mapped = Base.map(x -> findbits(x, sdb.ambig), d0)
-            res[i, 1] += sum(reduce(.|, bits_mapped))
-            bits_mapped = Base.map(x -> findbits(x, sdb.ambig), d1)
-            res[i, 2] +=  sum(reduce(.|, bits_mapped))
+            if !isnothing(sdb.ambig)
+                res[i, di] += sum(Base.mapreduce(x -> findbits(x, sdb.ambig), .|, pat[di]))
+            end
         end
     end
 
     res = DataFrame(res, :auto)
-    col_d = [Symbol("D0"), Symbol("D1")]
+    col_d = [Symbol("D$i") for i in 0:dist]
     rename!(res, col_d)
     res.guide = guides
     sort!(res, col_d)

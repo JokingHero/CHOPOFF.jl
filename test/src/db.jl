@@ -127,7 +127,7 @@ end
     mkpath(ddb_path)
     build_dictDB(
         "samirandom", genome, 
-        Motif("Cas9"; distance = 0, ambig_max = 0),
+        Motif("Cas9"; distance = 2),
         ddb_path)
     ddb_res = search_dictDB(ddb_path, guides)
 
@@ -136,7 +136,7 @@ end
     mkpath(bdb_path)
     build_binDB(
         "samirandom", genome, 
-        Motif("Cas9"; distance = 0, ambig_max = 0), 
+        Motif("Cas9"; distance = 1, ambig_max = 0), 
         bdb_path)
     bdb_res = search_binDB(bdb_path, guides, false)
 
@@ -214,21 +214,11 @@ end
     end
 
 
-    @testset "linearDB vs binDB" begin
-        @test nrow(bdb_res) == length(guides)
-        @test all(bdb_res.guide .== guides)
+    @testset "linearDB vs dictDB" begin
+        @test nrow(ddb_res) == length(guides)
+        @test all(ddb_res.guide .== guides)
         @test all(ldb_res.guide .== guides)
-        ldb_res2 = Matrix(ldb_res[:, 1:2])
-        bdb_res2 = Matrix(bdb_res[:, 1:2])
-        for i in 1:length(guides)
-            compare = ldb_res2[i, :] .<= bdb_res2[i, :]
-            @test all(compare)
-            if !all(compare)
-                @info "Failed at guideS $i " * string(guides[i])
-                @info "linearDB result: " * string(ldb_res2[i, :])
-                @info "binhDB result: " * string(bdb_res2[i, :])
-            end
-        end
+        @test Matrix(ldb_res[:, 1:3]) == Matrix(ddb_res[:, 1:3])
     end
 
 
@@ -265,29 +255,6 @@ end
                 @info "binDB result: " * string(bdb_res2[i, :])
             end
         end
-        
-        # Now check complete dictionary vs sketch
-        dDB = CRISPRofftargetHunter.load(joinpath(ddb_path, "dictDB.bin"))
-        bDB = CRISPRofftargetHunter.load(joinpath(bdb_path, "binDB.bin"))
-        conflict = 0
-        error = Vector{Int}()
-        len_noPAM = CRISPRofftargetHunter.length_noPAM(dDB.dbi.motif) + dDB.dbi.motif.distance
-        for (key, value) in dDB.dict
-            key = LongDNA{4}(key, len_noPAM)
-            if iscertain(key)
-                svalue = CRISPRofftargetHunter.estimate(bDB, key, false)
-                @test value <= svalue
-                if svalue != value
-                    conflict += 1
-                    push!(error, svalue - value)
-                end
-            end
-        end
-        true_error_rate = conflict / length(dDB.dict)
-        @info "True error rate is: $true_error_rate"
-        if length(error) > 0
-            @info "Maximum error: " * string(maximum(error))
-        end
     end
 
     
@@ -304,19 +271,6 @@ end
                 @info "Failed at guideS $i " * string(guides[i])
                 @info "dictDB result: " * string(ddb_res2[i, :])
                 @info "hashDB result: " * string(hdb_res2[i, :])
-            end
-        end
-        
-        # Now check complete dictionary vs hashDB - never underestimate
-        dDB = CRISPRofftargetHunter.load(joinpath(ddb_path, "dictDB.bin"))
-        bDB = CRISPRofftargetHunter.load(joinpath(hdb_path, "hashDB.bin"))
-        len_noPAM = CRISPRofftargetHunter.length_noPAM(dDB.dbi.motif) + dDB.dbi.motif.distance
-        for (key, value) in dDB.dict
-            key = LongDNA{4}(key, len_noPAM) # all same length - check with D0
-            if iscertain(key)
-                # right false, means it can never underestimate
-                svalue = CRISPRofftargetHunter.get_count_idx(bDB.bins, convert(UInt64, key), false)
-               @test value <= svalue
             end
         end
     end
