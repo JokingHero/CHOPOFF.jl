@@ -1,6 +1,6 @@
 # Public Interface
 
-When using CRISPRofftargetHunter as a normal julia package with the exported functions we provide many methods for working with CRISPR gRNA and off-targets for your convenience.
+When using ARTEMIS as a normal julia package with the exported functions we provide many methods for working with CRISPR gRNA and off-targets for your convenience.
 
 ## Abstract gRNA
 

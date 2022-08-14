@@ -1,7 +1,7 @@
-[![Tests & Release](https://github.com/JokingHero/CRISPRofftargetHunter.jl/actions/workflows/build_standalone.yml/badge.svg?branch=master)](https://github.com/JokingHero/CRISPRofftargetHunter.jl/releases/tag/latest) 
+[![Tests & Release](https://github.com/JokingHero/ARTEMIS.jl/actions/workflows/build_standalone.yml/badge.svg?branch=master)](https://github.com/JokingHero/ARTEMIS.jl/releases/tag/latest) 
 ![Coverage is High](./coverage/coverage_fraction.svg)
 
-# CRISPRofftargetHunter  
+# ARTEMIS  
 
 ## About
 

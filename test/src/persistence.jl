@@ -1,6 +1,6 @@
 using Test
 
-using CRISPRofftargetHunter: load, save
+using ARTEMIS: load, save
 using BioSequences
 
 @testset "persistence.jl" begin

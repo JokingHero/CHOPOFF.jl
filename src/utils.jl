@@ -518,7 +518,7 @@ function order_by_hamming_and_prefix(guides::Vector{LongDNA{4}}, i::Int64 = 1)
             if is_done[x]
                 return 0
             else
-                return CRISPRofftargetHunter.hamming(guides[x], g)
+                return ARTEMIS.hamming(guides[x], g)
             end
         end
     
@@ -530,7 +530,7 @@ function order_by_hamming_and_prefix(guides::Vector{LongDNA{4}}, i::Int64 = 1)
             end
         end
     
-        prefix_len = ThreadsX.map(x -> CRISPRofftargetHunter.commonprefix(x, g), guides[g_h_min])
+        prefix_len = ThreadsX.map(x -> ARTEMIS.commonprefix(x, g), guides[g_h_min])
         i = g_h_min[argmax(prefix_len)]
         all_done += 1
         final_order[all_done] = i

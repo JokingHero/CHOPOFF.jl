@@ -1,6 +1,6 @@
 using Test
 
-using CRISPRofftargetHunter
+using ARTEMIS
 using BioSequences
 using CSV
 using DataFrames
@@ -45,7 +45,7 @@ end
 
 
 @testset "databases" begin
-    genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
+    genome = joinpath(dirname(pathof(ARTEMIS)), "..", 
         "test", "sample_data", "genome", "semirandom.fa")
     guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
     guides = LongDNA{4}.(guides_s)
@@ -56,7 +56,7 @@ end
 
     # make and run default vcfDB
     vcf_path = joinpath(tdir, "vcfDB")
-    vcf = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
+    vcf = joinpath(dirname(pathof(ARTEMIS)), "..", 
         "test", "sample_data", "artificial.vcf")
     mkpath(vcf_path)
     build_vcfDB(
@@ -72,11 +72,11 @@ end
     pamdbpath = joinpath(fmi_path, "pamDB.bin")
     build_pamDB(fmi_path, Motif("Cas9"; distance = 3, ambig_max = 0); storagedir = pamdbpath)
     pamDB_res = search_pamDB(fmi_path, genome, pamdbpath, guides; detail = "", distance = 3)
-    template = CRISPRofftargetHunter.build_motifTemplates(Motif("Cas9"; distance = 2, ambig_max = 0))
+    template = ARTEMIS.build_motifTemplates(Motif("Cas9"; distance = 2, ambig_max = 0))
     fmi_patterns = search_fmiDB_patterns(fmidbpath, "", template, guides; distance = 2)
 
     @testset "vcfDB result is same as in saved file" begin
-        ar_file = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
+        ar_file = joinpath(dirname(pathof(ARTEMIS)), "..", 
             "test", "sample_data", "artificial_results.csv")
         ar = DataFrame(CSV.File(ar_file))
         @test nrow(vcf_res) == length(guides)
@@ -98,9 +98,9 @@ end
         mkpath(fmidb_path)
 
         motif_cas9 = Motif("Cas9")
-        motif_cas9 = CRISPRofftargetHunter.setdist(motif_cas9, dist)
+        motif_cas9 = ARTEMIS.setdist(motif_cas9, dist)
 
-        template = CRISPRofftargetHunter.build_motifTemplates(motif_cas9)
+        template = ARTEMIS.build_motifTemplates(motif_cas9)
         fmidbdir = build_fmiDB(genome, fmidb_path)
 
         fmidb_res = search_fmiDB_patterns(
@@ -158,7 +158,7 @@ end
         hdb_path2)
     hdb_res2 = search_hashDB(hdb_path2, guides, false)
 
-    len_noPAM = CRISPRofftargetHunter.length_noPAM(Motif("Cas9"))
+    len_noPAM = ARTEMIS.length_noPAM(Motif("Cas9"))
 
     @testset "linearDB against CRISPRitz" begin
         ## Files

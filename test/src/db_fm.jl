@@ -1,5 +1,5 @@
 #=
-using CRISPRofftargetHunter
+using ARTEMIS
 using BioSequences
 using CSV
 using DataFrames
@@ -10,7 +10,7 @@ using BenchmarkTools
 
 cd("test")
 
-genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
+genome = joinpath(dirname(pathof(ARTEMIS)), "..", 
     "test", "sample_data", "genome", "semirandom.fa")
 #genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
 guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
@@ -30,7 +30,7 @@ fmidbpath = build_fmiDB(genome, fmidir)
 
 =#
 #=
-dbi = CRISPRofftargetHunter.DBInfo(genome, "tests", motif)
+dbi = ARTEMIS.DBInfo(genome, "tests", motif)
 
 ref = open(dbi.gi.filepath, "r")
 reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
@@ -44,10 +44,10 @@ composition(chrom)
 # 16 r 32 -> 215mb
 # 16 r 512 -> 187mb
 # 16 r 1024 -> 186mb - why is it twice?!
-index = CRISPRofftargetHunter.FMIndex(chrom, 16; r = 32)
-pam_pos = CRISPRofftargetHunter.locateall(dna"AGG", index) # 3.7 Milion! - slowish
-pos = CRISPRofftargetHunter.locateall(dna"ACTG", index) # 1M - quite FAST
-pos = CRISPRofftargetHunter.locateall(dna"ACTGT", index) # 265k - very FAST
+index = ARTEMIS.FMIndex(chrom, 16; r = 32)
+pam_pos = ARTEMIS.locateall(dna"AGG", index) # 3.7 Milion! - slowish
+pos = ARTEMIS.locateall(dna"ACTG", index) # 1M - quite FAST
+pos = ARTEMIS.locateall(dna"ACTGT", index) # 265k - very FAST
 =#
 
 # for distance of 4 we search for 20/5 = 4

@@ -64,10 +64,10 @@ tdir = tempname()
 bdb_path = joinpath(tdir, "binDB")
 mkpath(bdb_path)
 
-# use CRISPRofftargetHunter example genome
+# use ARTEMIS example genome
 genome = joinpath(
     vcat(
-        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
         "test", "sample_data", "genome", "semirandom.fa"))
 
 # finally, build a binDB
@@ -209,15 +209,15 @@ off-target free it is also guaranteed to be true in both cases (low-to-high and 
 # Examples
 ```julia-repl
 # prepare libs
-using CRISPRofftargetHunter, BioSequences
+using ARTEMIS, BioSequences
 
 # make a temporary directory
 tdir = tempname()
 hdb_path = joinpath(tdir, "hashDB")
 mkpath(hdb_path)
 
-# use CRISPRofftargetHunter example genome
-coh_path = splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1]
+# use ARTEMIS example genome
+coh_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
 genome = joinpath(vcat(coh_path, "test", "sample_data", "genome", "semirandom.fa"))
 
 # build a hashDB
@@ -260,7 +260,7 @@ function search_binDB(
     res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
 
-        pat = CRISPRofftargetHunter.templates_to_sequences(s, bdb.mtp; dist = 1, reducible = false)
+        pat = ARTEMIS.templates_to_sequences(s, bdb.mtp; dist = 1, reducible = false)
         d0 = Set(expand_path(pat[1], len))
         d1 = Set(mapreduce(x -> expand_path(x, len), vcat, pat[2:end]))
         d1 = setdiff(d1, d0) # remove d0 from d1

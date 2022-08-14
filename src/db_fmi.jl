@@ -290,14 +290,14 @@ function search_fmiDB_patterns(
 
     for (ic, chrom) in enumerate(gi.chrom)
         fmi = load(joinpath(fmidbdir, chrom * ".bin"))
-        #seq = CRISPRofftargetHunter.getchromseq(gi.is_fa, reader[chrom])
+        #seq = ARTEMIS.getchromseq(gi.is_fa, reader[chrom])
         
         for pam_i in pam
             for (i, t) in enumerate(no_pam)
                 for path in t
                     sequence = reverse(pam_i * path.seq)
-                    count = CRISPRofftargetHunter.count(sequence, fmi)
-                    count_rve = CRISPRofftargetHunter.count(reverse_complement(sequence), fmi)
+                    count = ARTEMIS.count(sequence, fmi)
+                    count_rve = ARTEMIS.count(reverse_complement(sequence), fmi)
                     res[i, path.dist + 1] += (count + count_rve)
                     if path.reducible != 0
                         res[i, t[path.reducible].dist + 1] -= (count + count_rve)

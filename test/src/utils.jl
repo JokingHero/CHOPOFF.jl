@@ -2,7 +2,7 @@ using Base: UInt128
 using Test
 
 using BioSequences
-using CRISPRofftargetHunter: safeadd, smallestutype, base_to_idx, 
+using ARTEMIS: safeadd, smallestutype, base_to_idx, 
     getseq, extension, levenshtein, comb_of_d1, comb_of_d, minkmersize, balance,
     locate_telomeres, findall, expand_ambiguous, convert, 
     all_kmers, as_bitvector_of_kmers, as_kmers

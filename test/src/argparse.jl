@@ -1,6 +1,6 @@
 using Test
 
-using CRISPRofftargetHunter
+using ARTEMIS
 using CSV
 using DataFrames
 using BioSequences
@@ -10,17 +10,17 @@ using BioSequences
     @testset "hashDB through command line" begin
         tdir = tempname()
         mkpath(tdir)
-        genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", "test", "sample_data", "genome", "semirandom.fa")
+        genome = joinpath(dirname(pathof(ARTEMIS)), "..", "test", "sample_data", "genome", "semirandom.fa")
         guides_s = "./sample_data/crispritz_results/guides.txt"
         guides = LongDNA{4}.(Set(readlines(guides_s)))
 
         args = ["build", "--name", "test_hash", "--genome", genome, "--output", tdir, "--motif", "Cas9", 
             "--distance", "1", "--ambig_max", "0", "hashDB"]
-        CRISPRofftargetHunter.main(args)
+        ARTEMIS.main(args)
         
         res_file = joinpath(tdir, "hashDB_results.csv")
         args = ["search", tdir, "hashDB", guides_s, res_file, "--right"]
-        CRISPRofftargetHunter.main(args)
+        ARTEMIS.main(args)
 
         # compare the results file with the local results
         hdb_res = search_hashDB(tdir, guides, true)

@@ -144,10 +144,10 @@ tdir = tempname()
 mdb_path = joinpath(tdir, "motifDB")
 mkpath(mdb_path)
 
-# use CRISPRofftargetHunter example genome
+# use ARTEMIS example genome
 genome = joinpath(
     vcat(
-        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
         "test", "sample_data", "genome", "semirandom.fa"))
 
 # finally, build a motifDB
@@ -165,7 +165,7 @@ function build_motifDB(
     prefix_len::Int = 7;
     skipmer_size::Int = Int(floor(length_noPAM(motif) / (motif.distance + 3))))
 
-    dbi = CRISPRofftargetHunter.DBInfo(genomepath, name, motif)
+    dbi = ARTEMIS.DBInfo(genomepath, name, motif)
 
     # step 1
     @info "Step 1: Searching chromosomes."
@@ -364,8 +364,8 @@ tdir = tempname()
 mdb_path = joinpath(tdir, "motifDB")
 mkpath(mdb_path)
 
-# use CRISPRofftargetHunter example genome
-coh_path = splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1]
+# use ARTEMIS example genome
+coh_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
 genome = joinpath(
     vcat(
         coh_path, 

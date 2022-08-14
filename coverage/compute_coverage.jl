@@ -1,12 +1,12 @@
 using Coverage
 using Badges
 using Pkg
-using CRISPRofftargetHunter
+using ARTEMIS
 
-Pkg.test("CRISPRofftargetHunter"; coverage = true)
+Pkg.test("ARTEMIS"; coverage = true)
 
 exclude = [
-    "src/CRISPRofftargetHunter.jl", 
+    "src/ARTEMIS.jl", 
     "src/FMidx/saca.jl",
     "src/db_fmi.jl",
     "src/db_linear.jl",
@@ -31,7 +31,7 @@ open("coverage/coverage_fraction.svg", "w") do io
 end
 
 # remove the coverage files
-dir = joinpath(splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1])
+dir = joinpath(splitpath(dirname(pathof(ARTEMIS)))[1:end-1])
 cov_files = String[]
 for (r, d, f) in walkdir(dir)
     cov = occursin.(".cov", f)

@@ -162,10 +162,10 @@ large genomes or non-specific PAMs you might run out of memory when using this f
 
 # Examples
 ```julia-repl
-# use CRISPRofftargetHunter example genome
+# use ARTEMIS example genome
 genome = joinpath(
     vcat(
-        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
         "test", "sample_data", "genome", "semirandom.fa"))
 # construct example DBInfo
 dbi = DBInfo(genome, "Cas9_semirandom_noVCF", Motif("Cas9"))

@@ -1,4 +1,4 @@
-using CRISPRofftargetHunter.FMIndexes: FMIndex, restore, count, locate, locateall
+using ARTEMIS.FMIndexes: FMIndex, restore, count, locate, locateall
 using Combinatorics
 using Test
 using Random

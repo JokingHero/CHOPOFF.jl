@@ -140,7 +140,7 @@ end
 
 function templates_to_sequences_by_dist(
     guide::LongDNA{4}, 
-    template::CRISPRofftargetHunter.MotifPathTemplates;
+    template::ARTEMIS.MotifPathTemplates;
     dist::Int = template.motif.distance)
     len = length_noPAM(template.motif) + template.motif.distance
 
@@ -168,7 +168,7 @@ function templates_to_sequences_by_dist(
     ps = Vector{Set{LongDNA{4}}}()
     for di in 0:dist
         push!(ps, Set(ThreadsX.mapreduce(
-            x -> CRISPRofftargetHunter.expand_ambiguous(
+            x -> ARTEMIS.expand_ambiguous(
                 LongDNA{4}(g_[x]) * repeat(dna"N", len - length(x))), 
             vcat,
             template.paths[di]; init = Vector{LongDNA{4}}())))
@@ -184,11 +184,11 @@ end
 
 function templates_to_sequences(
     guide::LongDNA{4}, 
-    template::CRISPRofftargetHunter.MotifPathTemplates;
+    template::ARTEMIS.MotifPathTemplates;
     dist::Int = template.motif.distance,
     reducible::Bool = true)
 
-    if length(guide) != CRISPRofftargetHunter.length_noPAM(template.motif)
+    if length(guide) != ARTEMIS.length_noPAM(template.motif)
         throw("Wrong guide length.")
     end
 
@@ -212,7 +212,7 @@ function templates_to_sequences(
     ps = Vector{Path}()
     for di in 0:dist
         seq = ThreadsX.mapreduce(
-            x -> CRISPRofftargetHunter.expand_ambiguous(LongDNA{4}(g_[x])), 
+            x -> ARTEMIS.expand_ambiguous(LongDNA{4}(g_[x])), 
             vcat,
             template.paths[di]; init = Vector{LongDNA{4}}())
         seq = ThreadsX.collect(Set(seq))

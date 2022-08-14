@@ -1,6 +1,6 @@
 using Test
 
-using CRISPRofftargetHunter: DBInfo, Loc, decode, 
+using ARTEMIS: DBInfo, Loc, decode, 
     Motif, length_noPAM, removepam, combinestrings, notX,
     AmbigIdx, findbits
 using BioSequences

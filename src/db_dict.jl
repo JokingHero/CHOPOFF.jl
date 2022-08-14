@@ -70,7 +70,7 @@ function search_dictDB(
     res = zeros(Int, length(guides_), dist + 1)
     for (i, s) in enumerate(guides_)
 
-        pat = CRISPRofftargetHunter.templates_to_sequences_by_dist(s, sdb.mtp)
+        pat = ARTEMIS.templates_to_sequences_by_dist(s, sdb.mtp)
         for di in 1:(dist + 1)
             res[i, di] = Base.mapreduce(x -> get(sdb.dict, convert(UInt64, x), 0), +, pat[di])
 

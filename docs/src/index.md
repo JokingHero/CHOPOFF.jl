@@ -1,4 +1,4 @@
-# CRISPRofftargetHunter
+# ARTEMIS
 
 ## About
 
@@ -24,10 +24,10 @@ Documentation is available here.
 
 ## Build application
 
-It is possible to build CRISPRofftargetHunter into standalone application - which includes all dependencies and Julia into one compiled software. This is **recommended** method for using of CRISPRofftargetHunter when you are not a developer. If you know how to code in Julia, you might make use of the whole framework using CRISPRofftargetHunter as a package.
+It is possible to build ARTEMIS into standalone application - which includes all dependencies and Julia into one compiled software. This is **recommended** method for using of ARTEMIS when you are not a developer. If you know how to code in Julia, you might make use of the whole framework using ARTEMIS as a package.
 
 To build a standalone application run `./build_standalone.sh` script from the main directory. Script will
-produce binary in a new folder outside the main directory. Then you can run from inside that folder `./bin/CRISPRofftargetHunter --help`. To learn about possible indexes run `./bin/CRISPRofftargetHunter build --help` and to use existing index check out `./bin/CRISPRofftargetHunter search --help`. It is possible to skip testing + precompile step to speed up the build process with `./build_standalone.sh --noprecompile`.
+produce binary in a new folder outside the main directory. Then you can run from inside that folder `./bin/ARTEMIS --help`. To learn about possible indexes run `./bin/ARTEMIS build --help` and to use existing index check out `./bin/ARTEMIS search --help`. It is possible to skip testing + precompile step to speed up the build process with `./build_standalone.sh --noprecompile`.
 
 You can alternatively download latest release from the releases page on the github.
 
@@ -35,10 +35,10 @@ When using application as self-contained, you can control number of cores by set
 
 ## No-build application
 
-Run CRISPRofftargetHunter as an **application without compilation**. From the directory of the package run:
+Run ARTEMIS as an **application without compilation**. From the directory of the package run:
 
 ```bash
-julia --threads 4 --project="." ./src/CRISPRofftargetHunter.jl --help
+julia --threads 4 --project="." ./src/ARTEMIS.jl --help
 ```
 
 ## Quick Use

@@ -1,14 +1,14 @@
 push!(LOAD_PATH, "../src/")
-using Documenter, CRISPRofftargetHunter
-DocMeta.setdocmeta!(CRISPRofftargetHunter, :DocTestSetup, :(using CRISPRofftargetHunter, BioSequences); recursive=true)
+using Documenter, ARTEMIS
+DocMeta.setdocmeta!(ARTEMIS, :DocTestSetup, :(using ARTEMIS, BioSequences); recursive=true)
 
 makedocs(
     clean = true,
     strict = :doctest,
     doctest = true,
-    sitename = "CRISPRofftargetHunter.jl",
+    sitename = "ARTEMIS.jl",
     authors = "Kornel Labun",
-    modules  = [CRISPRofftargetHunter],
+    modules  = [ARTEMIS],
     pages = [
         "General" => "index.md",
         "API" => "api.md",

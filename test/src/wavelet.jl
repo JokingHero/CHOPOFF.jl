@@ -1,4 +1,4 @@
-using CRISPRofftargetHunter.FMIndexes.WaveletMatrices: WaveletMatrix, getindex, rank, select, freq
+using ARTEMIS.FMIndexes.WaveletMatrices: WaveletMatrix, getindex, rank, select, freq
 using Test
 using Random
 

@@ -1,6 +1,6 @@
 __precompile__(true)
 
-module CRISPRofftargetHunter
+module ARTEMIS
 
 using Dates: isequal
 using Base: Float32
@@ -87,9 +87,9 @@ export build_pamDB, search_pamDB
 ## Standalone binary generation
 function parse_commandline(args::Array{String})
     s = ArgParseSettings(
-        prog = "CRISPRofftargetHunter", 
+        prog = "ARTEMIS", 
         description = "Fast and reliable off-target detection for CRISPR guideRNAs.",
-        epilog = "This standalone is build on top of the CRISPRofftargetHunter.jl package.",
+        epilog = "This standalone is build on top of the ARTEMIS.jl package.",
         version = string(@PkgVersion.Version),
         add_version = true)
 

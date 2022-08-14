@@ -1,5 +1,5 @@
 #=
-using CRISPRofftargetHunter
+using ARTEMIS
 using BioSequences
 using CSV
 using DataFrames
@@ -9,14 +9,14 @@ using StaticArrays
 
 cd("test")
 
-genome = joinpath(dirname(pathof(CRISPRofftargetHunter)), "..", 
+genome = joinpath(dirname(pathof(ARTEMIS)), "..", 
     "test", "sample_data", "genome", "semirandom.fa")
 #genome = "/home/ai/Projects/uib/crispr/chopchop_genomes/hg38v34.fa"
 guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
 guides = LongDNA{4}.(guides_s)
 
 motif = Motif("Cas9")
-motif = CRISPRofftargetHunter.setdist(motif, 3)
+motif = ARTEMIS.setdist(motif, 3)
 
 fmidir = tempname()
 mkpath(fmidir)
@@ -35,7 +35,7 @@ genomepath = genome
 detail = ""
 distance = 3
 
-pamDB = CRISPRofftargetHunter.load(pamdbpath)
+pamDB = ARTEMIS.load(pamdbpath)
 if distance > pamDB.motif.distance
     throw("DIstance is too large for selected MotifPathTemplates. Max distance is" * 
         string(pamDB.motif.distance))
@@ -45,8 +45,8 @@ end
 adj_seed_size = Int(floor(length(guides[1])/(distance + 2)))
 parts_number = Int(floor(length(guides[1])/adj_seed_size))
 
-gi = CRISPRofftargetHunter.load(joinpath(fmidbdir, "genomeInfo.bin"))
-is_fa = CRISPRofftargetHunter.is_fasta(genomepath)
+gi = ARTEMIS.load(joinpath(fmidbdir, "genomeInfo.bin"))
+is_fa = ARTEMIS.is_fasta(genomepath)
 
 guides_ = copy(guides)
 # reverse guides so that PAM is always on the left
@@ -54,14 +54,14 @@ guides_ = copy(guides)
 if pamDB.motif.extends5
     guides_ = reverse.(guides_)
 end
-guides_skipmers = Base.map(x -> unique(CRISPRofftargetHunter.as_skipkmers(x, adj_seed_size)), guides_)
+guides_skipmers = Base.map(x -> unique(ARTEMIS.as_skipkmers(x, adj_seed_size)), guides_)
 
 res = zeros(Int, length(guides_), distance + 1)
 ref = open(genomepath, "r")
 reader = is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
 
 
-offt_len = CRISPRofftargetHunter.length_noPAM(pamDB.motif) + distance
+offt_len = ARTEMIS.length_noPAM(pamDB.motif) + distance
 # 1       23
 # hit---hitPAM
 # |     |  
@@ -78,8 +78,8 @@ scan_dist = offt_len - adj_seed_size
 # hit---hitPAM
 #          | = 0
 for (ic, chrom) in enumerate(gi.chrom)
-    fmi = CRISPRofftargetHunter.load(joinpath(fmidbdir, chrom * ".bin"))
-    seq = CRISPRofftargetHunter.getchromseq(is_fa, reader[chrom])
+    fmi = ARTEMIS.load(joinpath(fmidbdir, chrom * ".bin"))
+    seq = ARTEMIS.getchromseq(is_fa, reader[chrom])
     pam_loc_fwd = pamDB.pam_loc_fwd[ic]
     pam_loc_fwd_len = length(pam_loc_fwd)
     pam_loc_rve = pamDB.pam_loc_rve[ic]
@@ -87,7 +87,7 @@ for (ic, chrom) in enumerate(gi.chrom)
     for (i, gs) in enumerate(guides_skipmers)
         # FORWARD
         gs_fwd = reverse.(gs)
-        hits = mapreduce(x -> CRISPRofftargetHunter.locateall(x, fmi), vcat, gs_fwd)
+        hits = mapreduce(x -> ARTEMIS.locateall(x, fmi), vcat, gs_fwd)
         hits = unique(hits)
         sort!(hits)
         diff_hits = diff(hits)
@@ -117,14 +117,14 @@ for (ic, chrom) in enumerate(gi.chrom)
         if pamDB.motif.extends5
             offt_seq = reverse.(offt_seq)
         end
-        align_score = map(x -> CRISPRofftargetHunter.levenshtein(guides_[i], x, distance), offt_seq)
+        align_score = map(x -> ARTEMIS.levenshtein(guides_[i], x, distance), offt_seq)
         for d in 0:distance
             res[i, d + 1] += sum(align_score .== d)
         end
 
         # REVERSE
         gs_rve = complement.(gs)
-        hits = mapreduce(x -> CRISPRofftargetHunter.locateall(x, fmi), vcat, gs_rve)
+        hits = mapreduce(x -> ARTEMIS.locateall(x, fmi), vcat, gs_rve)
         hits = unique(hits)
         sort!(hits)
         diff_hits = diff(hits)
@@ -148,7 +148,7 @@ for (ic, chrom) in enumerate(gi.chrom)
         check_offtarget_pam = unique(check_offtarget_pam[check_offtarget])
         check_offtarget_pam .= check_offtarget_pam .+ 1
         offt_seq = map(x -> seq[x:(x + offt_len - 1)], check_offtarget_pam)
-        align_score = map(x -> CRISPRofftargetHunter.levenshtein(guides_[i], complement(x), distance), offt_seq)
+        align_score = map(x -> ARTEMIS.levenshtein(guides_[i], complement(x), distance), offt_seq)
         for d in 0:distance
             res[i, d + 1] += sum(align_score .== d)
         end

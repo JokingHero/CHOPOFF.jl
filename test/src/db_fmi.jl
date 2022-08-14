@@ -1,7 +1,7 @@
 using Test
 
 using BioSequences
-using CRISPRofftargetHunter: shrink_and_expand!, is_in_range
+using ARTEMIS: shrink_and_expand!, is_in_range
 using Combinatorics
 
 @testset "db_fmi.jl" begin

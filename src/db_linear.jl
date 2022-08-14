@@ -69,10 +69,10 @@ tdir = tempname()
 ldb_path = joinpath(tdir, "linearDB")
 mkpath(ldb_path)
 
-# use CRISPRofftargetHunter example genome
+# use ARTEMIS example genome
 genome = joinpath(
     vcat(
-        splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1], 
+        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
         "test", "sample_data", "genome", "semirandom.fa"))
 
 # finally, build a linearDB
@@ -234,8 +234,8 @@ tdir = tempname()
 ldb_path = joinpath(tdir, "linearDB")
 mkpath(ldb_path)
 
-# use CRISPRofftargetHunter example genome
-coh_path = splitpath(dirname(pathof(CRISPRofftargetHunter)))[1:end-1]
+# use ARTEMIS example genome
+coh_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
 genome = joinpath(
     vcat(
         coh_path, 
