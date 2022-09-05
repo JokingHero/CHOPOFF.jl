@@ -88,6 +88,8 @@ end
 Funny enough this can easily support ambig guides!
 
 THIS FUNCTION IS BUGGED somewhere :( GL figuring this out
+
+This will be replcaed with 01*0 seeds to support distance 3 and more.
 "
 function search_fmiDB(
     fmidbdir::String, motifdbdir::String,
