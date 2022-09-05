@@ -383,7 +383,7 @@ function search_treeDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int
     col_d = [Symbol("D$i") for i in 0:dist]
     rename!(res, col_d)
     res.guide = guides
-    sort!(res, col_d)
+    sort!(res, vcat(col_d, :guide))
     return res
 end
 

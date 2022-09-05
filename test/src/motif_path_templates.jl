@@ -6,7 +6,7 @@ using ARTEMIS
 
     @testset "templates_to_sequences" begin
         motif = Motif("test")
-        template = ARTEMIS.build_motifTemplates(motif)
+        template = ARTEMIS.build_motifTemplates(length_noPAM(motif), motif.distance)
 
         guide = dna"AAA"
         dist = 1

@@ -24,7 +24,7 @@ function build_dictDB(
     motif::Motif,
     storagedir::String)
 
-    if motif.dist > 2 
+    if motif.distance > 2 
         @info "Searches on distances of more than 2 will be very slow! Be warned!"
     end
 
@@ -32,7 +32,7 @@ function build_dictDB(
     @info "Building Dictionary..."
     dict, ambig = build_guide_dict(dbi, Int(typemax(UInt32)), UInt64)
     @info "Building Motif templates..."
-    mtp = build_motifTemplates(motif)
+    mtp = build_motifTemplates(length_noPAM(motif), motif.distance)
 
     db = DictDB(dict, mtp, dbi, ambig)
     save(db, joinpath(storagedir, "dictDB.bin"))
@@ -57,7 +57,7 @@ function search_dictDB(
 
     sdb = load(joinpath(storagedir, "dictDB.bin"))
     guides_ = copy(guides)
-    dist = sdb.mtp.motif.distance # use maximal distance as the performance is always bottlenecked by that
+    dist = sdb.mtp.distance # use maximal distance as the performance is always bottlenecked by that
 
     if any(length_noPAM(sdb.dbi.motif) .!= length.(guides_))
         throw("Guide queries are not of the correct length to use with this Motif: " * string(sdb.dbi.motif))
@@ -84,6 +84,6 @@ function search_dictDB(
     col_d = [Symbol("D$i") for i in 0:dist]
     rename!(res, col_d)
     res.guide = guides
-    sort!(res, col_d)
+    sort!(res, vcat(col_d, :guide))
     return res
 end

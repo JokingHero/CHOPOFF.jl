@@ -6,11 +6,8 @@ using ARTEMIS
 Pkg.test("ARTEMIS"; coverage = true)
 
 exclude = [
-    "src/ARTEMIS.jl", 
-    "src/FMidx/saca.jl",
-    "src/db_fmi.jl",
+    "src/ARTEMIS.jl",
     "src/db_linear.jl",
-    "src/sketches/bloom.jl",
     "src/motif.jl",
     "src/db_info.jl"]
 

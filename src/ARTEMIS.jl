@@ -31,12 +31,7 @@ using CodecZlib
 using PathDistribution
 
 include("utils.jl")
-
-include("FMidx/FMindexes.jl")
-using .FMIndexes
-include("sketches/bloom.jl")
 include("ambig_index.jl")
-
 include("persistence.jl")
 
 include("distance_metrics.jl")
@@ -50,12 +45,8 @@ include("db_dict.jl")
 include("db_motif.jl")
 include("db_linear.jl")
 include("db_tree.jl")
-include("db_bins.jl")
 include("db_hash.jl")
 include("db_vcf.jl")
-
-include("db_fmi.jl")
-include("db_fmi_lossless_seed.jl")
 
 export Motif, length_noPAM, length, setambig, setdist # motif
 export save, load # persistence
@@ -65,24 +56,13 @@ export DBInfo # db_info
 export gatherofftargets!, gatherofftargets # find_offtargets
 export isinclusive, hamming, levenshtein, Aln, align # distance_metrics
 
-# TODO
-# 1. describe other methods - finish docs
-# 2. add size of the kmer to motifDB - optimization for distance 4 and distance 3
-# 2. decide what to do with the FM-index stuff
-# 3. Fix hashes to use the latest indexing?
-# 4. Figure out status of VCF?!
-
 export build_linearDB, search_linearDB # db_linear
 export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
-export build_binDB, search_binDB # db_bins
 export build_hashDB, search_hashDB # db_hash
 export build_vcfDB, search_vcfDB # db_vcf
 export build_motifTemplates
-export build_motifDB, search_motifDB, build_fmiDB, search_fmiDB, search_fmiDB_raw
-export search_fmiDB_patterns
-export build_pamDB, search_pamDB
-
+export build_motifDB, search_motifDB
 
 ## Standalone binary generation
 function parse_commandline(args::Array{String})
@@ -119,19 +99,9 @@ function parse_commandline(args::Array{String})
         "dictDB"
             action = :command
             help = "dictDB is a simple dictionary of all unique guides and their counts."
-        "binDB"
-            action = :command
-            help = "binDB is a binned bloom filter, it is very space efficient " * 
-                "and carries small error during estimations."
         "vcfDB"
             action = :command
             help = "vcfDB is similar specialized database to handle .vcf files and personalized off-target search."
-        "fmi"
-            action = :command
-            help = "Build FM-index of a genome"
-        "pamDB"
-            action = :command
-            help = "Build DB of PAMs of a genome"
         "template"
             action = :command
             help = "Build templates with specific Motif."
@@ -249,30 +219,9 @@ function parse_commandline(args::Array{String})
             default = 10
     end
 
-    @add_arg_table! s["build"]["binDB"] begin
-        "--probability_of_error"
-            help = "Defines chance for error off-target counts. " * 
-                "Decreasing this value will increase the size of the sketchDB."
-            arg_type = Float64
-            default = 0.001
-        "--max_count"
-            help = "Maximum count value for given off-target sequence. " * 
-                "Increasing this value will allow to keep more precise counts of often repeated guide sequences" * 
-                ", but increase the size of the database significantly."
-            arg_type = Int
-            default = 10
-    end
-
     @add_arg_table! s["build"]["vcfDB"] begin
         "--vcf"
             help = "Path to the .vcf or .vcf.gz file. "
-            arg_type = String
-            required = true
-    end
-
-    @add_arg_table! s["build"]["pamDB"] begin
-        "--fmidir"
-            help = "Path to the fmi directory. "
             arg_type = String
             required = true
     end
@@ -301,10 +250,6 @@ function parse_commandline(args::Array{String})
             help = "Path to the genome."
             arg_type = String
             required = false
-        "--pamDB"
-            help = "Path to the file with pamDB. - Make with build_pamDB."
-            arg_type = String
-            required = false
         "--adjust"
             help = "Adjust parameter for motifDB."
             arg_type = Int
@@ -320,13 +265,10 @@ function parse_commandline(args::Array{String})
             range_tester = (
                 x -> x == "vcfDB" || 
                 x == "hashDB" ||
-                x == "binDB" || 
                 x == "dictDB" || 
                 x == "treeDB" || 
                 x == "motifDB" ||
-                x == "fmi" ||
                 x == "template" ||
-                x == "pamDB" ||
                 x == "linearDB")
             required = true
         "guides"
@@ -367,7 +309,8 @@ function main(args::Array{String})
             build_treeDB(args["name"], args["genome"], motif, args["output"], 
                 args["treeDB"]["prefix_length"])
         elseif args["%COMMAND%"] == "template"
-            build_motifTemplates(motif; storagepath = joinpath(args["output"], args["name"] * ".bin"))
+            build_motifTemplates(length_noPAM(motif), motif.distance; 
+                storagepath = joinpath(args["output"], args["name"] * ".bin"))
         elseif args["%COMMAND%"] == "linearDB"
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
                 args["linearDB"]["prefix_length"])
@@ -378,10 +321,6 @@ function main(args::Array{String})
             end
             build_motifDB(args["name"], args["genome"], motif, args["output"], 
                 args["motifDB"]["prefix_length"]; skipmer_size = skipmer)
-        elseif args["%COMMAND%"] == "fmi"
-            build_fmiDB(args["genome"], args["output"])
-        elseif args["%COMMAND%"] == "pamDB"
-            build_pamDB(args["fmidir"], motif; storagedir = joinpath(args["output"], args["name"] * ".bin"))
         elseif args["%COMMAND%"] == "hashDB"
             prec = UInt16
             if args["hashDB"]["precision"] == "UInt8"
@@ -395,10 +334,6 @@ function main(args::Array{String})
                 max_count = args["hashDB"]["max_count"], precision = prec)
         elseif args["%COMMAND%"] == "dictDB"
             build_dictDB(args["name"], args["genome"], motif, args["output"])
-        elseif args["%COMMAND%"] == "binDB"
-            build_binDB(args["name"], args["genome"], motif, args["output"], 
-                probability_of_error = args["binDB"]["probability_of_error"]; 
-                max_count = args["binDB"]["max_count"])
         elseif args["%COMMAND%"] == "vcfDB"
             build_vcfDB(args["name"], args["genome"], args["vcfDB"]["vcf"], motif, args["output"])
         else
@@ -415,21 +350,13 @@ function main(args::Array{String})
             res = search_motifDB(
                 args["database"], guides, args["distance"]; 
                 detail = args["detail"], adjust = args["adjust"])
-        elseif args["type"] == "fmi"
-            template = load(args["template"])
-            res = search_fmiDB_patterns(args["database"], "", template, guides; distance = args["distance"])
         elseif args["type"] == "hashDB"
             @info "Right set as: " * string(args["right"])
             res = search_hashDB(args["database"], guides, args["right"])
         elseif args["type"] == "dictDB"
             res = search_dictDB(args["database"], guides)
-        elseif args["type"] == "binDB"
-            @info "Right set as: " * string(args["right"])
-            res = search_binDB(args["database"], guides, args["right"])
         elseif args["type"] == "vcfDB"
             res = search_vcfDB(args["database"], guides)
-        elseif args["type"] == "pamDB"
-            res = search_pamDB(args["database"], args["genome"], args["pamDB"], guides)
         else
             throw("Unsupported database type.")
         end

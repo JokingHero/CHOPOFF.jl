@@ -22,7 +22,7 @@ end
 
 function ldb_start(pos, rrna_len, czdna_spac, strand)
     start = Vector{Int}()
-    for i in 1:length(pos)
+    for i in 1:lastindex(pos)
         if strand[i] == "+"
             i_start = pos[i] + rrna_len[i] - czdna_spac[i]
         else
@@ -65,16 +65,6 @@ end
         vcf_path)
     vcf_res = search_vcfDB(vcf_path, guides)
 
-    # put into proper test later! TODO
-    fmi_path = joinpath(tdir, "fmiDB")
-    mkdir(fmi_path)
-    fmidbpath = build_fmiDB(genome, fmi_path)
-    pamdbpath = joinpath(fmi_path, "pamDB.bin")
-    build_pamDB(fmi_path, Motif("Cas9"; distance = 3, ambig_max = 0); storagedir = pamdbpath)
-    pamDB_res = search_pamDB(fmi_path, genome, pamdbpath, guides; detail = "", distance = 3)
-    template = ARTEMIS.build_motifTemplates(Motif("Cas9"; distance = 2, ambig_max = 0))
-    fmi_patterns = search_fmiDB_patterns(fmidbpath, "", template, guides; distance = 2)
-
     @testset "vcfDB result is same as in saved file" begin
         ar_file = joinpath(dirname(pathof(ARTEMIS)), "..", 
             "test", "sample_data", "artificial_results.csv")
@@ -92,36 +82,6 @@ end
     ldb_res = search_linearDB(ldb_path, guides, 3; detail = detail_path)
     ldb = DataFrame(CSV.File(detail_path))
 
-    @testset "linearDB vs fmidx" begin
-        dist = 2
-        fmidb_path = joinpath(tdir, "fmiDB")
-        mkpath(fmidb_path)
-
-        motif_cas9 = Motif("Cas9")
-        motif_cas9 = ARTEMIS.setdist(motif_cas9, dist)
-
-        template = ARTEMIS.build_motifTemplates(motif_cas9)
-        fmidbdir = build_fmiDB(genome, fmidb_path)
-
-        fmidb_res = search_fmiDB_patterns(
-            fmidbdir, genome, template, guides; distance = dist)
-
-        @test nrow(fmidb_res) == length(guides)
-        @test all(fmidb_res.guide .== guides)
-        @test all(fmidb_res.guide .== guides)
-        ldb_res2 = Matrix(ldb_res)
-        fmidb_res2 = Matrix(fmidb_res)
-        for i in 1:length(guides)
-            compare = fmidb_res2[i, 1:3] .<= ldb_res2[i, 1:3]
-            @test all(compare)
-            if !all(compare)
-                @info "Failed at guideS $i " * string(guides[i])
-                @info "linearDB result: " * string(ldb_res2[i, :])
-                @info "fmi result: " * string(fmidb_res2[i, :])
-            end
-        end
-    end
-
     # make and run default dictDB
     ddb_path = joinpath(tdir, "dictDB")
     mkpath(ddb_path)
@@ -130,15 +90,6 @@ end
         Motif("Cas9"; distance = 2),
         ddb_path)
     ddb_res = search_dictDB(ddb_path, guides)
-
-    # make and run default binDB
-    bdb_path = joinpath(tdir, "binDB")
-    mkpath(bdb_path)
-    build_binDB(
-        "samirandom", genome, 
-        Motif("Cas9"; distance = 1, ambig_max = 0), 
-        bdb_path)
-    bdb_res = search_binDB(bdb_path, guides, false)
 
     # make and run default hashDB
     hdb_path = joinpath(tdir, "hashDB")
@@ -228,31 +179,13 @@ end
         @test all(ldb_res.guide .== guides)
         ldb_res2 = Matrix(ldb_res[:, 1:2])
         hdb_res2 = Matrix(hdb_res[:, 1:2])
-        for i in 1:length(guides)
+        for i in 1:lastindex(guides)
             compare = ldb_res2[i, :] .<= hdb_res2[i, :]
             @test all(compare)
             if !all(compare)
                 @info "Failed at guideS $i " * string(guides[i])
                 @info "linearDB result: " * string(ldb_res2[i, :])
                 @info "sketchDB result: " * string(hdb_res2[i, :])
-            end
-        end
-    end
-
-
-    @testset "binDB vs dictDB" begin
-        @test nrow(bdb_res) == nrow(ddb_res)
-        @test all(bdb_res.guide .== guides)
-        @test all(ddb_res.guide .== guides)
-        ddb_res2 = Matrix(ddb_res)
-        bdb_res2 = Matrix(bdb_res)
-        for i in 1:length(guides)
-            compare = ddb_res2[i, 1:2] .<= bdb_res2[i, 1:2]
-            @test all(compare)
-            if !all(compare)
-                @info "Failed at guideS $i " * string(guides[i])
-                @info "dictDB result: " * string(ddb_res2[i, :])
-                @info "binDB result: " * string(bdb_res2[i, :])
             end
         end
     end
@@ -264,7 +197,7 @@ end
         @test all(ddb_res.guide .== guides)
         ddb_res2 = Matrix(ddb_res)
         hdb_res2 = Matrix(hdb_res)
-        for i in 1:length(guides)
+        for i in 1:lastindex(guides)
             compare = ddb_res2[i, 1:2] .<= hdb_res2[i, 1:2]
             @test all(compare)
             if !all(compare)

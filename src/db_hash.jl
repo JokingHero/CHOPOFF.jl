@@ -140,7 +140,7 @@ function build_hashDB(
         motif = setdist(motif, 1)
     end
     @info "Building Motif templates..."
-    mtp = build_motifTemplates(motif)
+    mtp = build_motifTemplates(length_noPAM(motif), motif.distance)
     
     # gather all unique off-targets
     guides = Vector{UInt64}()

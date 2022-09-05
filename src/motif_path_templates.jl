@@ -16,7 +16,8 @@ end
 
 struct MotifPathTemplates
     paths::IdDict{Int64, Vector{Vector{Int64}}}
-    motif::Motif
+    len::Int # length without the PAM
+    distance::Int
 end
 
 
@@ -95,10 +96,9 @@ function adj_matrix_of_guide(len::Int, d::Int; mismatch_only::Bool = false)
 end
 
 
-function build_motifTemplates(motif::Motif; storagepath::String = "", mismatch_only::Bool = false)
-    len = length_noPAM(motif)
-    d = motif.distance
-
+# len - length without PAM
+# d - distance 
+function build_motifTemplates(len::Int, d::Int; storagepath::String = "", mismatch_only::Bool = false)
     # path is mapped to these numbers, path numbers are
     # (len + end) * (dist  + 1) and
     # (Ins (N) + Gap + MM) * len * dist
@@ -129,7 +129,7 @@ function build_motifTemplates(motif::Motif; storagepath::String = "", mismatch_o
         paths[di - 1] = pd
     end
 
-    paths = MotifPathTemplates(paths, motif)
+    paths = MotifPathTemplates(paths, len, d)
     if storagepath != ""
         save(paths, storagepath)
     end
@@ -137,17 +137,7 @@ function build_motifTemplates(motif::Motif; storagepath::String = "", mismatch_o
 end
 
 
-
-function templates_to_sequences_by_dist(
-    guide::LongDNA{4}, 
-    template::ARTEMIS.MotifPathTemplates;
-    dist::Int = template.motif.distance)
-    len = length_noPAM(template.motif) + template.motif.distance
-
-    if length(guide) != length_noPAM(template.motif)
-        throw("Wrong guide length.")
-    end
-
+function guide_to_template_format(guide::LongDNA{4})
     g_ = copy(guide)
     for (i, base) in enumerate(guide)
         if base == DNA_A
@@ -163,7 +153,21 @@ function templates_to_sequences_by_dist(
     end
     push!(g_, DNA_N)
     push!(g_, DNA_Gap)
-    g_ = collect(g_)
+    return collect(g_)
+end
+
+
+function templates_to_sequences_by_dist(
+    guide::LongDNA{4}, 
+    template::ARTEMIS.MotifPathTemplates;
+    dist::Int = template.distance)
+    len = template.len + template.distance
+
+    if length(guide) != template.len
+        throw("Wrong guide length.")
+    end
+
+    g_ = guide_to_template_format(guide)
 
     ps = Vector{Set{LongDNA{4}}}()
     for di in 0:dist
@@ -185,29 +189,14 @@ end
 function templates_to_sequences(
     guide::LongDNA{4}, 
     template::ARTEMIS.MotifPathTemplates;
-    dist::Int = template.motif.distance,
+    dist::Int = template.distance,
     reducible::Bool = true)
 
-    if length(guide) != ARTEMIS.length_noPAM(template.motif)
+    if length(guide) != template.len
         throw("Wrong guide length.")
     end
 
-    g_ = copy(guide)
-    for (i, base) in enumerate(guide)
-        if base == DNA_A
-            not_base = DNA_B
-        elseif base == DNA_C 
-            not_base = DNA_D
-        elseif base == DNA_T
-            not_base = DNA_V
-        elseif base == DNA_G 
-            not_base = DNA_H
-        end
-        push!(g_, not_base)
-    end
-    push!(g_, DNA_N)
-    push!(g_, DNA_Gap)
-    g_ = collect(g_)
+    g_ = guide_to_template_format(guide)
 
     ps = Vector{Path}()
     for di in 0:dist
