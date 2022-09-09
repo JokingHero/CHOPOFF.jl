@@ -1,178 +1,95 @@
-
-
-function build_fmiDB(
-    genomepath::String,
+# TODO PathTemplate contains alignment
+function search_chrom(
+    chrom::String, 
+    detail::String, 
+    guides::Vector{LongDNA{4}},
+    fwd_offt::Vector{Vector{Path}},
     storagedir::String)
 
-    gi = GenomeInfo(genomepath)
-    ref = open(gi.filepath, "r")
-    reader = gi.is_fa ? FASTA.Reader(ref, index = gi.filepath * ".fai") : TwoBit.Reader(ref)
-    @showprogress 60 for chrom in gi.chrom
-        fmi = FMIndex(getchromseq(gi.is_fa, reader[chrom]), 16, r = 32)
-        p = joinpath(storagedir, chrom * ".bin")
-        save(fmi, p)
+    #ref = open(genomepath, "r")
+    #reader = gi.is_fa ? FASTA.Reader(ref, index=genomepath * ".fai") : TwoBit.Reader(ref)
+    #seq = ARTEMIS.getchromseq(gi.is_fa, reader[chrom])
+    
+    res = zeros(Int, length(guides), fwd_offt[end][end].dist + 1)
+    fmi = load(joinpath(storagedir, chrom * ".bin"))
+    
+    if detail != ""
+        detail_path = joinpath(detail, "detail_" * string(chrom) * ".csv")
+        detail_file = open(detail_path, "w")
     end
-    close(ref)
-    save(gi, joinpath(storagedir, "genomeInfo.bin"))
-    @info "FMindex is build."
-    return storagedir
-end
 
+    # wroking on this guide and his all possible off-targets
+    for (i, fwd_offt_i) in enumerate(fwd_offt)
+        fwd_pos_filter = Set{Int64}([])
+        rve_pos_filter = Set{Int64}([])
 
-# assumes pattern_pos is sorted
-function is_in_range(
-    all_pos::Vector{UInt32}, # contains all pos
-    pos::BitVector, # should be as long as all_pos - indicates which pos should be evaluated
-    pattern_pos::Vector{Int}, # positions of the kmer
-    reverse_comp::Bool,
-    extends5::Bool,
-    dist::Int, # maximal distance we consider here
-    shift::Int, # shift from the begining 
-    pam_length::Int,
-    kmer_length::Int)
-    configuration = (extends5 & reverse_comp) | (!extends5 & !reverse_comp)
-    pattern_last_insert_idx = length(pattern_pos) + 1
-    pos = copy(pos)
-    for (i, b) in enumerate(pos)
-        if b # true means we should evaluate the potential
-            # check if is close enough
-            is_close = false
-            if configuration
-                # CCN 1 2 3 4 5 6 7 8 9 ... EXT
-                # p
-                #     p + pam_length
-                #     p + shift - 1
-                #     T G A C # first >= 
-                all_pos_i = all_pos[i] + pam_length + shift - 1
-                idx = searchsortedfirst(pattern_pos, all_pos_i)
-                if idx != pattern_last_insert_idx
-                    is_close = (pattern_pos[idx] - all_pos_i) <= dist
-                end
-            else
-                # EXT ... 1 2 3 4 5 6 7 8 9 N G G
-                #                               p
-                #                         p - pam_length (3)
-                #                         p - shift (1) + 1
-                #                   p - kmer_length (4) + 1 # we get first position of the kmer too
-                all_pos_i = all_pos[i] - pam_length - shift - kmer_length + 2
-                # first value that pattern_pos[idx] >= all_pos[i]
-                idx = searchsortedfirst(pattern_pos, all_pos_i)
-                if idx != pattern_last_insert_idx
-                    is_close = (pattern_pos[idx] - all_pos_i) <= dist
+        curr_dist = 0
+        for offt in fwd_offt_i
+            # keep track of overlapping positions
+            if offt.dist > curr_dist
+                fwd_pos_filter = union(fwd_pos_filter, fwd_pos_filter .+ 1, fwd_pos_filter .-1)
+                rve_pos_filter = union(rve_pos_filter, rve_pos_filter .+ 1, rve_pos_filter .-1)
+                curr_dist = offt.dist
+            end
+
+            fwd_iter = ARTEMIS.locate(offt.seq, fmi)
+            for pos in fwd_iter
+                if !(pos in fwd_pos_filter)
+                    push!(fwd_pos_filter, pos)
+                    res[i, offt.dist + 1] += 1
+                    if detail != ""
+                        line = string(guides[i]) * "," * "no_alignment" * "," * 
+                            string(offt.seq) * "," * string(offt.dist) * "," *
+                            chrom * "," * string(pos) * "," * "+" * "\n"
+                        write(detail_file, line)
+                    end
                 end
             end
-            pos[i] = is_close
+                
+            rve_iter = ARTEMIS.locate(reverse_complement(offt.seq), fmi)
+            for pos in rve_iter
+                if !(pos in rve_pos_filter)
+                    push!(rve_pos_filter, pos)
+                    res[i, offt.dist + 1] += 1
+                    if detail != ""
+                        line = string(guides_[i]) * "," * "no_alignment" * "," * 
+                            string(offt.seq) * "," * string(offt.dist) * "," *
+                            chrom * "," * string(pos) * "," * "-" * "\n"
+                        write(detail_file, line)
+                    end
+                end
+            end
         end
     end
-    return pos
+    if detail != ""
+        close(detail_file)
+    end
+    #close(ref)
+    return res
 end
 
 
-# will update long too (expand part)
-function shrink_and_expand!(long::BitVector, counts::Vector{Int})
-    short = BitVector(zeros(length(counts)))
-    start = 1
-    for (i, c) in enumerate(counts)
-        stop = start + c - 1
-        short[i] = any(long[start:stop])
-        if short[i]
-            long[start:stop] = ones(Bool, c)
-        end
-        start = stop + 1
-    end
-    return short
-end
+function search_fmiDB_patterns(
+    fmidbdir::String, mpt::PathTemplates,
+    guides::Vector{LongDNA{4}}; detail::String = "", distance::Int = 2)
 
-
-"
-Funny enough this can easily support ambig guides!
-
-THIS FUNCTION IS BUGGED somewhere :( GL figuring this out
-
-This will be replcaed with 01*0 seeds to support distance 3 and more.
-"
-function search_fmiDB(
-    fmidbdir::String, motifdbdir::String,
-    guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")
-
-    mp = load(joinpath(motifdbdir, "motifDB.bin"))
-    mp_counts = bits_to_counts(mp.ug, mp.ug_count)
-
-    if dist > mp.dbi.motif.distance
-        error("Maximum distance is " * string(mp.dbi.motif.distance))
+    if distance > 2
+        throw("Max distance is 2, anything more than that is impractically slow.")
     end
 
+    gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
     guides_ = copy(guides)
-    # reverse guides so that PAM is always on the left
-    if mp.dbi.motif.extends5
-        guides_ = reverse.(guides_)
-    end
 
-    pam_length = length(mp.dbi.motif) - length_noPAM(mp.dbi.motif) 
-    kmer_length = minkmersize(length_noPAM(mp.dbi.motif), dist)
-    gkmers = as_kmers.(guides_, kmer_length)
+    # we input guides that are in forward search configuration
+    fwd_offt = map(x -> templates_to_sequences(x, mpt, motif; dist = distance), guides_)
+    res = ThreadsX.mapreduce(ch -> search_chrom(ch, dirname(detail), guides_, fwd_offt, storagedir), +, gi.chrom)
+
     if detail != ""
         # clean up detail files into one file
-        detail_file = open(detail, "w")
-        write(detail_file, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
+        cleanup_detail(detail)
     end
 
-    res = zeros(Int, length(guides_), dist + 1)
-    # early stopping + write detail
-    for (ic, chrom) in enumerate(mp.dbi.gi.chrom)
-        fmi = load(joinpath(fmidbdir, chrom * ".bin"))
-        pos_chrom = mp.chroms .== ic
-        pos_chrom_fwd = pos_chrom .& mp.isplus # 1 have to be chcked
-        pos_chrom_rev = pos_chrom .& (.!mp.isplus)
-        for (idx, gk) in enumerate(gkmers)
-            # keep track of all pos that have been checked already
-            # exclude these from further analyses!
-            was_checked = BitVector(zeros(length(mp.pos)))
-            for (i , kmer) in enumerate(gk)
-                if mp.dbi.motif.extends5
-                    kmer_rev = complement(kmer)
-                    kmer = reverse(kmer)
-                else
-                    kmer_rev = copy(kmer)
-                    kmer = reverse_complement(kmer)
-                end
-                kmer_pos = sort(locateall(kmer, fmi))
-                pos_chrom_fwd_in_range = is_in_range(
-                    mp.pos, (.!was_checked) .& pos_chrom_fwd, 
-                    kmer_pos, false, mp.dbi.motif.extends5, dist, i, pam_length, kmer_length)
-
-                pos_seqnames = shrink_and_expand!(pos_chrom_fwd_in_range, mp_counts)
-                was_checked .|= pos_chrom_fwd_in_range
-
-                dists = ThreadsX.map(x -> levenshtein(guides_[idx], x, dist), mp.sequences[pos_seqnames])
-                mp_counts_g = mp_counts[pos_seqnames]
-                for d in 0:dist
-                    res[idx, d + 1] += sum(mp_counts_g[dists .== d])
-                end
-
-                # reverse now
-                kmer_pos = sort(locateall(kmer_rev, fmi))
-                pos_chrom_rve_in_range = is_in_range(
-                    mp.pos, (.!was_checked) .& pos_chrom_rev, 
-                    kmer_pos, true, mp.dbi.motif.extends5, dist, i, pam_length, kmer_length)
-
-                pos_seqnames = shrink_and_expand!(pos_chrom_rve_in_range, mp_counts)
-                was_checked .|= pos_chrom_rve_in_range
-
-                dists = ThreadsX.map(x -> levenshtein(guides_[idx], x, dist), mp.sequences[pos_seqnames])
-                mp_counts_g = mp_counts[pos_seqnames]
-                for d in 0:dist
-                    res[idx, d + 1] += sum(mp_counts_g[dists .== d])
-                end
-            end
-        end
-    end
-    
-    res = DataFrame(res, :auto)
-    col_d = [Symbol("D$i") for i in 0:dist]
-    rename!(res, col_d)
-    res.guide = guides
-    sort!(res, col_d)
+    res = format_DF(res, distance, guides)
     return res
 end
 
@@ -265,55 +182,138 @@ function search_fmiDB_raw(
 end
 
 
-# Working - but pattern, reduceability is to be improved - currently it is not precise!
-function search_fmiDB_patterns(
-    fmidbdir::String, genomepath::String, mpt::MotifPathTemplates,
+# https://mikael-salson.univ-lille.fr/talks/VST_010seed.pdf
+# TODO
+# this takes only closest PAM upstream of the two seq - suboptimal? optimal?
+function search_pamDB(
+    fmidbdir::String, genomepath::String, pamdbpath::String,
     guides::Vector{LongDNA{4}}; detail::String = "", distance::Int = 3)
 
-    if distance > mpt.motif.distance
-        throw("DIstance is too large for selected MotifPathTemplates. Max distance is" * 
-            string(mpt.motif.distance))
+    pamDB = ARTEMIS.load(pamdbpath)
+    if distance > pamDB.motif.distance
+        throw("DIstance is too large for selected PathTemplates. Max distance is" * 
+            string(pamDB.motif.distance))
     end
 
-    gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
+    # 01*0 seed always exists when pattern is partitioned in at least distance + 2 parts
+    adj_seed_size = Int(floor(length(guides[1])/(distance + 2)))
+    parts_number = Int(floor(length(guides[1])/adj_seed_size))
+
+    gi = ARTEMIS.load(joinpath(fmidbdir, "genomeInfo.bin"))
+    is_fa = ARTEMIS.is_fasta(genomepath)
+
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
-    pam = mpt.motif.fwd[mpt.motif.pam_loci_fwd]
-    if mpt.motif.extends5
+    # TODO CPf1 style...
+    if pamDB.motif.extends5
         guides_ = reverse.(guides_)
-        pam = reverse(pam)
     end
+    # this can't be unique and skipmers are ambig handleable
+    guides_skipmers = Base.map(x -> unique(ARTEMIS.as_skipkmers(x, adj_seed_size)), guides_)
 
-    pam = expand_ambiguous(pam)
-    no_pam = map(x -> templates_to_sequences(x, mpt; dist = distance), guides_)
-    res = zeros(Int, length(guides_), mpt.motif.distance + 1)
-    #ref = open(genomepath, "r")
-    #reader = gi.is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
+    res = zeros(Int, length(guides_), distance + 1)
+    ref = open(genomepath, "r")
+    reader = is_fa ? FASTA.Reader(ref, index = genomepath * ".fai") : TwoBit.Reader(ref)
 
+    offt_len = ARTEMIS.length_noPAM(pamDB.motif) + distance
+    # 1       23
+    # hit---hitPAM
+    # |     |  
+    scan_dist = offt_len - adj_seed_size
+    # worst case
+    # hithit---PAM
+    #       |  | = 23 - adj_seed_size * 2 = 15
+    # hit-hit--PAM
+    # |   |
+    # diff
+    #        | | 
+    # 23 - diff - adj_seed_size 
+    # adj_seed_size is the difference here 
+    # hit---hitPAM
+    #          | = 0
     for (ic, chrom) in enumerate(gi.chrom)
-        fmi = load(joinpath(fmidbdir, chrom * ".bin"))
-        #seq = ARTEMIS.getchromseq(gi.is_fa, reader[chrom])
-        
-        for pam_i in pam
-            for (i, t) in enumerate(no_pam)
-                for path in t
-                    sequence = reverse(pam_i * path.seq)
-                    count = ARTEMIS.count(sequence, fmi)
-                    count_rve = ARTEMIS.count(reverse_complement(sequence), fmi)
-                    res[i, path.dist + 1] += (count + count_rve)
-                    if path.reducible != 0
-                        res[i, t[path.reducible].dist + 1] -= (count + count_rve)
+        fmi = ARTEMIS.load(joinpath(fmidbdir, chrom * ".bin"))
+        seq = ARTEMIS.getchromseq(is_fa, reader[chrom])
+        pam_loc_fwd = pamDB.pam_loc_fwd[ic]
+        pam_loc_fwd_len = length(pam_loc_fwd)
+        pam_loc_rve = pamDB.pam_loc_rve[ic]
+            
+        for (i, gs) in enumerate(guides_skipmers)
+            # FORWARD
+            gs_fwd = reverse.(gs)
+            # we lose knowledge on order and which one was which so this is no good!!!
+            hits = mapreduce(x -> ARTEMIS.locateall(x, fmi), vcat, gs_fwd)
+            hits = unique(hits)
+            sort!(hits)
+            diff_hits = diff(hits)
+            two_are_close = diff_hits .<= scan_dist
+            diff_hits = diff_hits[two_are_close]
+            pushfirst!(two_are_close, 0) # we take the most right element
+            hits = hits[two_are_close]
+            # hitsPAM
+            # |-> |
+            hits .= hits .+ adj_seed_size
+            check_offtarget_pam = zeros(Int, length(hits))
+            check_offtarget = falses(length(hits))
+            for (ih, h) in enumerate(hits)
+                idx = searchsortedfirst(pam_loc_fwd, h) # find first >= h
+                if idx <= pam_loc_fwd_len
+                    # |    |-PAM
+                    # 14 462 469
+                    if (pam_loc_fwd[idx] - h) <= (scan_dist - diff_hits[ih])
+                        check_offtarget[ih] = true
+                        check_offtarget_pam[ih] = pam_loc_fwd[idx]
                     end
                 end
             end
+            check_offtarget_pam = unique(check_offtarget_pam[check_offtarget])
+            check_offtarget_pam .= check_offtarget_pam .- 1
+            offt_seq = map(x -> seq[(x - offt_len + 1):x], check_offtarget_pam)
+            if pamDB.motif.extends5
+                offt_seq = reverse.(offt_seq)
+            end
+            align_score = map(x -> ARTEMIS.levenshtein(guides_[i], x, distance), offt_seq)
+            for d in 0:distance
+                res[i, d + 1] += sum(align_score .== d)
+            end
+
+            # REVERSE
+            gs_rve = complement.(gs)
+            hits = mapreduce(x -> ARTEMIS.locateall(x, fmi), vcat, gs_rve)
+            hits = unique(hits)
+            sort!(hits)
+            diff_hits = diff(hits)
+            two_are_close = diff_hits .<= scan_dist
+            diff_hits = diff_hits[two_are_close]
+            push!(two_are_close, 0) # we take the most left element
+            hits = hits[two_are_close]
+            hits .= hits .- 1
+
+            check_offtarget_pam = zeros(Int, length(hits))
+            check_offtarget = falses(length(hits))
+            for (ih, h) in enumerate(hits)
+                idx = searchsortedlast(pam_loc_rve, h) # find last value <= h
+                if idx != 0 
+                    if (h - pam_loc_rve[idx]) <= (scan_dist - diff_hits[ih])
+                        check_offtarget[ih] = true
+                        check_offtarget_pam[ih] = pam_loc_rve[idx]
+                    end
+                end
+            end
+            check_offtarget_pam = unique(check_offtarget_pam[check_offtarget])
+            check_offtarget_pam .= check_offtarget_pam .+ 1
+            offt_seq = map(x -> seq[x:(x + offt_len - 1)], check_offtarget_pam)
+            align_score = map(x -> ARTEMIS.levenshtein(guides_[i], complement(x), distance), offt_seq)
+            for d in 0:distance
+                res[i, d + 1] += sum(align_score .== d)
+            end
         end
     end
-    #close(ref)
-        
+    close(ref)
+
     res = DataFrame(res, :auto)
     col_d = [Symbol("D$i") for i in 0:distance]
     rename!(res, col_d)
     res.guide = guides
     sort!(res, col_d)
-    return res
 end

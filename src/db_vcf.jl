@@ -189,10 +189,6 @@ function search_vcfDB(
         res[i, 2] += sum(reduce(.|, bits_mapped))
     end
 
-    res = DataFrame(res, :auto)
-    col_d = [Symbol("D$i") for i in 0:1]
-    rename!(res, col_d)
-    res.guide = guides
-    sort!(res, vcat(col_d, :guide))
+    res = format_DF(res, 1, guides)
     return res
 end

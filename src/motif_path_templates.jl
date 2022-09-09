@@ -1,20 +1,10 @@
 struct Path
     seq::LongDNA{4}
-    seq_len::Int
     dist::Int
-    reducible::Int # index inside the outer vector linking to which 
-    # Path also will contain this lower distance Path
-    # 0 means no reducible
-    # reducible points to the sequence which already contains
 end
 
-# AAA 4
-# AA  3 - lower dist already contains larger - no such cases
-# AAAC  5, 1 - higher distance is more specific - this value has to be unclaimed at reducible!
-# we need to still add it to the correct
 
-
-struct MotifPathTemplates
+struct PathTemplates
     paths::IdDict{Int64, Vector{Vector{Int64}}}
     len::Int # length without the PAM
     distance::Int
@@ -96,9 +86,28 @@ function adj_matrix_of_guide(len::Int, d::Int; mismatch_only::Bool = false)
 end
 
 
-# len - length without PAM
-# d - distance 
-function build_motifTemplates(len::Int, d::Int; storagepath::String = "", mismatch_only::Bool = false)
+"""
+```
+build_PathTemplates(len::Int, d::Int; storagepath::String = "", mismatch_only::Bool = false)
+```
+
+Builds up a PathTemplates object. Stores 
+shortened version of all possible paths within each distance `d`
+mapped on the graph of all possible alignments of seqeunce of length
+`len`. Then one can use `templates_to_sequences_extended` or 
+`templates_to_sequences` and map guide sequence to all possible alignments quickly.
+
+# Arguments
+`len` - length of the seqeunce (e.g. guide - without PAM)
+
+`d` - Maximal distance on which to build the graph.
+
+`storagepath` - If not empty "", will save the object under given path.
+
+`mismatch_only` - Whether to skip insertions/deletions.
+
+"""
+function build_PathTemplates(len::Int, d::Int; storagepath::String = "", mismatch_only::Bool = false)
     # path is mapped to these numbers, path numbers are
     # (len + end) * (dist  + 1) and
     # (Ins (N) + Gap + MM) * len * dist
@@ -129,7 +138,7 @@ function build_motifTemplates(len::Int, d::Int; storagepath::String = "", mismat
         paths[di - 1] = pd
     end
 
-    paths = MotifPathTemplates(paths, len, d)
+    paths = PathTemplates(paths, len, d)
     if storagepath != ""
         save(paths, storagepath)
     end
@@ -137,6 +146,16 @@ function build_motifTemplates(len::Int, d::Int; storagepath::String = "", mismat
 end
 
 
+"""
+```
+guide_to_template_format(guide::LongDNA{4})
+```
+
+Helper that allows you to create mapping vector for the Paths.
+Then enumerating possible alignments becomes simple subsetting.
+
+g_[Path_vector]
+"""
 function guide_to_template_format(guide::LongDNA{4})
     g_ = copy(guide)
     for (i, base) in enumerate(guide)
@@ -157,9 +176,37 @@ function guide_to_template_format(guide::LongDNA{4})
 end
 
 
-function templates_to_sequences_by_dist(
+
+"""
+```
+templates_to_sequences_extended(
     guide::LongDNA{4}, 
-    template::ARTEMIS.MotifPathTemplates;
+    template::ARTEMIS.PathTemplates;
+    dist::Int = template.distance)
+```
+
+Uses PathTemplates object - `template` to map
+all possible alignments for given `guide` within distance `dist`.
+This method expands sequence to the maximal alignment length:
+length of the guide + length of the distance. All returned sequences
+will be of the same length. The advantage of that is that outputs are unique.
+
+# Arguments
+`guide` - guide sequence, without PAM.
+
+`template` - PathTemplates object build for your specific guide quieries.
+
+`dist` - Maximal distance on which to return the possible alignments.
+
+# Return
+
+Returns a Vector{Set{LongDNA{4}}} where distance 0 is located at index 1,
+distance 1 all posible alignments are located at distance 2 and so on...
+
+"""
+function templates_to_sequences_extended(
+    guide::LongDNA{4}, 
+    template::ARTEMIS.PathTemplates;
     dist::Int = template.distance)
     len = template.len + template.distance
 
@@ -186,11 +233,45 @@ function templates_to_sequences_by_dist(
 end
 
 
+"""
+```
+templates_to_sequences(
+    guide::LongDNA{4}, 
+    template::ARTEMIS.PathTemplates;
+    dist::Int = template.distance)
+```
+
+Uses PathTemplates object - `template` to map
+all possible alignments for given `guide` within distance `dist`.
+This method does not expand sequences to the maximal alignment length
+as opposed to `templates_to_sequences_extended`. This means some sequences might 
+seem redundant, for example:
+```
+For guide "AAA" and Motif("test"), distance 2:
+
+sequence distance 
+AAA      0 
+AA       1
+AAAA     1
+     ...
+```
+
+# Arguments
+`guide` - guide sequence, without PAM.
+
+`template` - PathTemplates object build for your specific guide quieries.
+
+`dist` - Maximal distance on which to return the possible alignments.
+
+# Return
+
+Returns a Vector{Path} sorted by the distance, from 0 to `dist`.
+
+"""
 function templates_to_sequences(
     guide::LongDNA{4}, 
-    template::ARTEMIS.MotifPathTemplates;
-    dist::Int = template.distance,
-    reducible::Bool = true)
+    template::ARTEMIS.PathTemplates;
+    dist::Int = template.distance)
 
     if length(guide) != template.len
         throw("Wrong guide length.")
@@ -205,38 +286,43 @@ function templates_to_sequences(
             vcat,
             template.paths[di]; init = Vector{LongDNA{4}}())
         seq = ThreadsX.collect(Set(seq))
-        append!(ps, ThreadsX.map(x -> Path(x, length(x), di, 0), seq))
+        append!(ps, ThreadsX.map(x -> Path(x, di), seq))
     end
 
-    if !reducible # this will return simply seqeuences which can be repeats, D0 in front
-        return ThreadsX.sort!(ps, by = p -> (p.dist, p.seq))
-    end
-    ThreadsX.sort!(ps, by = p -> (p.seq, p.dist))
+    # this will return simply seqeuences which can be repeats, D0 in front
+    return ThreadsX.sort!(ps, by = p -> (p.dist, p.seq))
+end
 
-    to_remove = zeros(Bool, length(ps))
-    reducible = zeros(Int, length(ps))
-    ps_len = length(ps)
-    for (i, p) in enumerate(ps)
-        j = i + 1
-        before_i = sum(to_remove[1:i])
-        while j <= ps_len &&
-            p.seq_len <= ps[j].seq_len && 
-            isequal(p.seq, ps[j].seq[1:p.seq_len]) # if bigger - stop!
-            
-            if !to_remove[j]
-                reducible[j] = i - before_i
-                if ps[j].dist >= p.dist
-                    to_remove[j] = true
-                end
-            end
-            j += 1
-        end
+
+function templates_to_sequences(
+    guide::LongDNA{4}, 
+    template::PathTemplates,
+    motif::Motif;
+    dist::Int = template.distance)
+
+    if length_noPAM(motif) != template.len
+        throw("Length of the motif is not the same as the template!")
     end
 
-    deleteat!(ps, to_remove)
-    deleteat!(reducible, to_remove)
-    ps = ThreadsX.map(x -> Path(x[1].seq, x[1].seq_len, x[1].dist, x[2]), zip(ps, reducible))
-    return ps
+    if length(guide) != template.len
+        throw("Wrong guide length.")
+    end
+
+    g_ = guide_to_template_format(guide)
+
+    ps = Vector{Path}()
+    for di in 0:dist
+        seq = ThreadsX.mapreduce(
+            x -> ARTEMIS.expand_ambiguous(
+                appendPAM_forward(LongDNA{4}(g_[x]), motif)), 
+            vcat,
+            template.paths[di]; init = Vector{LongDNA{4}}())
+        seq = ThreadsX.collect(Set(seq))
+        append!(ps, ThreadsX.map(x -> Path(x, di), seq))
+    end
+
+    # this will return simply seqeuences which can be repeats, D0 in front
+    return ThreadsX.sort!(ps, by = p -> (p.dist, p.seq))
 end
 
 

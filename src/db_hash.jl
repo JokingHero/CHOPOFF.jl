@@ -1,6 +1,6 @@
 struct HashDB{T<:Unsigned, K<:Union{UInt8, UInt16, UInt32}}
     dbi::DBInfo
-    mtp::MotifPathTemplates
+    mtp::PathTemplates
     bins::Vector{BinaryFuseFilter{K}}
     counts::Vector{T}
     ambig::Union{AmbigIdx, Nothing}
@@ -140,7 +140,7 @@ function build_hashDB(
         motif = setdist(motif, 1)
     end
     @info "Building Motif templates..."
-    mtp = build_motifTemplates(length_noPAM(motif), motif.distance)
+    mtp = build_PathTemplates(length_noPAM(motif), motif.distance)
     
     # gather all unique off-targets
     guides = Vector{UInt64}()
@@ -264,12 +264,9 @@ function search_hashDB(
     res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
 
-        pat = ARTEMIS.templates_to_sequences(s, db.mtp; dist = 1, reducible = false)
-        d0 = Set(expand_path(pat[1], len))
-        d1 = Set(mapreduce(x -> expand_path(x, len), vcat, pat[2:end]))
-        d1 = setdiff(d1, d0) # remove d0 from d1
-        d0 = collect(d0)
-        d1 = collect(d1)
+        pat = templates_to_sequences_extended(s, db.mtp; dist = 1)
+        d0 = collect(pat[1])
+        d1 = collect(pat[2])
 
         for d0_s in convert.(UInt64, d0)
             idx = get_count_idx(db.bins, d0_s, right)
@@ -293,10 +290,6 @@ function search_hashDB(
         end
     end
 
-    res = DataFrame(res, :auto)
-    col_d = [Symbol("D$i") for i in 0:1]
-    rename!(res, col_d)
-    res.guide = guides
-    sort!(res, vcat(col_d, :guide))
+    res = format_DF(res, 1, guides)
     return res
 end

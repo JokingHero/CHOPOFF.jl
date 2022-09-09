@@ -1,6 +1,6 @@
 struct DictDB
     dict::IdDict
-    mtp::MotifPathTemplates
+    mtp::PathTemplates
     dbi::DBInfo
     ambig::Union{AmbigIdx, Nothing}
 end
@@ -32,7 +32,7 @@ function build_dictDB(
     @info "Building Dictionary..."
     dict, ambig = build_guide_dict(dbi, Int(typemax(UInt32)), UInt64)
     @info "Building Motif templates..."
-    mtp = build_motifTemplates(length_noPAM(motif), motif.distance)
+    mtp = build_PathTemplates(length_noPAM(motif), motif.distance)
 
     db = DictDB(dict, mtp, dbi, ambig)
     save(db, joinpath(storagedir, "dictDB.bin"))
@@ -42,12 +42,6 @@ function build_dictDB(
         "\n consuming: " * string(round((filesize(joinpath(storagedir, "dictDB.bin")) * 1e-6); digits = 3)) * 
         " mb of disk space."
     return storagedir
-end
-
-
-function expand_path(path::Path, len::Int)
-    path_seq = path.seq * repeat(dna"N", len - path.seq_len)
-    return expand_ambiguous(path_seq)
 end
 
 
@@ -70,7 +64,7 @@ function search_dictDB(
     res = zeros(Int, length(guides_), dist + 1)
     for (i, s) in enumerate(guides_)
 
-        pat = ARTEMIS.templates_to_sequences_by_dist(s, sdb.mtp)
+        pat = ARTEMIS.templates_to_sequences_extended(s, sdb.mtp)
         for di in 1:(dist + 1)
             res[i, di] = Base.mapreduce(x -> get(sdb.dict, convert(UInt64, x), 0), +, pat[di])
 
@@ -80,10 +74,6 @@ function search_dictDB(
         end
     end
 
-    res = DataFrame(res, :auto)
-    col_d = [Symbol("D$i") for i in 0:dist]
-    rename!(res, col_d)
-    res.guide = guides
-    sort!(res, vcat(col_d, :guide))
+    res = format_DF(res, dist, guides)
     return res
 end

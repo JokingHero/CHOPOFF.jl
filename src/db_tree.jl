@@ -364,26 +364,10 @@ function search_treeDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int
     res = ThreadsX.mapreduce(p -> search_prefixtree(p, dist, ldb.dbi, dirname(detail), guides_, storagedir), +, prefixes)
     
     if detail != ""
-        # clean up detail files into one file
-        open(detail, "w") do detail_file
-            write(detail_file, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
-            for prefix in filter(x -> occursin("detail_", x), readdir(dirname(detail)))
-                prefix_file = joinpath(dirname(detail), prefix)
-                open(prefix_file, "r") do prefix_file
-                    for ln in eachline(prefix_file)
-                        write(detail_file, ln * "\n")
-                    end
-                end
-                rm(prefix_file)
-            end
-        end
+        cleanup_detail(detail)
     end
 
-    res = DataFrame(res, :auto)
-    col_d = [Symbol("D$i") for i in 0:dist]
-    rename!(res, col_d)
-    res.guide = guides
-    sort!(res, vcat(col_d, :guide))
+    res = format_DF(res, dist, guides)
     return res
 end
 

@@ -226,3 +226,21 @@ function Motif(alias::String; distance::Int = 3, ambig_max::Int = 0)
     motif = motif_db[alias]
     return setambig(setdist(motif, distance), ambig_max)
 end
+
+
+# all sequences are rotated in PAM-pattern fashion here
+function appendPAM(offtarget::LongDNA{4}, motif::Motif)
+    if motif.extends5
+        return rve(motif.fwd[motif.pam_loci_fwd]) * offtarget
+    end
+    return motif.fwd[motif.pam_loci_fwd] * offtarget
+end
+
+# all sequences will be ready to search on forward strand here
+# offtarget should be reversed if we are extend5 true
+function appendPAM_forward(offtarget::LongDNA{4}, motif::Motif)
+    if motif.extends5
+        return offtarget * motif.fwd[motif.pam_loci_fwd]
+    end
+    return motif.fwd[motif.pam_loci_fwd] * offtarget
+end

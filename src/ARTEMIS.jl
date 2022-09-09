@@ -31,6 +31,10 @@ using CodecZlib
 using PathDistribution
 
 include("utils.jl")
+
+include("FMidx/FMindexes.jl")
+using .FMIndexes
+
 include("ambig_index.jl")
 include("persistence.jl")
 
@@ -48,6 +52,10 @@ include("db_tree.jl")
 include("db_hash.jl")
 include("db_vcf.jl")
 
+include("db_fmi_helpers.jl")
+include("db_fmi.jl")
+
+
 export Motif, length_noPAM, length, setambig, setdist # motif
 export save, load # persistence
 export minkmersize, getseq, expand_ambiguous, all_kmers, as_kmers, as_skipkmers # utils
@@ -61,8 +69,11 @@ export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 export build_hashDB, search_hashDB # db_hash
 export build_vcfDB, search_vcfDB # db_vcf
-export build_motifTemplates
+export build_PathTemplates
 export build_motifDB, search_motifDB
+
+export build_fmiDB, search_fmiDB_patterns
+export build_pamDB, search_pamDB
 
 ## Standalone binary generation
 function parse_commandline(args::Array{String})
@@ -102,6 +113,12 @@ function parse_commandline(args::Array{String})
         "vcfDB"
             action = :command
             help = "vcfDB is similar specialized database to handle .vcf files and personalized off-target search."
+        "fmi"
+            action = :command
+            help = "Build FM-index of a genome"
+        "pamDB"
+            action = :command
+            help = "Build DB of PAMs of a genome"
         "template"
             action = :command
             help = "Build templates with specific Motif."
@@ -226,6 +243,13 @@ function parse_commandline(args::Array{String})
             required = true
     end
 
+    @add_arg_table! s["build"]["pamDB"] begin
+        "--fmidir"
+            help = "Path to the fmi directory. "
+            arg_type = String
+            required = true
+    end
+
     @add_arg_table! s["search"] begin
         "--distance"
             help = "Maximum edit distance to analyze. Must be less or equal to distance used when building db."
@@ -255,6 +279,10 @@ function parse_commandline(args::Array{String})
             arg_type = Int
             default = 0
             required = false
+        "--pamDB"
+            help = "Path to the file with pamDB. - Make with build_pamDB."
+            arg_type = String
+            required = false
         "database"
             help = "Path to the folder where the database is stored. Same as used when building."
             arg_type = String
@@ -269,7 +297,9 @@ function parse_commandline(args::Array{String})
                 x == "treeDB" || 
                 x == "motifDB" ||
                 x == "template" ||
-                x == "linearDB")
+                x == "linearDB" ||
+                x == "fmi" ||
+                x == "pamDB")
             required = true
         "guides"
             help = "File path to the guides, each row in the file contains a guide WITHOUT PAM."
@@ -309,7 +339,7 @@ function main(args::Array{String})
             build_treeDB(args["name"], args["genome"], motif, args["output"], 
                 args["treeDB"]["prefix_length"])
         elseif args["%COMMAND%"] == "template"
-            build_motifTemplates(length_noPAM(motif), motif.distance; 
+            build_PathTemplates(length_noPAM(motif), motif.distance; 
                 storagepath = joinpath(args["output"], args["name"] * ".bin"))
         elseif args["%COMMAND%"] == "linearDB"
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
@@ -336,6 +366,10 @@ function main(args::Array{String})
             build_dictDB(args["name"], args["genome"], motif, args["output"])
         elseif args["%COMMAND%"] == "vcfDB"
             build_vcfDB(args["name"], args["genome"], args["vcfDB"]["vcf"], motif, args["output"])
+        elseif args["%COMMAND%"] == "fmi"
+            build_fmiDB(args["genome"], args["output"])
+        elseif args["%COMMAND%"] == "pamDB"
+            build_pamDB(args["fmidir"], motif; storagedir = joinpath(args["output"], args["name"] * ".bin"))
         else
             throw("Unsupported database type.")
         end
@@ -357,6 +391,12 @@ function main(args::Array{String})
             res = search_dictDB(args["database"], guides)
         elseif args["type"] == "vcfDB"
             res = search_vcfDB(args["database"], guides)
+        elseif args["type"] == "fmi"
+            template = load(args["template"])
+            res = search_fmiDB_patterns(args["database"], template, guides; 
+                distance = args["distance"], detail = args["detail"])
+        elseif args["type"] == "pamDB"
+            res = search_pamDB(args["database"], args["genome"], args["pamDB"], guides)
         else
             throw("Unsupported database type.")
         end

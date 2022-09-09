@@ -643,3 +643,13 @@ function as_skipkmers(x::LongDNA{4}, kmer_size::Int)
     end
     return kmers
 end
+
+
+function format_DF(res::Matrix{Int64}, dist::Int, guides::Vector{LongDNA{4}})
+    res = DataFrame(res, :auto)
+    col_d = [Symbol("D$i") for i in 0:dist]
+    rename!(res, col_d)
+    res.guide = guides
+    sort!(res, vcat(col_d, :guide))
+    return res
+end

@@ -34,3 +34,27 @@ function load(destination::String)
     close(io)
     return object
 end
+
+
+"""
+`cleanup_detail(detail::String)`
+
+Merge multiple detail files into one final file. 
+This assumes there are no other files in the folder that start with "detail_".
+After the merge files that start with "detail_" will be deleted!
+"""
+function cleanup_detail(detail::String)
+    open(detail, "w") do detail_file
+        write(detail_file, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
+        for ch in filter(x -> occursin("detail_", x), readdir(dirname(detail)))
+            ch = joinpath(dirname(detail), ch)
+            open(ch, "r") do ch_file
+                for ln in eachline(ch_file)
+                    write(detail_file, ln * "\n")
+                end
+            end
+            rm(ch)
+        end
+    end
+    return 
+end
