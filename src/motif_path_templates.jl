@@ -146,6 +146,32 @@ function build_PathTemplates(len::Int, d::Int; storagepath::String = "", mismatc
 end
 
 
+
+"""
+```
+build_PathTemplates(motif::Motif; storagepath::String = "", mismatch_only::Bool = false)
+```
+
+Builds up a PathTemplates object. Stores 
+shortened version of all possible paths for given `Motif`. 
+Afterwards use `templates_to_sequences_extended` or 
+`templates_to_sequences` and map guide sequence to all possible alignments quickly.
+
+# Arguments
+`motif` - Motif object.
+
+`storagepath` - If not empty "", will save the object under given path.
+
+`mismatch_only` - Whether to skip insertions/deletions.
+
+"""
+function build_PathTemplates(motif::Motif; storagepath::String = "", mismatch_only::Bool = false)
+    len = length_noPAM(motif)
+    d = motif.distance
+    return build_PathTemplates(len, d; storagepath = storagepath, mismatch_only = mismatch_only)
+end
+
+
 """
 ```
 guide_to_template_format(guide::LongDNA{4})
@@ -181,7 +207,7 @@ end
 ```
 templates_to_sequences_extended(
     guide::LongDNA{4}, 
-    template::ARTEMIS.PathTemplates;
+    template::PathTemplates;
     dist::Int = template.distance)
 ```
 
@@ -206,7 +232,7 @@ distance 1 all posible alignments are located at distance 2 and so on...
 """
 function templates_to_sequences_extended(
     guide::LongDNA{4}, 
-    template::ARTEMIS.PathTemplates;
+    template::PathTemplates;
     dist::Int = template.distance)
     len = template.len + template.distance
 
@@ -219,7 +245,7 @@ function templates_to_sequences_extended(
     ps = Vector{Set{LongDNA{4}}}()
     for di in 0:dist
         push!(ps, Set(ThreadsX.mapreduce(
-            x -> ARTEMIS.expand_ambiguous(
+            x -> expand_ambiguous(
                 LongDNA{4}(g_[x]) * repeat(dna"N", len - length(x))), 
             vcat,
             template.paths[di]; init = Vector{LongDNA{4}}())))
@@ -237,7 +263,7 @@ end
 ```
 templates_to_sequences(
     guide::LongDNA{4}, 
-    template::ARTEMIS.PathTemplates;
+    template::PathTemplates;
     dist::Int = template.distance)
 ```
 
@@ -270,7 +296,7 @@ Returns a Vector{Path} sorted by the distance, from 0 to `dist`.
 """
 function templates_to_sequences(
     guide::LongDNA{4}, 
-    template::ARTEMIS.PathTemplates;
+    template::PathTemplates;
     dist::Int = template.distance)
 
     if length(guide) != template.len
@@ -282,7 +308,7 @@ function templates_to_sequences(
     ps = Vector{Path}()
     for di in 0:dist
         seq = ThreadsX.mapreduce(
-            x -> ARTEMIS.expand_ambiguous(LongDNA{4}(g_[x])), 
+            x -> expand_ambiguous(LongDNA{4}(g_[x])), 
             vcat,
             template.paths[di]; init = Vector{LongDNA{4}}())
         seq = ThreadsX.collect(Set(seq))
@@ -313,7 +339,7 @@ function templates_to_sequences(
     ps = Vector{Path}()
     for di in 0:dist
         seq = ThreadsX.mapreduce(
-            x -> ARTEMIS.expand_ambiguous(
+            x -> expand_ambiguous(
                 appendPAM_forward(LongDNA{4}(g_[x]), motif)), 
             vcat,
             template.paths[di]; init = Vector{LongDNA{4}}())

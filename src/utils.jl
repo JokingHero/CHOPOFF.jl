@@ -653,3 +653,47 @@ function format_DF(res::Matrix{Int64}, dist::Int, guides::Vector{LongDNA{4}})
     sort!(res, vcat(col_d, :guide))
     return res
 end
+
+
+function filter_overlapping(res::DataFrame, distance::Int)
+    sort!(res, [:guide,  :chromosome, :strand, :distance, :start])
+
+    to_remove = falses(size(res)[1])
+    gsc = join(res[1, [:guide, :chromosome, :strand]])
+    pos_filter = Set((res.start[1] - distance):(res.start[1] + distance))
+    for i in 2:length(to_remove)
+        gsci = join(res[i, [:guide, :chromosome, :strand]])
+        if gsc == gsci
+            if res.start[i] in pos_filter
+                to_remove[i] = true
+            else
+                for j in (res.start[i] - distance):(res.start[i] + distance)
+                    push!(pos_filter, j)
+                end
+            end
+        else
+            gsc = gsci
+            pos_filter = Set((res.start[i] - distance):(res.start[i] + distance))
+        end
+    end
+    res = res[.!to_remove, :]
+end
+
+
+# small helper that is similar to R table function
+function counts_by_dist(distances, max_dist)
+    map = countmap(distances)
+    vec = zeros(Int, max_dist + 1)
+    for (dist, count) in map
+        vec[dist + 1] = count
+    end
+    return NamedTuple{Tuple([Symbol("D$i") for i in 0:max_dist])}(Tuple(vec))
+end
+
+
+function summarize_offtargets(res::DataFrame, distance::Int)
+    df = groupby(res, :guide)
+    df = combine(df,  :distance => (x -> counts_by_dist(x, distance)) => AsTable)
+    sort!(df, vcat([Symbol("D$i") for i in 0:distance], :guide))
+    return df
+end

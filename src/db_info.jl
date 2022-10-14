@@ -66,6 +66,10 @@ function GenomeInfo(filepath::String)
     return GenomeInfo(now(Dates.UTC), filepath, checksum, chrom, chrom_type, pos_type, is_fa)
 end
 
+function Base.isequal(gi::GenomeInfo, gi2::GenomeInfo)
+    return isequal(gi.genomechecksum, gi2.genomechecksum) & isequal(Set(gi.chrom), Set(gi2.chrom))
+end
+
 
 struct DBInfo
     name::String

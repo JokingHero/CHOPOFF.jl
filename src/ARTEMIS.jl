@@ -12,6 +12,7 @@ using StaticArrays
 using CRC32c
 using Dates
 using Statistics
+using StatsBase
 using Random
 using Combinatorics
 using BioSymbols
@@ -29,6 +30,7 @@ using ProgressMeter
 using VariantCallFormat
 using CodecZlib
 using PathDistribution
+using Dates
 
 include("utils.jl")
 
@@ -54,11 +56,13 @@ include("db_vcf.jl")
 
 include("db_fmi_helpers.jl")
 include("db_fmi.jl")
+include("db_fmi_seed.jl")
 
 
 export Motif, length_noPAM, length, setambig, setdist # motif
 export save, load # persistence
-export minkmersize, getseq, expand_ambiguous, all_kmers, as_kmers, as_skipkmers # utils
+export minkmersize, getseq, expand_ambiguous, all_kmers, as_kmers, 
+    as_skipkmers, summarize_offtargets, filter_overlapping # utils
 # export AmbigIdx, findbits # ambig_index
 export DBInfo # db_info
 export gatherofftargets!, gatherofftargets # find_offtargets
@@ -72,8 +76,8 @@ export build_vcfDB, search_vcfDB # db_vcf
 export build_PathTemplates
 export build_motifDB, search_motifDB
 
-export build_fmiDB, search_fmiDB_patterns
-export build_pamDB, search_pamDB
+export build_fmiDB, search_fmiDB
+export build_pamDB, search_fmiDB_seed
 
 ## Standalone binary generation
 function parse_commandline(args::Array{String})
@@ -84,26 +88,34 @@ function parse_commandline(args::Array{String})
         version = string(@PkgVersion.Version),
         add_version = true)
 
-    # We can't run tests for selfcontained app yet
     @add_arg_table! s begin
         "build", "B"
-            help = "Build a database of the guideRNAs."
+            help = "Build a database of the possible gRNA's/off-target sites."
             action = :command
         "search", "S"
             help = "Search database for off-targets."
-            action = :command       
-    end  
+            action = :command  
+        "estimate", "E"
+            help = "Estimate number of off-targets."
+            action = :command   
+        "filter", "F"
+            help = "Filter overlapping off-targets, keep the one with the lowest distance."
+            action = :command 
+        "summarize", "U"
+            help = "Summarize off-targets into table of counts by distance for each gRNA."
+            action = :command   
+    end
 
     @add_arg_table! s["build"] begin
         "treeDB"
             action = :command
-            help = "treeDB builds Vantage Point tree for efficient search of off-targets."
+            help = "treeDB uses Vantage Point tree and triangle inequality to find off-targets."
         "linearDB"
             action = :command
             help = "linearDB utilizes prefixes to decrease search time, but no other optimizations."
         "motifDB"
             action = :command
-            help = "motifDB utilizes prefixes to decrease search time, and also lossless seeds."
+            help = "motifDB utilizes prefixes together with q-gram filtering."
         "hashDB"
             action = :command
             help = "hashDB is extremally fast, but only estimates off-targets within distance of 1"
@@ -151,21 +163,20 @@ function parse_commandline(args::Array{String})
             help = "If used will not match to the reverse reference strand."
             action = :store_true
         "--distance"
-            help = """How many extra nucleotides are needed for a search? This
-            will indicate within what distance we can search for off-targets."""
+            help = """Within what distance we can search for off-targets?"""
             arg_type = Int
-            default = 4
+            default = 3
         "--extend3" 
             help = """Defines how off-targets will be aligned to the guides and where
                 extra nucleotides will be added for alignment within distance. Whether
-                to extend in the 5' and 3' direction. Cas9 is extend3 = false, default, without this option."""
+                to extend in the 5' and 3' direction. Default is Cas9 with extend3 = false."""
             action = :store_true
         "--ambig_max"
             help = """How many ambiguous bases are allowed inside the guide?"""
             arg_type = Int
             default = 0
         "--motif"
-            help = """Will try to get the Motif from Motif databases avaialble are e.g. Cas9 or Cpf1"""
+            help = """Will try to get the Motif template based on the standard name e.g. Cas9 or Cpf1"""
             arg_type = String
             default = ""
     end
@@ -251,61 +262,108 @@ function parse_commandline(args::Array{String})
     end
 
     @add_arg_table! s["search"] begin
+        "treeDB"
+            action = :command
+            help = "treeDB uses Vantage Point tree and triangle inequality to find off-targets."
+        "linearDB"
+            action = :command
+            help = "linearDB utilizes prefixes to decrease search time, but no other optimizations."
+        "motifDB"
+            action = :command
+            help = "motifDB utilizes prefixes together with q-gram filtering."
+        "vcfDB"
+            action = :command
+            help = "vcfDB is similar specialized database to handle .vcf files and personalized off-target search."
+        "fmi"
+            action = :command
+            help = "Search fmi index using bruteforce method."
+        "fmi_seed"
+            action = :command
+            help = "Search fmi index using lossless 01*0 seed method."
         "--distance"
-            help = "Maximum edit distance to analyze. Must be less or equal to distance used when building db."
+            help = "Maximum edit distance to analyze. Must be less or equal to the distance that was used when building db."
             arg_type = Int
-            default = 1
-        "--detail"
-            help = "Path to the file where additional detailed results should be written. Not aplicable for sketchDB."
+            default = 3
+        "--database"
+            help = "Path to THE FOLDER where the database is stored. Same as used when building. For FM-index based solutions this should be path to the FM-index folder."
             arg_type = String
-            default = ""
-        "--early_stopping"
-            help = "A vector of values, for each (distance + 1), where alignments will be early stopped."
-            arg_type = Vector{Int}
-            default = repeat([250], 1 + 1)
-        "--right"
-            help = "Directionality in the filter databases."
-            action = :store_true
-        "--template"
-            help = "Path to the table with the template. You can build a template with 'build  template'"
+            required = true
+        "--guides"
+            help = "File path to the guides, each row in the file contains a guide WITHOUT PAM."
             arg_type = String
-            required = false
-        "--genome"
-            help = "Path to the genome."
+            required = true
+        "--output"
+            help = "Path to the file where detailed results should be written."
             arg_type = String
-            required = false
+            required = true
+    end
+
+    @add_arg_table! s["search"]["motifDB"] begin
         "--adjust"
             help = "Adjust parameter for motifDB."
             arg_type = Int
             default = 0
             required = false
+    end
+
+    @add_arg_table! s["search"]["fmi"] begin
+        "--template"
+            help = "Path to the table with the template. You can build a template with 'build  template'."
+            arg_type = String
+            required = true
+    end
+
+    @add_arg_table! s["search"]["fmi_seed"] begin
+        "--genome"
+            help = "Path to the genome."
+            arg_type = String
+            required = true
         "--pamDB"
             help = "Path to the file with pamDB. - Make with build_pamDB."
             arg_type = String
-            required = false
-        "database"
-            help = "Path to the folder where the database is stored. Same as used when building."
+            required = true
+    end
+
+    @add_arg_table! s["estimate"] begin
+        "--right"
+            help = "Directionality in the filter databases."
+            action = :store_true
+        "--database"
+            help = "Path to the file where the database is stored."
             arg_type = String
             required = true
-        "type"
-            help = "Type of the database: treeDB, sketchDB or linearDB."
-            arg_type = String
-            range_tester = (
-                x -> x == "vcfDB" || 
-                x == "hashDB" ||
-                x == "dictDB" || 
-                x == "treeDB" || 
-                x == "motifDB" ||
-                x == "template" ||
-                x == "linearDB" ||
-                x == "fmi" ||
-                x == "pamDB")
-            required = true
-        "guides"
+        "--guides"
             help = "File path to the guides, each row in the file contains a guide WITHOUT PAM."
             arg_type = String
             required = true
-        "output"
+        "--output"
+            help = "File path to the file where summarized output should be generated."
+            arg_type = String
+            required = true
+    end
+
+    @add_arg_table! s["filter"] begin
+        "--distance"
+            help = "What is the distance for overlap filtering of off-targets. Reasonable selections are, distance used for "
+            arg_type = Int
+            required = true
+        "--detail_file"
+            help = "Path to the file where the database is stored."
+            arg_type = String
+            required = true
+        "--output"
+            help = "File path to the file where summarized output should be generated."
+            arg_type = String
+            required = true
+    end
+
+
+    @add_arg_table! s["summarize"] begin
+        "--detail_file"
+            help = "Path to the file where the database is stored."
+            arg_type = String
+            required = true
+        "--output"
             help = "File path to the file where summarized output should be generated."
             arg_type = String
             required = true
@@ -324,15 +382,18 @@ function main(args::Array{String})
 
     if args["%COMMAND%"] == "build"
         args = args["build"]
-        if args["motif"] != ""
-            motif = Motif(args["motif"])
-            motif = setdist(motif, args["distance"])
-            motif = setambig(motif, args["ambig_max"])
-        else
-            motif = Motif(
-                args["name"], args["fwd_motif"], 
-                args["fwd_pam"], !args["not_forward"], !args["not_reverse"],
-                args["distance"], !args["extend3"], args["ambig_max"])
+
+        if args["%COMMAND%"] != "fmi"
+            if args["motif"] != ""
+                motif = Motif(args["motif"])
+                motif = setdist(motif, args["distance"])
+                motif = setambig(motif, args["ambig_max"])
+            else
+                motif = Motif(
+                    args["name"], args["fwd_motif"], 
+                    args["fwd_pam"], !args["not_forward"], !args["not_reverse"],
+                    args["distance"], !args["extend3"], args["ambig_max"])
+            end
         end
 
         if args["%COMMAND%"] == "treeDB"
@@ -358,48 +419,72 @@ function main(args::Array{String})
             elseif args["hashDB"]["precision"] == "UInt32"
                 prec = UInt32
             end
-            build_hashDB(args["name"], args["genome"], motif, args["output"]; 
+            build_hashDB(args["name"], args["genome"], motif;
+                storage_path = args["output"], 
                 seed = args["hashDB"]["seed"], 
                 max_iterations = args["hashDB"]["max_iterations"],
                 max_count = args["hashDB"]["max_count"], precision = prec)
         elseif args["%COMMAND%"] == "dictDB"
-            build_dictDB(args["name"], args["genome"], motif, args["output"])
+            build_dictDB(args["name"], args["genome"], motif; storage_path = args["output"])
         elseif args["%COMMAND%"] == "vcfDB"
             build_vcfDB(args["name"], args["genome"], args["vcfDB"]["vcf"], motif, args["output"])
         elseif args["%COMMAND%"] == "fmi"
             build_fmiDB(args["genome"], args["output"])
         elseif args["%COMMAND%"] == "pamDB"
-            build_pamDB(args["fmidir"], motif; storagedir = joinpath(args["output"], args["name"] * ".bin"))
+            build_pamDB(args["pamDB"]["fmidir"], motif; 
+                storage_dir = joinpath(args["output"], args["name"] * ".bin"))
         else
             throw("Unsupported database type.")
         end
     elseif args["%COMMAND%"] == "search"
         args = args["search"]
         guides = LongDNA{4}.(readlines(args["guides"]))
-        if args["type"] == "treeDB"
+        if args["%COMMAND%"] == "treeDB"
             res = search_treeDB(args["database"], guides, args["distance"]; detail = args["detail"])
-        elseif args["type"] == "linearDB"
+        elseif args["%COMMAND%"] == "linearDB"
             res = search_linearDB(args["database"], guides, args["distance"]; detail = args["detail"])
-        elseif args["type"] == "motifDB"
-            res = search_motifDB(
-                args["database"], guides, args["distance"]; 
-                detail = args["detail"], adjust = args["adjust"])
-        elseif args["type"] == "hashDB"
-            @info "Right set as: " * string(args["right"])
-            res = search_hashDB(args["database"], guides, args["right"])
-        elseif args["type"] == "dictDB"
-            res = search_dictDB(args["database"], guides)
-        elseif args["type"] == "vcfDB"
+        elseif args["%COMMAND%"] == "motifDB"
+            search_motifDB(
+                args["database"], guides, args["output"]; 
+                distance = args["distance"], adjust = args["motifDB"]["adjust"])
+        elseif args["%COMMAND%"] == "vcfDB"
             res = search_vcfDB(args["database"], guides)
-        elseif args["type"] == "fmi"
-            template = load(args["template"])
-            res = search_fmiDB_patterns(args["database"], template, guides; 
-                distance = args["distance"], detail = args["detail"])
-        elseif args["type"] == "pamDB"
-            res = search_pamDB(args["database"], args["genome"], args["pamDB"], guides)
+        elseif args["%COMMAND%"] == "fmi"
+            template = load(args["fmi"]["template"]) # TODO fix motif...
+            search_fmiDB(guides, template, motif, args["database"], args["output"];
+                distance = args["distance"])
+        elseif args["%COMMAND%"] == "fmi_seed"
+            pamDB = load(args["fmi_seed"]["pamDB"])
+            search_fmiDB_seed(guides, args["database"], args["fmi_seed"]["genome"], pamDB, args["output"];
+                distance = args["distance"])
         else
             throw("Unsupported database type.")
         end
+        
+    elseif args["%COMMAND%"] == "estimate"
+        args = args["estimate"]
+        guides = LongDNA{4}.(readlines(args["guides"]))
+        db = load(args["database"])
+        if isa(db, HashDB)
+            @info "Right set as: " * string(args["right"])
+            res = search_hashDB(db, guides, args["right"])
+        elseif isa(db, DictDB)
+            res = search_dictDB(db, guides)
+        else
+            throw("Unsupported database type.")
+        end
+        CSV.write(args["output"], res)
+
+    elseif args["%COMMAND%"] == "filter"
+        args = args["filter"]
+        res = DataFrame(CSV.File(args["detail_file"]))
+        res = filter_overlapping(res, args["distance"])
+        CSV.write(args["output"], res)
+
+    elseif args["%COMMAND%"] == "summarize"
+        args = args["summarize"]
+        res = DataFrame(CSV.File(args["detail_file"]))
+        res = summarize_offtargets(res, maximum(res.distance))
         CSV.write(args["output"], res)
     end
 end

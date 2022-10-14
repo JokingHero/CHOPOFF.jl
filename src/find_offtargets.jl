@@ -69,16 +69,16 @@ function Base.findall(pat::T, seq::T,
 end
 
 
-function strandedguide(guide::LongDNA{4}, reverse_comp::Bool, extends5::Bool)
-    if extends5 && reverse_comp
+function strandedguide(guide::LongDNA{4}, is_antisense::Bool, extends5::Bool)
+    if extends5 && is_antisense
         # CCN ... EXT
         guide = complement(guide)
         # becomes GGN ... EXT
-    elseif extends5 && !reverse_comp 
+    elseif extends5 && !is_antisense 
         # EXT ... NGG
         guide = reverse(guide)
         # becomes GGN ... EXT
-    elseif !extends5 && reverse_comp 
+    elseif !extends5 && is_antisense 
         # EXT ... NAA
         guide = reverse_complement(guide)
         # becomes TTA ... EXT
@@ -103,19 +103,19 @@ function pushguides!(
     ambig::Vector{LongDNA{4}},
     dbi::DBInfo,
     chrom::K,
-    reverse_comp::Bool) where {
+    is_antisense::Bool) where {
         T<:Union{
             Vector{String},
             Vector{UInt128}, 
             Vector{UInt64}}, 
         K<:BioSequence}
 
-    pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
+    pam_loci = is_antisense ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
     as_UInt128 = output isa Vector{UInt128}
     as_UInt64 = output isa Vector{UInt64}
 
     if length(dbi.motif) != 0
-        guides_pos = findguides(dbi, chrom, reverse_comp)
+        guides_pos = findguides(dbi, chrom, is_antisense)
         guides = ThreadsX.map(guides_pos) do x 
             guide = LongDNA{4}(chrom[x])
             guide = removepam(guide, pam_loci)
@@ -123,9 +123,9 @@ function pushguides!(
         end
 
         if dbi.motif.distance > 0
-            guides = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
+            guides = add_extension(guides, guides_pos, dbi, chrom, is_antisense)
         end
-        guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, reverse_comp)
+        guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, is_antisense)
         guides_pos = nothing # not needed for anything and uses a lot of space
         
         idx = ThreadsX.map(isambig, guides)

@@ -21,8 +21,8 @@ end
 function build_dictDB(
     name::String, 
     genomepath::String, 
-    motif::Motif,
-    storagedir::String)
+    motif::Motif;
+    storage_path::String = "")
 
     if motif.distance > 2 
         @info "Searches on distances of more than 2 will be very slow! Be warned!"
@@ -35,41 +35,42 @@ function build_dictDB(
     mtp = build_PathTemplates(length_noPAM(motif), motif.distance)
 
     db = DictDB(dict, mtp, dbi, ambig)
-    save(db, joinpath(storagedir, "dictDB.bin"))
-    @info "Finished constructing dictDB in " * storagedir
-    @info "Database size is:" *
-        "\n length -> " * string(length(db.dict)) *
-        "\n consuming: " * string(round((filesize(joinpath(storagedir, "dictDB.bin")) * 1e-6); digits = 3)) * 
-        " mb of disk space."
-    return storagedir
+    if storage_path != ""
+        save(db, storage_path)
+        @info "Finished constructing dictDB in " * storage_dir
+        @info "Database size is:" *
+            "\n length -> " * string(length(db.dict)) *
+            "\n consuming: " * string(round((filesize(storage_path) * 1e-6); digits = 3)) * 
+            " mb of disk space."
+    end
+    return db
 end
 
 
 function search_dictDB(
-    storagedir::String,
+    db::DictDB,
     guides::Vector{LongDNA{4}})
 
-    sdb = load(joinpath(storagedir, "dictDB.bin"))
     guides_ = copy(guides)
-    dist = sdb.mtp.distance # use maximal distance as the performance is always bottlenecked by that
+    dist = db.mtp.distance # use maximal distance as the performance is always bottlenecked by that
 
-    if any(length_noPAM(sdb.dbi.motif) .!= length.(guides_))
-        throw("Guide queries are not of the correct length to use with this Motif: " * string(sdb.dbi.motif))
+    if any(length_noPAM(db.dbi.motif) .!= length.(guides_))
+        throw("Guide queries are not of the correct length to use with this Motif: " * string(db.dbi.motif))
     end
     # reverse guides so that PAM is always on the left
-    if sdb.dbi.motif.extends5
+    if db.dbi.motif.extends5
         guides_ = reverse.(guides_)
     end
 
     res = zeros(Int, length(guides_), dist + 1)
     for (i, s) in enumerate(guides_)
 
-        pat = ARTEMIS.templates_to_sequences_extended(s, sdb.mtp)
+        pat = ARTEMIS.templates_to_sequences_extended(s, db.mtp)
         for di in 1:(dist + 1)
-            res[i, di] = Base.mapreduce(x -> get(sdb.dict, convert(UInt64, x), 0), +, pat[di])
+            res[i, di] = Base.mapreduce(x -> get(db.dict, convert(UInt64, x), 0), +, pat[di])
 
-            if !isnothing(sdb.ambig)
-                res[i, di] += sum(Base.mapreduce(x -> findbits(x, sdb.ambig), .|, pat[di]))
+            if !isnothing(db.ambig)
+                res[i, di] += sum(Base.mapreduce(x -> findbits(x, db.ambig), .|, pat[di]))
             end
         end
     end

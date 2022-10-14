@@ -154,4 +154,5 @@ using Combinatorics
         @test b[kmers[dna"ACT"]]
         @test b[kmers[dna"CTG"]]
     end
+
 end

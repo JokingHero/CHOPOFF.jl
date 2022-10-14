@@ -86,22 +86,22 @@ function add_extension(
     guides_pos::Vector{UnitRange{Int64}},
     dbi::DBInfo,
     chrom::K,
-    reverse_comp::Bool) where K <: BioSequence
+    is_antisense::Bool) where K <: BioSequence
 
     chrom_max = lastindex(chrom)
-    if dbi.motif.extends5 && reverse_comp
+    if dbi.motif.extends5 && is_antisense
         ext = last.(guides_pos) .+ 1
         ext = ThreadsX.map(x -> getExt3(chrom, chrom_max, x, dbi.motif.distance), ext)
         guides .= guides .* ext
-    elseif dbi.motif.extends5 && !reverse_comp
+    elseif dbi.motif.extends5 && !is_antisense
         ext = first.(guides_pos) .- 1
         ext = ThreadsX.map(x -> getExt5(chrom, x, dbi.motif.distance), ext)
         guides .= ext .* guides
-    elseif !dbi.motif.extends5 && reverse_comp
+    elseif !dbi.motif.extends5 && is_antisense
         ext = first.(guides_pos) .- 1
         ext = ThreadsX.map(x -> getExt5(chrom, x, dbi.motif.distance), ext)
         guides .= ext .* guides
-    else #!dbi.motif.extends5 && !reverse_comp
+    else #!dbi.motif.extends5 && !is_antisense
         ext = last.(guides_pos) .+ 1
         ext = ThreadsX.map(x -> getExt3(chrom, chrom_max, x, dbi.motif.distance), ext)
         guides .= guides .* ext
@@ -114,24 +114,24 @@ function normalize_to_PAMseqEXT(
     guides::Vector{LongDNA{4}},
     guides_pos::Vector{UnitRange{Int64}},
     dbi::DBInfo,
-    reverse_comp::Bool)
+    is_antisense::Bool)
 
-    if dbi.motif.extends5 && reverse_comp
+    if dbi.motif.extends5 && is_antisense
         # CCN ... EXT
         guides .= complement.(guides)
         guides_pos = first.(guides_pos)
         # becomes GGN ... EXT
-    elseif dbi.motif.extends5 && !reverse_comp 
+    elseif dbi.motif.extends5 && !is_antisense 
         # EXT ... NGG
         guides .= reverse.(guides)
         guides_pos = last.(guides_pos)
         # becomes GGN ... EXT
-    elseif !dbi.motif.extends5 && reverse_comp 
+    elseif !dbi.motif.extends5 && is_antisense 
         # EXT ... NAA
         guides .= reverse_complement.(guides)
         guides_pos = last.(guides_pos)
         # becomes TTA ... EXT
-    else #!dbi.motif.extends5 && !reverse_comp
+    else #!dbi.motif.extends5 && !is_antisense
         # TTN ... EXT
         guides_pos = first.(guides_pos)
     end
@@ -142,11 +142,11 @@ end
 function findguides(
     dbi::DBInfo,
     chrom::K,
-    reverse_comp::Bool) where {K<:BioSequence}
+    is_antisense::Bool) where {K<:BioSequence}
 
-    query = reverse_comp ? dbi.motif.rve : dbi.motif.fwd
+    query = is_antisense ? dbi.motif.rve : dbi.motif.fwd
     (seq_start, seq_stop) = locate_telomeres(chrom)
-    if reverse_comp ⊻ dbi.motif.extends5
+    if is_antisense ⊻ dbi.motif.extends5
         seq_start -= dbi.motif.distance
         seq_start = max(seq_start, 1)
     else
@@ -167,21 +167,21 @@ function gatherofftargets(
     dbi::DBInfo,
     chrom::K,
     chrom_name::String,
-    reverse_comp::Bool,
+    is_antisense::Bool,
     prefix_len::Int) where {K<:BioSequence}
  
-    pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
+    pam_loci = is_antisense ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
     chrom_name_ = convert(dbi.gi.chrom_type, findfirst(isequal(chrom_name), dbi.gi.chrom))
 
     if length(dbi.motif) != 0
-        guides_pos = findguides(dbi, chrom, reverse_comp)
+        guides_pos = findguides(dbi, chrom, is_antisense)
         guides = ThreadsX.map(x -> removepam(chrom[x], pam_loci), guides_pos)
         if dbi.motif.distance > 0
-            guides = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
+            guides = add_extension(guides, guides_pos, dbi, chrom, is_antisense)
         end
-        guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, reverse_comp)
+        guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, is_antisense)
         guides_pos = convert.(dbi.gi.pos_type, guides_pos)
-        loc = Loc.(chrom_name_, guides_pos, !reverse_comp)
+        loc = Loc.(chrom_name_, guides_pos, !is_antisense)
 
         gprefix = getindex.(guides, [1:prefix_len])
         gsuffix = getindex.(guides, [(prefix_len + 1):length(guides[1])])
@@ -196,7 +196,7 @@ function gatherofftargets(
 end
 
 
-function do_linear_chrom(chrom_name::String, chrom::K, dbi::DBInfo, prefix_len::Int, storagedir::String) where K<:BioSequence
+function do_linear_chrom(chrom_name::String, chrom::K, dbi::DBInfo, prefix_len::Int, storage_dir::String) where K<:BioSequence
     @info "Working on $chrom_name"
     output_fwd = gatherofftargets(dbi, chrom, chrom_name, false, prefix_len)
     output_rve = gatherofftargets(dbi, chrom, chrom_name, true, prefix_len)
@@ -217,7 +217,7 @@ function do_linear_chrom(chrom_name::String, chrom::K, dbi::DBInfo, prefix_len::
             loci = vcat(output_fwd[fwd_idx].loci, output_rve[rve_idx].loci)
         end
         pdb = PrefixDB(prefix, suffixes, loci)
-        pdir = joinpath(storagedir, string(prefix))
+        pdir = joinpath(storage_dir, string(prefix))
         if !isdir(pdir)
             mkdir(pdir)
         end

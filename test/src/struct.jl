@@ -2,18 +2,24 @@ using Test
 
 using ARTEMIS: DBInfo, Loc, decode, 
     Motif, length_noPAM, removepam, combinestrings, notX,
-    AmbigIdx, findbits
+    AmbigIdx, findbits, setdist
 using BioSequences
 
 @testset "structures" begin
 
     cas9 = Motif("Cas9")
     cpf1 = Motif("Cpf1")
+    cas9_d1 = setdist(cas9, 1)
+    cpf1_d1 = setdist(cpf1, 1)
     @testset "Motif" begin
         @test length_noPAM(cas9) == 20
         @test length_noPAM(cpf1) == 20
         @test removepam(dna"ACTNN", 1:3) == dna"NN"
         @test combinestrings("XXXACT", "ACTXXX") == "ACTACT"
+        @test length(cas9) == 23
+        @test length(cpf1) == 24
+        @test length(cas9_d1) == 23
+        @test length(cpf1_d1) == 24
     end
 
 

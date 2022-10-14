@@ -71,18 +71,18 @@ function gatherofftargets(
     dbi::DBInfo,
     chrom::K,
     chrom_name::String,
-    reverse_comp::Bool) where {K<:BioSequence}
+    is_antisense::Bool) where {K<:BioSequence}
  
-    pam_loci = reverse_comp ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
+    pam_loci = is_antisense ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
     chrom_name_ = convert(dbi.gi.chrom_type, findfirst(isequal(chrom_name), dbi.gi.chrom))
 
     if length(dbi.motif) != 0
-        guides_pos = findguides(dbi, chrom, reverse_comp)
+        guides_pos = findguides(dbi, chrom, is_antisense)
         guides = ThreadsX.map(x -> removepam(chrom[x], pam_loci), guides_pos)
-        guides = add_extension(guides, guides_pos, dbi, chrom, reverse_comp)
-        guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, reverse_comp)
+        guides = add_extension(guides, guides_pos, dbi, chrom, is_antisense)
+        guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, is_antisense)
         guides_pos = convert.(dbi.gi.pos_type, guides_pos)
-        return (chrom_name_, guides, guides_pos, !reverse_comp)
+        return (chrom_name_, guides, guides_pos, !is_antisense)
     end
     return nothing
 end
@@ -94,14 +94,14 @@ build_motifDB(
     name::String,
     genomepath::String,
     motif::Motif,
-    storagedir::String,
+    storage_dir::String,
     prefix_len::Int = 7;
     skipmer_size::Int = Int(floor(length_noPAM(motif) / (motif.distance + 3))))
 ```
 
 Prepare motifDB index for future searches using `search_motifDB`.
 
-Will return a path to the database location, same as `storagedir`.
+Will return a path to the database location, same as `storage_dir`.
 When this database is used for the guide off-target scan it is similar 
 to `search_linearDB`, however additional filter is applied on top of 
 prefix filtering. Suffixes are used for next filter, similarly to 
@@ -130,7 +130,7 @@ distance `dist` and adjustment `adjust` during search step in `search_motifDB`.
 
 `motif`   - Motif deines what kind of gRNA to search for.
 
-`storagedir`  - Folder path to the where index will be saved with name `linearDB.bin` and many prefix files.
+`storage_dir`  - Folder path to the where index will be saved with name `linearDB.bin` and many prefix files.
 
 `prefix_len`  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,
                 however it will also result in large number of files. 
@@ -161,7 +161,7 @@ function build_motifDB(
     name::String,
     genomepath::String,
     motif::Motif,
-    storagedir::String,
+    storage_dir::String,
     prefix_len::Int = 7;
     skipmer_size::Int = Int(floor(length_noPAM(motif) / (motif.distance + 3))))
 
@@ -173,7 +173,7 @@ function build_motifDB(
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
     # Don't paralelize here as you can likely run out of memory (chromosomes are large)
-    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storagedir), dbi.gi.chrom)
+    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storage_dir), dbi.gi.chrom)
     close(ref)
 
     prefixes = Set(vcat(prefixes...))
@@ -187,14 +187,14 @@ function build_motifDB(
         guides = Vector{LongDNA{4}}()
         loci = Vector{Loc}()
         for chrom in dbi.gi.chrom
-            p = joinpath(storagedir, string(prefix), string(prefix) * "_" * chrom * ".bin")
+            p = joinpath(storage_dir, string(prefix), string(prefix) * "_" * chrom * ".bin")
             if ispath(p)
                 pdb = load(p)
                 append!(guides, pdb.suffix)
                 append!(loci, pdb.loci)
             end
         end
-        rm(joinpath(storagedir, string(prefix)), recursive = true)
+        rm(joinpath(storage_dir, string(prefix)), recursive = true)
         (guides, loci_range, loci) = unique_guides(guides, loci)
         guides_ = ThreadsX.map(x -> as_bitvector_of_kmers(x, kmers), guides) # only suffix part
         guides_ = hcat(guides_...) # as BitMatrix - columns are guides, rows are kmers
@@ -209,12 +209,12 @@ function build_motifDB(
             MotifPos(
                 loci_chrom, loci_pos, loci_isplus, guides,
                 loci_range, ug_count, guides_),
-            joinpath(storagedir, string(prefix) * ".bin"))
+            joinpath(storage_dir, string(prefix) * ".bin"))
     end
 
-    save(MotifDB(dbi, prefixes, skipmer_size, kmers), joinpath(storagedir, "motifDB.bin"))
-    @info "Finished constructing motifDB in " * storagedir
-    return storagedir
+    save(MotifDB(dbi, prefixes, skipmer_size, kmers), joinpath(storage_dir, "motifDB.bin"))
+    @info "Finished constructing motifDB in " * storage_dir
+    return storage_dir
 end
 
 
@@ -236,13 +236,10 @@ function search_prefix(
     gskipmers::Vector{Vector{LongDNA{4}}},
     kmers::Dict{LongDNA{4}, Int},
     adjust::Int,
-    storagedir::String)
+    storage_dir::String)
 
-    res = zeros(Int, length(guides), dist + 1)
-    if detail != ""
-        detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
-        detail_file = open(detail_path, "w")
-    end
+    detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
+    detail_file = open(detail_path, "w")
 
     # prefix alignment against all the guides
     prefix_len = length(prefix)
@@ -251,14 +248,14 @@ function search_prefix(
     isfinal = Base.map(x -> x.isfinal, prefix_aln)
 
     if all(isfinal)
-        return res
+        return
     end
 
     # what is the alignment score so far - how many distance is accumulated
     row_min = Base.map(x -> minimum(x.v[prefix_len - 1, :]), prefix_aln)
 
     # if any of the guides requires further alignment
-    sdb = load(joinpath(storagedir, string(prefix) * ".bin"))
+    sdb = load(joinpath(storage_dir, string(prefix) * ".bin"))
     sdb_counts = bits_to_counts(sdb.ug, sdb.ug_count)
     for i in 1:length(guides)
         if !isfinal[i]
@@ -270,38 +267,34 @@ function search_prefix(
             g_bits = guide_to_bitvector(gskipmers[i], sdb.bits, kmers, min_count)
             if length(g_bits) > 0
                 offtargets = sdb.sequences[g_bits]
-                sdb_counts_g = sdb_counts[g_bits]
                 for (j, suffix) in enumerate(offtargets)
                     suffix_aln = suffix_align(suffix, prefix_aln[i])
 
                     if suffix_aln.dist <= dist
-                        res[i, suffix_aln.dist + 1] += sdb_counts_g[j]
 
-                        if detail != ""
-                            if dbi.motif.extends5
-                                guide_stranded = reverse(prefix_aln[i].guide)
-                                aln_guide = reverse(suffix_aln.guide)
-                                aln_ref = reverse(suffix_aln.ref)
-                            else
-                                guide_stranded = prefix_aln[i].guide
-                                aln_guide = suffix_aln.guide
-                                aln_ref = suffix_aln.ref
-                            end
-                            noloc = string(guide_stranded) * "," * aln_guide * "," * 
-                                    aln_ref * "," * string(suffix_aln.dist) * ","
+                        if dbi.motif.extends5
+                            guide_stranded = reverse(prefix_aln[i].guide)
+                            aln_guide = reverse(suffix_aln.guide)
+                            aln_ref = reverse(suffix_aln.ref)
+                        else
+                            guide_stranded = prefix_aln[i].guide
+                            aln_guide = suffix_aln.guide
+                            aln_ref = suffix_aln.ref
+                        end
+                        noloc = string(guide_stranded) * "," * aln_guide * "," * 
+                                aln_ref * "," * string(suffix_aln.dist) * ","
 
-                            for o in get_ug_ranges(sdb.ug, sum(sdb_counts[1:g_bits[j]]))
-                                strand = "-"
-                                if sdb.isplus[o]
-                                    strand = "+"
-                                end
-                                write(
-                                    detail_file, 
-                                    noloc * 
-                                    dbi.gi.chrom[sdb.chroms[o]] * "," * 
-                                    string(sdb.pos[o]) * "," * 
-                                    strand * "\n")
+                        for o in get_ug_ranges(sdb.ug, sum(sdb_counts[1:g_bits[j]]))
+                            strand = "-"
+                            if sdb.isplus[o]
+                                strand = "+"
                             end
+                            write(
+                                detail_file, 
+                                noloc * 
+                                dbi.gi.chrom[sdb.chroms[o]] * "," * 
+                                string(sdb.pos[o]) * "," * 
+                                strand * "\n")
                         end
                     end
                 end
@@ -309,24 +302,22 @@ function search_prefix(
         end
     end
 
-    if detail != ""
-        close(detail_file)
-    end
-    return res
+    close(detail_file)
+    return 
 end
 
 
 """
 ```
 search_motifDB(
-    storagedir::String, 
+    storage_dir::String, 
     guides::Vector{LongDNA{4}}, 
-    dist::Int = 4; 
-    detail::String = "",
+    output_file::String;
+    distance::Int = 3,
     adjust::Int = 0)
 ```
 
-Find all off-targets for `guides` within distance of `dist` using motifDB located at `storagedir`.
+Find all off-targets for `guides` within distance of `distance` using motifDB located at `storage_dir`.
 
 Assumes your guides do not contain PAM, and are all in the same direction as 
 you would order from the lab e.g.:
@@ -341,13 +332,16 @@ you would order from the lab e.g.:
 
 # Arguments
 
-`dist` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
-which off-targets are considered.  
+`storage_dir` - Directory containing motifDB.
 
-`detail` - Path and name for the output file. This search will create intermediate 
-files which will have same name as detail, but with a sequence prefix. Final file
-will contain all those intermediate files. Leave `detail` empty if you are only 
-interested in off-target counts returned by the motifDB. 
+`guides` - a vector of gRNAs without PAM.
+
+`output_file` - File to which write detailed results. This search will create intermediate 
+files which will have same name as output_file, but with a sequence prefix. Final file
+will contain all those intermediate files, and other files with sequence prefix will be deleted.
+
+`distance` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
+which off-targets are considered.  
 
 `adjust` - This will be crutial parameter for tightening second layer of filtering after, 
 the initial prefix alignment. For example, Cas9 off-target within distance 4 (d) might be 20bp long.
@@ -365,10 +359,10 @@ mdb_path = joinpath(tdir, "motifDB")
 mkpath(mdb_path)
 
 # use ARTEMIS example genome
-coh_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
+artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
 genome = joinpath(
     vcat(
-        coh_path, 
+        artemis_path, 
         "test", "sample_data", "genome", "semirandom.fa"))
 
 # build a motifDB
@@ -379,27 +373,26 @@ build_motifDB(
 
 # load up example gRNAs
 using BioSequences
-guides_s = Set(readlines(joinpath(vcat(coh_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides_s = Set(readlines(joinpath(vcat(artemis_path_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, get results!
-mdb_res = search_motifDB(mdb_path, guides, 3)
+results_dir = joinpath(tdir, "results")
+mkpath(results_dir)
+motifDB_results_path = search_motifDB(mdb_path, guides, joinpath(results_path, "motifDB_results.csv"); distance = 3)
 ```
 """
 function search_motifDB(
-    storagedir::String, 
+    storage_dir::String, 
     guides::Vector{LongDNA{4}}, 
-    dist::Int = 4; 
-    detail::String = "",
+    output_file::String;
+    distance::Int = 3,
     adjust::Int = 0)
 
-    sdb = load(joinpath(storagedir, "motifDB.bin"))
-    if dist > sdb.dbi.motif.distance
+    sdb = load(joinpath(storage_dir, "motifDB.bin"))
+    if distance > sdb.dbi.motif.distance
         error("Maximum distance is " * string(sdb.dbi.motif.distance))
     end
-
-    # we work on each chrom separately
-    # each guide separately?
 
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
@@ -409,17 +402,10 @@ function search_motifDB(
 
     prefix_len = length(first(sdb.prefixes))
     gskipmers = ThreadsX.map(x -> collect(Set(as_skipkmers(x[(prefix_len + 1):end], sdb.kmer_size))), guides_)
-    #res = zeros(Int, length(guides_), dist + 1)
-    res = ThreadsX.mapreduce(p -> search_prefix(
-        p, dist, sdb.dbi, dirname(detail), guides_, gskipmers, sdb.kmers, adjust, storagedir), +, sdb.prefixes)
-    #for p in prefixes
-    #    res += search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storagedir)
-    #end
+    ThreadsX.map(p -> search_prefix(
+        p, distance, sdb.dbi, dirname(output_file), guides_, gskipmers, sdb.kmers, adjust, storage_dir), sdb.prefixes)
     
-    if detail != ""
-        cleanup_detail(detail)
-    end
-
-    res = format_DF(res, dist, guides)
-    return res
+    cleanup_detail(output_file)
+    @info "Done!"
+    return
 end

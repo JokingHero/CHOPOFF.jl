@@ -14,16 +14,18 @@ using BioSequences
         guides_s = "./sample_data/crispritz_results/guides.txt"
         guides = LongDNA{4}.(Set(readlines(guides_s)))
 
-        args = ["build", "--name", "test_hash", "--genome", genome, "--output", tdir, "--motif", "Cas9", 
+        tdirDB = joinpath(tdir, "hashDB.bin")
+        args = ["build", "--name", "test_hash", "--genome", genome, "--output", tdirDB, "--motif", "Cas9", 
             "--distance", "1", "--ambig_max", "0", "hashDB"]
         ARTEMIS.main(args)
         
         res_file = joinpath(tdir, "hashDB_results.csv")
-        args = ["search", tdir, "hashDB", guides_s, res_file, "--right"]
+        args = ["estimate", "--database", tdirDB, "--guides", guides_s, "--output", res_file, "--right"]
         ARTEMIS.main(args)
 
         # compare the results file with the local results
-        hdb_res = search_hashDB(tdir, guides, true)
+        db = load(tdirDB)
+        hdb_res = search_hashDB(db, guides, true)
         res = DataFrame(CSV.File(res_file))
         @test nrow(res) == length(guides)
         @test all(res.guide .== String.(guides))

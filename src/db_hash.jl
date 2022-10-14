@@ -68,10 +68,10 @@ end
 """
 ```
 build_hashDB(
-    name::String,
+    name::String, 
     genomepath::String, 
-    motif::Motif,
-    storagedir::String;
+    motif::Motif;
+    storage_path::String = "",
     seed::UInt64 = UInt64(0x726b2b9d438b9d4d),
     max_iterations::Int = 10,
     max_count::Int = 10,
@@ -89,7 +89,7 @@ Prepare hashDB index for future searches using `search_hashDB`.
 
 `motif`   - Motif defines what kind of gRNA to search for.
 
-`storagedir`  - Folder path to the where index will be saved with name `hashDB.bin`.
+`storage_dir`  - Folder path to the where index will be saved with name `hashDB.bin`.
 
 `seed`  - Optional. Seed is used during hashing for randomization.
 
@@ -120,15 +120,14 @@ genome = joinpath(
 # finally, build a hashDB
 build_hashDB(
     "samirandom", genome, 
-    Motif("Cas9"; distance = 1, ambig_max = 0), 
-    hdb_path)
+    Motif("Cas9"; distance = 1, ambig_max = 0))
 ```
 """
 function build_hashDB(
     name::String, 
     genomepath::String, 
-    motif::Motif,
-    storagedir::String;
+    motif::Motif;
+    storage_path::String = "",
     seed::UInt64 = UInt64(0x726b2b9d438b9d4d),
     max_iterations::Int = 10,
     max_count::Int = 10,
@@ -151,15 +150,18 @@ function build_hashDB(
     bins, counts, err_left, err_right = 
         guides_to_bins(guides, seed, max_iterations, max_count; precision = precision)
     db = HashDB(dbi, mtp, bins, counts, ambig)
-    save(db, joinpath(storagedir, "hashDB.bin"))
 
-    @info "Finished constructing hashDB in " * storagedir * " consuming "  * 
-        string(round((filesize(joinpath(storagedir, "hashDB.bin")) * 1e-6); digits = 3)) * 
+    if storage_path != ""
+        save(db, storage_path)
+        @info "Finished constructing hashDB in " * storage_path * " consuming "  * 
+        string(round((filesize(joinpath(storage_path, "hashDB.bin")) * 1e-6); digits = 3)) * 
         " mb of disk space."
+    end
+
     @info "Estimated probability of miscounting an elements in the bins is: " * 
         "\nRight: " * string(round(err_right; digits = 6)) *
         "\nLeft: " * string(round(err_left; digits = 6))
-    return storagedir
+    return db
 end
 
 
@@ -184,12 +186,12 @@ end
 """
 ```
 search_hashDB(
-    storagedir::String,
+    db::HashDB,
     guides::Vector{LongDNA{4}},
     right::Bool)
 ```
 
-Estimate off-target counts for `guides` using hashDB stored at `storagedir`.
+Estimate off-target counts for `guides` using hashDB stored at `storage_dir`.
 
 Probabilistic filter offers a guarantee that it will always be correct when a sequence 
 is in the set (no false negatives), but may overestimate that a sequence is in the set 
@@ -216,39 +218,32 @@ off-target free it is also guaranteed to be true in both cases (low-to-high and 
 # prepare libs
 using ARTEMIS, BioSequences
 
-# make a temporary directory
-tdir = tempname()
-hdb_path = joinpath(tdir, "hashDB")
-mkpath(hdb_path)
-
 # use ARTEMIS example genome
-coh_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(vcat(coh_path, "test", "sample_data", "genome", "semirandom.fa"))
+ARTEMIS_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
+genome = joinpath(vcat(ARTEMIS_path, "test", "sample_data", "genome", "semirandom.fa"))
 
 # build a hashDB
-build_hashDB(
+db = build_hashDB(
     "samirandom", genome, 
-    Motif("Cas9"; distance = 1, ambig_max = 0), 
-    hdb_path)
+    Motif("Cas9"; distance = 1, ambig_max = 0))
 
 # load up example gRNAs
-guides_s = Set(readlines(joinpath(vcat(coh_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides_s = Set(readlines(joinpath(vcat(ARTEMIS_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
 guides = LongDNA{4}.(guides_s)
 
 # finally, get results!
-hdb_res = search_hashDB(hdb_path, guides, false)
+hdb_res = search_hashDB(db, guides, false)
 ```
 """
 function search_hashDB(
-    storagedir::String,
+    db::HashDB,
     guides::Vector{LongDNA{4}},
     right::Bool)
 
-    if any(isambig.(guides))
+    if any(isambig.(guides)) # TODO I think we support it now - should not matter much
         throw("Ambiguous bases are not allowed in guide queries.")
     end
 
-    db = load(joinpath(storagedir, "hashDB.bin"))
     guides_ = copy(guides)
     len_noPAM_noEXT = length_noPAM(db.dbi.motif)
     len = len_noPAM_noEXT + db.dbi.motif.distance

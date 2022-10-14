@@ -83,31 +83,22 @@ end
     ldb = DataFrame(CSV.File(detail_path))
 
     # make and run default dictDB
-    ddb_path = joinpath(tdir, "dictDB")
-    mkpath(ddb_path)
-    build_dictDB(
+    dictDB = build_dictDB(
         "samirandom", genome, 
-        Motif("Cas9"; distance = 2),
-        ddb_path)
-    ddb_res = search_dictDB(ddb_path, guides)
+        Motif("Cas9"; distance = 2))
+    ddb_res = search_dictDB(dictDB, guides)
 
     # make and run default hashDB
-    hdb_path = joinpath(tdir, "hashDB")
-    mkpath(hdb_path)
-    build_hashDB(
+    hashDB = build_hashDB(
         "samirandom", genome, 
-        Motif("Cas9"; distance = 1, ambig_max = 0), 
-        hdb_path)
-    hdb_res = search_hashDB(hdb_path, guides, false)
+        Motif("Cas9"; distance = 1, ambig_max = 0))
+    hdb_res = search_hashDB(hashDB, guides, false)
 
     # hashDB but with ambig
-    hdb_path2 = joinpath(tdir, "hashDBambig")
-    mkpath(hdb_path2)
-    build_hashDB(
+    hashDBambig = build_hashDB(
         "samirandom", genome, 
-        Motif("Cas9"; distance = 1, ambig_max = 1), 
-        hdb_path2)
-    hdb_res2 = search_hashDB(hdb_path2, guides, false)
+        Motif("Cas9"; distance = 1, ambig_max = 1))
+    hdb_res2 = search_hashDB(hashDBambig, guides, false)
 
     len_noPAM = ARTEMIS.length_noPAM(Motif("Cas9"))
 
@@ -236,19 +227,16 @@ end
         mkpath(mdb_path)
         build_motifDB("samirandom", genome, Motif("Cas9"), mdb_path, 7)
         detail_path = joinpath(mdb_path, "detail.csv")
-
+        
+        # what is the problem here on d=3?
         for d in 1:3
-            mdb_res = search_motifDB(mdb_path, guides, d; detail = detail_path)
+            search_motifDB(mdb_path, guides, detail_path; distance = d)
             mdb = DataFrame(CSV.File(detail_path))
-            @test nrow(mdb_res) == length(guides)
-            @test all(ldb_res.guide .== guides)
-            @test all(mdb_res.guide .== guides)
-            @test Matrix(ldb_res[:, 1:(d + 1)]) == Matrix(mdb_res[:, 1:(d + 1)])
-        end
 
-        # for final distance check also detail output
-        mdb = DataFrame(CSV.File(detail_path))
-        failed = antijoin(ldb, mdb, on = [:guide, :distance, :chromosome, :start, :strand])
-        @test nrow(failed) == 0
+            search_linearDB(ldb_path, guides, d; detail = detail_path)
+            ldb = DataFrame(CSV.File(detail_path))
+            failed = antijoin(ldb, mdb, on = [:guide, :distance, :chromosome, :start, :strand])
+            @test nrow(failed) == 0
+        end
     end
 end

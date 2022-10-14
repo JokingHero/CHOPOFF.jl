@@ -98,7 +98,7 @@ build_treeDB(
     name::String,
     genomepath::String,
     motif::Motif,
-    storagedir::String,
+    storage_dir::String,
     prefix_len::Int = 7)
 ```  
 
@@ -106,7 +106,7 @@ Build a Vantage Point tree DB of offtargets for the given `motif`,
 DB groups off-targets by their prefixes, each prefix has its own
 Vantage Point tree.
 
-Will return a path to the database location, same as `storagedir`.
+Will return a path to the database location, same as `storage_dir`.
 
 There is an optimization that if the alignment becomes imposible against
 the prefix we don't search the off-targets grouped inside the prefix.
@@ -122,7 +122,7 @@ search distance, however in that case number of files also grows.
 
 `motif`   - Motif deines what kind of gRNA to search for.
 
-`storagedir`  - Folder path to the where index will be saved with name `linearDB.bin` and many prefix files.
+`storage_dir`  - Folder path to the where index will be saved with name `linearDB.bin` and many prefix files.
 
 `prefix_len`  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,
                 however it will also result in large number of files. 
@@ -151,7 +151,7 @@ function build_treeDB(
     name::String,
     genomepath::String,
     motif::Motif,
-    storagedir::String,
+    storage_dir::String,
     prefix_len::Int = 7)
 
     if prefix_len <= motif.distance
@@ -165,7 +165,7 @@ function build_treeDB(
     # For each chromsome paralelized we build database
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
-    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storagedir), dbi.gi.chrom)
+    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storage_dir), dbi.gi.chrom)
     close(ref)
 
     prefixes = Set(vcat(prefixes...))
@@ -178,24 +178,24 @@ function build_treeDB(
         guides = Vector{LongDNA{4}}()
         loci = Vector{Loc}()
         for chrom in dbi.gi.chrom
-            p = joinpath(storagedir, string(prefix), string(prefix) * "_" * chrom * ".bin")
+            p = joinpath(storage_dir, string(prefix), string(prefix) * "_" * chrom * ".bin")
             if ispath(p)
                 pdb = load(p)
                 append!(guides, pdb.suffix)
                 append!(loci, pdb.loci)
             end
         end
-        rm(joinpath(storagedir, string(prefix)), recursive = true)
+        rm(joinpath(storage_dir, string(prefix)), recursive = true)
         sdb = to_suffixtree(prefix, guides, loci, motif.distance)
-        save(sdb, joinpath(storagedir, string(prefix) * ".bin"))
+        save(sdb, joinpath(storage_dir, string(prefix) * ".bin"))
         i += 1
         #@info "Done prefixes: " * string(round(i / length(prefixes); digits = 2) * 100)
     end
 
     linDB = TreeDB(dbi, prefixes)
-    save(linDB, joinpath(storagedir, "treeDB.bin"))
-    @info "Finished constructing treeDB in " * storagedir
-    return storagedir
+    save(linDB, joinpath(storage_dir, "treeDB.bin"))
+    @info "Finished constructing treeDB in " * storage_dir
+    return storage_dir
 end
 
 
@@ -205,7 +205,7 @@ function search_prefixtree(
     dbi::DBInfo,
     detail::String,
     guides::Vector{LongDNA{4}},
-    storagedir::String)
+    storage_dir::String)
     
     res = zeros(Int, length(guides), dist + 1)
     if detail != ""
@@ -224,7 +224,7 @@ function search_prefixtree(
 
     # if any of the guides requires further alignment 
     # load the SuffixDB and iterate
-    sdb = load(joinpath(storagedir, string(prefix) * ".bin"))
+    sdb = load(joinpath(storage_dir, string(prefix) * ".bin"))
     for (i, g) in enumerate(guides)
         if !isfinal[i]
             queue = Vector{UInt32}([1])
@@ -282,7 +282,7 @@ end
 """
 ```
 search_treeDB(
-    storagedir::String, 
+    storage_dir::String, 
     guides::Vector{LongDNA{4}}, 
     dist::Int = 4; 
     detail::String = "")
@@ -341,8 +341,8 @@ guides = LongDNA{4}.(guides_s)
 tdb_res = search_treeDB(tdb_path, guides, 3)
 ```
 """
-function search_treeDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")
-    ldb = load(joinpath(storagedir, "treeDB.bin"))
+function search_treeDB(storage_dir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")
+    ldb = load(joinpath(storage_dir, "treeDB.bin"))
     prefixes = collect(ldb.prefixes)
     if dist > length(first(prefixes)) || dist > ldb.dbi.motif.distance
         error("For this database maximum distance is " * 
@@ -358,10 +358,10 @@ function search_treeDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int
     #= Non paralel version of the mapreduce
     res = zeros(Int, length(guides_), dist + 1)
     for p in prefixes
-        res += search_prefixtree(p, dist, ldb.dbi, dirname(detail), guides_, storagedir)
+        res += search_prefixtree(p, dist, ldb.dbi, dirname(detail), guides_, storage_dir)
     end
     =#
-    res = ThreadsX.mapreduce(p -> search_prefixtree(p, dist, ldb.dbi, dirname(detail), guides_, storagedir), +, prefixes)
+    res = ThreadsX.mapreduce(p -> search_prefixtree(p, dist, ldb.dbi, dirname(detail), guides_, storage_dir), +, prefixes)
     
     if detail != ""
         cleanup_detail(detail)
@@ -445,7 +445,7 @@ end
 """
 ```
 inspect_treeDB(
-    storagedir::String; 
+    storage_dir::String; 
     levels::Int = 5, 
     inspect_prefix::String = "")
 ```
@@ -478,8 +478,8 @@ build_treeDB(
 inspect_treeDB(tdb_path; inspect_prefix = "CCGTCGC")
 ```
 """
-function inspect_treeDB(storagedir::String; levels::Int = 5, inspect_prefix::String = "")
-    ldb = load(joinpath(storagedir, "treeDB.bin"))
+function inspect_treeDB(storage_dir::String; levels::Int = 5, inspect_prefix::String = "")
+    ldb = load(joinpath(storage_dir, "treeDB.bin"))
     prefixes = collect(ldb.prefixes)
     println("Database Info: \n")
     println(ldb.dbi)
@@ -487,7 +487,7 @@ function inspect_treeDB(storagedir::String; levels::Int = 5, inspect_prefix::Str
     if inspect_prefix == ""
         inspect_prefix = rand(prefixes)
     end
-    sdb = load(joinpath(storagedir, string(inspect_prefix) * ".bin"))
+    sdb = load(joinpath(storage_dir, string(inspect_prefix) * ".bin"))
     println("Tree at prefix: " * string(inspect_prefix) * "\n")
     print_treeDB(sdb, 1, levels)
     return nothing

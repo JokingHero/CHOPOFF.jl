@@ -33,13 +33,13 @@ build_linearDB(
     name::String,
     genomepath::String,
     motif::Motif,
-    storagedir::String,
+    storage_dir::String,
     prefix_len::Int = 7)
 ```
 
 Prepare linearDB index for future searches using `search_linearDB`.
 
-Will return a path to the database location, same as `storagedir`.
+Will return a path to the database location, same as `storage_dir`.
 When this database is used for the guide off-target scan it is similar 
 to linear in performance, hence the name. There is an optimization that 
 if the alignment becomes imposible against
@@ -57,7 +57,7 @@ if interested with searches within distance 4, preferably use prefix length of
 
 `motif`   - Motif deines what kind of gRNA to search for.
 
-`storagedir`  - Folder path to the where index will be saved with name `linearDB.bin` and many prefix files.
+`storage_dir`  - Folder path to the where index will be saved with name `linearDB.bin` and many prefix files.
 
 `prefix_len`  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,
                 however it will also result in large number of files.
@@ -86,7 +86,7 @@ function build_linearDB(
     name::String,
     genomepath::String,
     motif::Motif,
-    storagedir::String,
+    storage_dir::String,
     prefix_len::Int = 7)
 
     if prefix_len <= motif.distance
@@ -101,7 +101,7 @@ function build_linearDB(
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
     # Don't paralelize here as you can likely run out of memory (chromosomes are large)
-    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storagedir), dbi.gi.chrom)
+    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storage_dir), dbi.gi.chrom)
     close(ref)
 
     prefixes = Set(vcat(prefixes...))
@@ -113,23 +113,23 @@ function build_linearDB(
         guides = Vector{LongDNA{4}}()
         loci = Vector{Loc}()
         for chrom in dbi.gi.chrom
-            p = joinpath(storagedir, string(prefix), string(prefix) * "_" * chrom * ".bin")
+            p = joinpath(storage_dir, string(prefix), string(prefix) * "_" * chrom * ".bin")
             if ispath(p)
                 pdb = load(p)
                 append!(guides, pdb.suffix)
                 append!(loci, pdb.loci)
             end
         end
-        rm(joinpath(storagedir, string(prefix)), recursive = true)
+        rm(joinpath(storage_dir, string(prefix)), recursive = true)
         (guides, loci_range, loci) = unique_guides(guides, loci)
         sdb = SuffixDB(prefix, guides, loci_range, loci)
-        save(sdb, joinpath(storagedir, string(prefix) * ".bin"))
+        save(sdb, joinpath(storage_dir, string(prefix) * ".bin"))
     end
 
     linDB = LinearDB(dbi, prefixes)
-    save(linDB, joinpath(storagedir, "linearDB.bin"))
-    @info "Finished constructing linearDB in " * storagedir
-    return storagedir
+    save(linDB, joinpath(storage_dir, "linearDB.bin"))
+    @info "Finished constructing linearDB in " * storage_dir
+    return storage_dir
 end
 
 
@@ -139,7 +139,7 @@ function search_prefix(
     dbi::DBInfo,
     detail::String,
     guides::Vector{LongDNA{4}},
-    storagedir::String)
+    storage_dir::String)
 
     res = zeros(Int, length(guides), dist + 1)
     if detail != ""
@@ -158,7 +158,7 @@ function search_prefix(
 
     # if any of the guides requires further alignment 
     # load the SuffixDB and iterate
-    sdb = load(joinpath(storagedir, string(prefix) * ".bin"))
+    sdb = load(joinpath(storage_dir, string(prefix) * ".bin"))
     for i in 1:length(guides)
         if !isfinal[i]
             for (j, suffix) in enumerate(sdb.suffix)
@@ -198,13 +198,13 @@ end
 """
 ```
 search_linearDB(
-    storagedir::String, 
+    storage_dir::String, 
     guides::Vector{LongDNA{4}}, 
     dist::Int = 4; 
     detail::String = "")
 ```
 
-Find all off-targets for `guides` within distance of `dist` using linearDB located at `storagedir`.
+Find all off-targets for `guides` within distance of `dist` using linearDB located at `storage_dir`.
 
 Assumes your guides do not contain PAM, and are all in the same direction as 
 you would order from the lab e.g.:
@@ -256,8 +256,8 @@ guides = LongDNA{4}.(guides_s)
 ldb_res = search_linearDB(ldb_path, guides, 3)
 ```
 """
-function search_linearDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")
-    ldb = load(joinpath(storagedir, "linearDB.bin"))
+function search_linearDB(storage_dir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")
+    ldb = load(joinpath(storage_dir, "linearDB.bin"))
     prefixes = collect(ldb.prefixes)
     if dist > length(first(prefixes)) || dist > ldb.dbi.motif.distance
         error("For this database maximum distance is " * 
@@ -271,9 +271,9 @@ function search_linearDB(storagedir::String, guides::Vector{LongDNA{4}}, dist::I
     end
 
     #res = zeros(Int, length(guides_), dist + 1)
-    res = ThreadsX.mapreduce(p -> search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storagedir), +, prefixes)
+    res = ThreadsX.mapreduce(p -> search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storage_dir), +, prefixes)
     #for p in prefixes
-    #    res += search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storagedir)
+    #    res += search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storage_dir)
     #end
     
     if detail != ""
