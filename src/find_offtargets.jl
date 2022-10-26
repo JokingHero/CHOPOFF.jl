@@ -184,7 +184,7 @@ function gatherofftargets!(
     for chrom_name in dbi.gi.chrom
         record = reader[chrom_name] # this is possible only with index!
         @info "Working on $chrom_name"
-        chrom = dbi.gi.is_fa ? FASTA.sequence(record) : TwoBit.sequence(record)
+        chrom = dbi.gi.is_fa ? FASTA.sequence(LongDNA{4}, record) : TwoBit.sequence(LongDNA{4}, record)
         pushguides!(output, ambig, dbi, chrom, false)
         pushguides!(output, ambig, dbi, chrom, true)
     end

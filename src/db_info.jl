@@ -46,17 +46,17 @@ function GenomeInfo(filepath::String)
         chrom = TwoBit.seqnames(reader)
         for record in reader
             if TwoBit.hassequence(record)
-                tl = record.dnasize
+                tl = length(TwoBit.sequence(record))
                 maxchromlen = maxchromlen >  tl ? maxchromlen : tl
             end
         end
     else
         chrom = Vector{String}()
         for record in FASTA.Reader(ref)
-            if FASTA.hasidentifier(record) & FASTA.hassequence(record)
+            seqlen = length(FASTA.sequence(LongDNA{4}, record))
+            if (FASTA.identifier(record) != "") & (seqlen > 0)
                 push!(chrom, FASTA.identifier(record))
-                tl = FASTA.seqlen(record)
-                maxchromlen = maxchromlen > tl ? maxchromlen : tl
+                maxchromlen = maxchromlen > seqlen ? maxchromlen : seqlen
             end
         end
     end

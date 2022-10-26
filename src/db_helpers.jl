@@ -228,5 +228,5 @@ end
 
 
 function getchromseq(isfa, record)
-    return isfa ? FASTA.sequence(record) : TwoBit.sequence(record)
+    return isfa ? FASTA.sequence(LongDNA{4}, record) : TwoBit.sequence(LongDNA{4}, record)
 end

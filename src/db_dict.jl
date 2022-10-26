@@ -37,7 +37,7 @@ function build_dictDB(
     db = DictDB(dict, mtp, dbi, ambig)
     if storage_path != ""
         save(db, storage_path)
-        @info "Finished constructing dictDB in " * storage_dir
+        @info "Finished constructing dictDB in " * storage_path
         @info "Database size is:" *
             "\n length -> " * string(length(db.dict)) *
             "\n consuming: " * string(round((filesize(storage_path) * 1e-6); digits = 3)) * 
