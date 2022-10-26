@@ -5,30 +5,28 @@
 
 ## About
 
-Julia framework related to CRISPR off-targets:
-* fast alignment alghoritms optimized for CRISPR
-* find quickly all off-targets on the arbitrairly large genomes, with arbitrary distances, and ambiogous bases support
+Uncompromised finding of CRISPR off-targets:
+* many fast alignment alghoritms optimized specifically for CRISPR
+* search for larger distances allowing for mismatches and bulges
+* support for ambiguous bases
+* arbitrairly large genomes
 * VCF support - with multiple overlapping SNPs
 * near-instant alignment-free off-target filtering
 * pruning of off-targets by their location (remove overlapping, competing off-targets)
 * extensively tested
-
-We have chosen Julia because it is possible to quickly prototype new
-alghoritms and not compromise the speed, but also, Julia's syntax is python like and it is easy to jump right into coding.
-
-Documentation is available here.
+* full framework that can be extended for your own alghoritms with ease
 
 
 ## Requirements
 
-* Some of the alghoritms generate as many files as there are prefixes (e.g. for prefix 7 - this will make 4^7 - 16384) when using '--detail' option. This strategy allows us to operate the searches independently on multiple cores and not get throtled when querying large number of the guides. However, some systems have artificial limits on the number of open files, for example in ubuntu 'ulimit -n' will show the limit. Increase the limits, if it creates problems for you.
+* Some of the alghoritms generate as many files as there are prefixes (e.g. for prefix 7 - this will make 4^7 - 16384 files). This strategy allows us to operate the searches independently on multiple cores and not get throtled when querying large number of the guides. However, some systems have artificial limits on the number of open files, for example in ubuntu 'ulimit -n' will show the limit. Increase the limits, if it creates problems for you.
 
 * When using many cores for building the indexes - you have to have around ~1GB of RAM per thread.
 
 
 ## License  
 
-Copyright (C) 2021  Kornel Labun
+Copyright (C) 2022  Kornel Labun
 
 https://tldrlegal.com/license/gnu-affero-general-public-license-v3-(agpl-3.0)
 

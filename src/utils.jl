@@ -655,6 +655,39 @@ function format_DF(res::Matrix{Int64}, dist::Int, guides::Vector{LongDNA{4}})
 end
 
 
+"""
+```
+filter_overlapping(res::DataFrame, distance::Int)
+```
+
+Filter overlapping off-targets. Remember that off-targets have their start relative to the PAM location.
+
+# Arguments
+`res` - DataFrame created by one of the off-target finding methods, it contains columns 
+    such as `:guide,  :chromosome, :strand, :distance, :start`. 
+
+`distance` - To what distance from the `:start` do we consider the off-target to be overlapping?
+
+# Examples
+```julia-repl
+# make a temporary directory
+tdir = tempname()
+ldb_path = joinpath(tdir, "linearDB")
+mkpath(ldb_path)
+
+# use ARTEMIS example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+        "test", "sample_data", "genome", "semirandom.fa"))
+
+# finally, build a linearDB
+build_linearDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 1, ambig_max = 0), 
+    ldb_path)
+```
+"""
 function filter_overlapping(res::DataFrame, distance::Int)
     sort!(res, [:guide,  :chromosome, :strand, :distance, :start])
 
@@ -691,6 +724,50 @@ function counts_by_dist(distances, max_dist)
 end
 
 
+"""
+```
+filter_overlapping(res::DataFrame, distance::Int)
+```
+
+Filter overlapping off-targets. Remember that off-targets have their start relative to the PAM location.
+
+# Arguments
+`res` - DataFrame created by one of the off-target finding methods, it contains columns 
+    such as `:guide,  :chromosome, :strand, :distance, :start`. 
+
+`distance` - To what distance from the `:start` do we consider the off-target to be overlapping?
+
+# Examples
+```julia-repl
+# make a temporary directory
+tdir = tempname()
+ldb_path = joinpath(tdir, "linearDB")
+mkpath(ldb_path)
+
+# use ARTEMIS example genome
+artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
+genome = joinpath(
+    vcat(
+        artemis_path, 
+        "test", "sample_data", "genome", "semirandom.fa"))
+
+# build a linearDB
+build_linearDB(
+    "samirandom", genome, 
+    Motif("Cas9"; distance = 3, ambig_max = 0), 
+    ldb_path)
+
+# load up example gRNAs
+using BioSequences
+guides_s = Set(readlines(joinpath(vcat(artemis_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides = LongDNA{4}.(guides_s)
+    
+# find off-targets for example gRNAs using linearDB
+ldb_res = search_linearDB(ldb_path, guides, 2)
+
+
+```
+"""
 function summarize_offtargets(res::DataFrame, distance::Int)
     df = groupby(res, :guide)
     df = combine(df,  :distance => (x -> counts_by_dist(x, distance)) => AsTable)

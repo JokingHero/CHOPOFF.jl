@@ -235,10 +235,10 @@ ldb_path = joinpath(tdir, "linearDB")
 mkpath(ldb_path)
 
 # use ARTEMIS example genome
-coh_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
+artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
 genome = joinpath(
     vcat(
-        coh_path, 
+        artemis_path, 
         "test", "sample_data", "genome", "semirandom.fa"))
 
 # build a linearDB
@@ -249,7 +249,7 @@ build_linearDB(
 
 # load up example gRNAs
 using BioSequences
-guides_s = Set(readlines(joinpath(vcat(coh_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides_s = Set(readlines(joinpath(vcat(artemis_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, get results!

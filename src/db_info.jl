@@ -33,7 +33,7 @@ function is_fasta(filepath::String)
 end
 
 
-"Instantiate GenomeInfo object from genom file path."
+"Instantiate GenomeInfo object from genome file path."
 function GenomeInfo(filepath::String)
     checksum = open(crc32c, filepath)
 
@@ -84,7 +84,7 @@ end
 `DBInfo(filepath::String, name::String, motif::Motif; vcf_filepath::String = "")`
 
 
-Motif defines what genome file is being used for searches.
+Motif defines what genome file is being used for the searches.
 
 
 # Arguments

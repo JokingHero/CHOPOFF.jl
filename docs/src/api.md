@@ -13,7 +13,7 @@ setdist
 setambig
 ```
 
-## Find off-targets
+## Find potential off-targets
 
 ```@docs
 DBInfo
@@ -47,11 +47,24 @@ save
 load
 ```
 
+### Summarize off-targets
+
+```@docs
+summarize_offtargets
+```
+
+### Proximity filter
+```@docs
+filter_overlapping
+```
+
 ## Alignment-free filters for gRNAs
 
 ```@docs
 build_hashDB
 search_hashDB
+build_dictDB
+search_dictDB
 ```
 
 ## Find all off-targets
@@ -72,4 +85,22 @@ search_motifDB
 build_treeDB
 inspect_treeDB
 search_treeDB
+```
+
+### FM-index
+
+```@docs
+build_PathTemplates
+build_fmiDB
+search_fmiDB
+
+build_pamDB
+search_fmiDB_seed
+```
+
+### VCF
+
+```@docs
+build_vcfDB
+search_vcfDB
 ```

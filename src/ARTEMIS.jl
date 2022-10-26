@@ -73,8 +73,9 @@ export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 export build_hashDB, search_hashDB # db_hash
 export build_vcfDB, search_vcfDB # db_vcf
-export build_PathTemplates
 export build_motifDB, search_motifDB
+
+export build_PathTemplates
 
 export build_fmiDB, search_fmiDB
 export build_pamDB, search_fmiDB_seed

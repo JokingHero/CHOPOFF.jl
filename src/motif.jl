@@ -39,6 +39,7 @@ what can be identified as an off-target.
 `extend5`  - Defines how off-targets will be aligned to the guides and where
              extra nucleotides will be added for alignment within distance. Whether
              to extend in the 5' and 3' direction. Cas9 is extend5 = true.
+
 `ambig_max`- How many ambiguous bases are allowed in the pattern?
 
 ```
@@ -140,8 +141,8 @@ end
 """
 `length_noPAM(motif::Motif)`
 
-Calculate what is the length of the motif, with extension, but without PAM.
-Effectively, size of the off-target on the genome.
+Calculate what is the length of the motif, without extension, and without PAM.
+Effectively, size of the gRNA.
 
 # Examples
 ```jldoctest
@@ -159,7 +160,7 @@ end
 """
 `length(motif::Motif)`
 
-Length of the motif, with extension, and with PAM.
+Length of the motif with PAM, without extension.
 
 # Examples
 ```jldoctest
@@ -175,7 +176,7 @@ end
 """
 `setambig(motif::Motif, ambig::Int)`
 
-Set the ambiguity (how many ambigous bases are allowed) level for `motif`.
+Set the ambiguity (how many ambigous bases are allowed, not counting PAM, not counting extension) level for `motif`.
 
 # Examples
 ```jldoctest
