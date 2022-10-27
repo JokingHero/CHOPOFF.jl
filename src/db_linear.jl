@@ -141,20 +141,17 @@ function search_prefix(
     guides::Vector{LongDNA{4}},
     storage_dir::String)
 
-    res = zeros(Int, length(guides), dist + 1)
-    if detail != ""
-        detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
-        detail_file = open(detail_path, "w")
-    end
-
     # prefix alignment against all the guides
     suffix_len = length_noPAM(dbi.motif) + dbi.motif.distance - length(prefix)
     prefix_aln = Base.map(g -> prefix_align(g, prefix, suffix_len, dist), guides)
     isfinal = Base.map(x -> x.isfinal, prefix_aln)
 
     if all(isfinal)
-        return res
+        return
     end
+
+    detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
+    detail_file = open(detail_path, "w")
 
     # if any of the guides requires further alignment 
     # load the SuffixDB and iterate
@@ -165,33 +162,28 @@ function search_prefix(
                 suffix_aln = suffix_align(suffix, prefix_aln[i])
                 if suffix_aln.dist <= dist
                     sl_idx = sdb.suffix_loci_idx[j]
-                    res[i, suffix_aln.dist + 1] += length(sl_idx)
-                    if detail != ""
-                        offtargets = sdb.loci[sl_idx.start:sl_idx.stop]
-                        if dbi.motif.extends5
-                            guide_stranded = reverse(prefix_aln[i].guide)
-                            aln_guide = reverse(suffix_aln.guide)
-                            aln_ref = reverse(suffix_aln.ref)
-                        else
-                            guide_stranded = prefix_aln[i].guide
-                            aln_guide = suffix_aln.guide
-                            aln_ref = suffix_aln.ref
-                        end
-                        noloc = string(guide_stranded) * "," * aln_guide * "," * 
-                                aln_ref * "," * string(suffix_aln.dist) * ","
-                        for offt in offtargets
-                            write(detail_file, noloc * decode(offt, dbi) * "\n")
-                        end
+                    offtargets = sdb.loci[sl_idx.start:sl_idx.stop]
+                    if dbi.motif.extends5
+                        guide_stranded = reverse(prefix_aln[i].guide)
+                        aln_guide = reverse(suffix_aln.guide)
+                        aln_ref = reverse(suffix_aln.ref)
+                    else
+                        guide_stranded = prefix_aln[i].guide
+                        aln_guide = suffix_aln.guide
+                        aln_ref = suffix_aln.ref
+                    end
+                    noloc = string(guide_stranded) * "," * aln_guide * "," * 
+                            aln_ref * "," * string(suffix_aln.dist) * ","
+                    for offt in offtargets
+                        write(detail_file, noloc * decode(offt, dbi) * "\n")
                     end
                 end
             end
         end
     end
 
-    if detail != ""
-        close(detail_file)
-    end
-    return res
+    close(detail_file)
+    return
 end
 
 
@@ -200,8 +192,8 @@ end
 search_linearDB(
     storage_dir::String, 
     guides::Vector{LongDNA{4}}, 
-    dist::Int = 4; 
-    detail::String = "")
+    output_file::String;
+    distance::Int = 4)
 ```
 
 Find all off-targets for `guides` within distance of `dist` using linearDB located at `storage_dir`.
@@ -256,10 +248,15 @@ guides = LongDNA{4}.(guides_s)
 ldb_res = search_linearDB(ldb_path, guides, 3)
 ```
 """
-function search_linearDB(storage_dir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")
+function search_linearDB(
+    storage_dir::String, 
+    guides::Vector{LongDNA{4}}, 
+    output_file::String;
+    distance::Int = 4)
+
     ldb = load(joinpath(storage_dir, "linearDB.bin"))
     prefixes = collect(ldb.prefixes)
-    if dist > length(first(prefixes)) || dist > ldb.dbi.motif.distance
+    if distance > length(first(prefixes)) || distance > ldb.dbi.motif.distance
         error("For this database maximum distance is " * 
               string(min(ldb.dbi.motif.distance, length(first(prefixes)))))
     end
@@ -270,16 +267,9 @@ function search_linearDB(storage_dir::String, guides::Vector{LongDNA{4}}, dist::
         guides_ = reverse.(guides_)
     end
 
-    #res = zeros(Int, length(guides_), dist + 1)
-    res = ThreadsX.mapreduce(p -> search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storage_dir), +, prefixes)
-    #for p in prefixes
-    #    res += search_prefix(p, dist, ldb.dbi, dirname(detail), guides_, storage_dir)
-    #end
+    ThreadsX.map(p -> search_prefix(p, distance, ldb.dbi, dirname(output_file), guides_, storage_dir), prefixes)
     
-    if detail != ""
-        cleanup_detail(detail)
-    end
-
-    res = format_DF(res, dist, guides)
-    return res
+    cleanup_detail(output_file)
+    @info "Done!"
+    return
 end

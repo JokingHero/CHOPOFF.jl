@@ -9,3 +9,4 @@ end
 
 #include(joinpath(dir, "db_fmi.jl"))
 #include(joinpath(dir, "utils.jl"))
+#include(joinpath(dir, "wavelet.jl"))

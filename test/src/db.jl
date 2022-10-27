@@ -44,6 +44,38 @@ function rows_not_in(len::Int, rows_in::Vector{Int})
 end
 
 
+function compare_result(res::DataFrame, res2::DataFrame; less_or_equal::Bool = false)
+    if (nrow(res) != nrow(res2)) 
+        throw("Unequal row count to compare.") 
+    end
+    res.guide = LongDNA{4}.(res.guide)
+    res2.guide = LongDNA{4}.(res2.guide)
+    nres = propertynames(res)
+    nres2 = propertynames(res2)
+    if length(nres) > length(nres2)
+        res = select(res, nres2)
+        nres = nres2
+    else
+        res2 = select(res2, nres)
+    end
+    comb = outerjoin(res, res2, on = [:guide], makeunique = true)
+    nres_noguide = filter(x -> x != :guide, nres)
+    for col in nres_noguide
+        col1 = Symbol(string(col) * ("_1"))
+        if less_or_equal
+            if !all(comb[:, col] .<= comb[:, col1])
+                return false
+            end
+        else
+            if !all(comb[:, col] .== comb[:, col1])
+                return false
+            end
+        end
+    end
+    return true
+end
+
+
 @testset "databases" begin
     genome = joinpath(dirname(pathof(ARTEMIS)), "..", 
         "test", "sample_data", "genome", "semirandom.fa")
@@ -69,9 +101,7 @@ end
         ar_file = joinpath(dirname(pathof(ARTEMIS)), "..", 
             "test", "sample_data", "artificial_results.csv")
         ar = DataFrame(CSV.File(ar_file))
-        @test nrow(vcf_res) == length(guides)
-        @test all(vcf_res.guide .== guides)
-        @test all(Matrix(vcf_res[:, 1:2]) == Matrix(ar[:, 1:2]))
+        @test compare_result(ar, vcf_res)
     end
 
     # make and run default linearDB
@@ -79,8 +109,9 @@ end
     mkpath(ldb_path)
     build_linearDB("samirandom", genome, Motif("Cas9"), ldb_path, 7)
     detail_path = joinpath(ldb_path, "detail.csv")
-    ldb_res = search_linearDB(ldb_path, guides, 3; detail = detail_path)
+    search_linearDB(ldb_path, guides, detail_path; distance = 3)
     ldb = DataFrame(CSV.File(detail_path))
+    ldb_res = summarize_offtargets(ldb, 3)
 
     # make and run default dictDB
     dictDB = build_dictDB(
@@ -157,46 +188,17 @@ end
 
 
     @testset "linearDB vs dictDB" begin
-        @test nrow(ddb_res) == length(guides)
-        @test all(ddb_res.guide .== guides)
-        @test all(ldb_res.guide .== guides)
-        @test Matrix(ldb_res[:, 1:3]) == Matrix(ddb_res[:, 1:3])
+        @test compare_result(ldb_res, ddb_res)
     end
 
 
     @testset "linearDB vs hashDB" begin
-        @test nrow(hdb_res) == length(guides)
-        @test all(hdb_res.guide .== guides)
-        @test all(ldb_res.guide .== guides)
-        ldb_res2 = Matrix(ldb_res[:, 1:2])
-        hdb_res2 = Matrix(hdb_res[:, 1:2])
-        for i in 1:lastindex(guides)
-            compare = ldb_res2[i, :] .<= hdb_res2[i, :]
-            @test all(compare)
-            if !all(compare)
-                @info "Failed at guideS $i " * string(guides[i])
-                @info "linearDB result: " * string(ldb_res2[i, :])
-                @info "sketchDB result: " * string(hdb_res2[i, :])
-            end
-        end
+        @test compare_result(ldb_res, hdb_res)
     end
 
     
     @testset "hashDB vs dictDB" begin
-        @test nrow(hdb_res) == nrow(ddb_res)
-        @test all(hdb_res.guide .== guides)
-        @test all(ddb_res.guide .== guides)
-        ddb_res2 = Matrix(ddb_res)
-        hdb_res2 = Matrix(hdb_res)
-        for i in 1:lastindex(guides)
-            compare = ddb_res2[i, 1:2] .<= hdb_res2[i, 1:2]
-            @test all(compare)
-            if !all(compare)
-                @info "Failed at guideS $i " * string(guides[i])
-                @info "dictDB result: " * string(ddb_res2[i, :])
-                @info "hashDB result: " * string(hdb_res2[i, :])
-            end
-        end
+        @test compare_result(ddb_res, hdb_res)
     end
 
     
@@ -207,12 +209,10 @@ end
         detail_path = joinpath(tdb_path, "detail.csv")
 
         for d in 1:3
-            tdb_res = search_treeDB(tdb_path, guides, d; detail = detail_path)
+            search_treeDB(tdb_path, guides, detail_path; distance = d)
             tdb = DataFrame(CSV.File(detail_path))
-            @test nrow(tdb_res) == length(guides)
-            @test all(ldb_res.guide .== guides)
-            @test all(tdb_res.guide .== guides)
-            @test Matrix(ldb_res[:, 1:(d + 1)]) == Matrix(tdb_res[:, 1:(d + 1)])
+            tdb_res = summarize_offtargets(tdb, d)
+            @test compare_result(ldb_res, tdb_res)
         end
 
         # for final distance check also detail output
@@ -228,12 +228,11 @@ end
         build_motifDB("samirandom", genome, Motif("Cas9"), mdb_path, 7)
         detail_path = joinpath(mdb_path, "detail.csv")
         
-        # what is the problem here on d=3?
         for d in 1:3
             search_motifDB(mdb_path, guides, detail_path; distance = d)
             mdb = DataFrame(CSV.File(detail_path))
 
-            search_linearDB(ldb_path, guides, d; detail = detail_path)
+            search_linearDB(ldb_path, guides, detail_path; distance = d)
             ldb = DataFrame(CSV.File(detail_path))
             failed = antijoin(ldb, mdb, on = [:guide, :distance, :chromosome, :start, :strand])
             @test nrow(failed) == 0

@@ -238,9 +238,6 @@ function search_prefix(
     adjust::Int,
     storage_dir::String)
 
-    detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
-    detail_file = open(detail_path, "w")
-
     # prefix alignment against all the guides
     prefix_len = length(prefix)
     suffix_len = length_noPAM(dbi.motif) + dbi.motif.distance - prefix_len
@@ -250,6 +247,9 @@ function search_prefix(
     if all(isfinal)
         return
     end
+
+    detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
+    detail_file = open(detail_path, "w")
 
     # what is the alignment score so far - how many distance is accumulated
     row_min = Base.map(x -> minimum(x.v[prefix_len - 1, :]), prefix_aln)

@@ -206,12 +206,6 @@ function search_prefixtree(
     detail::String,
     guides::Vector{LongDNA{4}},
     storage_dir::String)
-    
-    res = zeros(Int, length(guides), dist + 1)
-    if detail != ""
-        detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
-        detail_file = open(detail_path, "w")
-    end
 
     # prefix alignment against all the guides
     len_noPAM = length_noPAM(dbi.motif)
@@ -219,8 +213,11 @@ function search_prefixtree(
     isfinal = Base.map(g -> prefix_align(g, prefix, suffix_len, dist).isfinal, guides)
 
     if all(isfinal)
-        return res
+        return 
     end
+
+    detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
+    detail_file = open(detail_path, "w")
 
     # if any of the guides requires further alignment 
     # load the SuffixDB and iterate
@@ -238,24 +235,21 @@ function search_prefixtree(
                 end
 
                 if dist_i <= dist
-                    res[i, dist_i + 1] += length(node.loci_idx)
-                    if detail != ""
-                        aln = align(g, prefix * node.suffix, dist)
-                        offtargets = sdb.loci[node.loci_idx.start:node.loci_idx.stop]
-                        if dbi.motif.extends5
-                            guide_stranded = reverse(g)
-                            aln_guide = reverse(aln.guide)
-                            aln_ref = reverse(aln.ref)
-                        else
-                            guide_stranded = g
-                            aln_guide = aln.guide
-                            aln_ref = aln.ref
-                        end
-                        noloc = string(guide_stranded) * "," * aln_guide * "," * 
-                                aln_ref * "," * string(aln.dist) * ","
-                        for offt in offtargets
-                            write(detail_file, noloc * decode(offt, dbi) * "\n")
-                        end
+                    aln = align(g, prefix * node.suffix, dist)
+                    offtargets = sdb.loci[node.loci_idx.start:node.loci_idx.stop]
+                    if dbi.motif.extends5
+                        guide_stranded = reverse(g)
+                        aln_guide = reverse(aln.guide)
+                        aln_ref = reverse(aln.ref)
+                    else
+                        guide_stranded = g
+                        aln_guide = aln.guide
+                        aln_ref = aln.ref
+                    end
+                    noloc = string(guide_stranded) * "," * aln_guide * "," * 
+                            aln_ref * "," * string(aln.dist) * ","
+                    for offt in offtargets
+                        write(detail_file, noloc * decode(offt, dbi) * "\n")
                     end
                 end
 
@@ -272,10 +266,8 @@ function search_prefixtree(
         end
     end
 
-    if detail != ""
-        close(detail_file)
-    end
-    return res
+    close(detail_file)
+    return 
 end
 
 
@@ -284,8 +276,8 @@ end
 search_treeDB(
     storage_dir::String, 
     guides::Vector{LongDNA{4}}, 
-    dist::Int = 4; 
-    detail::String = "")
+    output_file::String;
+    distance::Int = 3)
 ```
 
 Search previously build treeDB database for the off-targets of the `guides`. 
@@ -341,10 +333,14 @@ guides = LongDNA{4}.(guides_s)
 tdb_res = search_treeDB(tdb_path, guides, 3)
 ```
 """
-function search_treeDB(storage_dir::String, guides::Vector{LongDNA{4}}, dist::Int = 4; detail::String = "")
+function search_treeDB(
+    storage_dir::String, 
+    guides::Vector{LongDNA{4}}, 
+    output_file::String;
+    distance::Int = 3)
     ldb = load(joinpath(storage_dir, "treeDB.bin"))
     prefixes = collect(ldb.prefixes)
-    if dist > length(first(prefixes)) || dist > ldb.dbi.motif.distance
+    if distance > length(first(prefixes)) || distance > ldb.dbi.motif.distance
         error("For this database maximum distance is " * 
               string(min(ldb.dbi.motif.distance, length(first(prefixes)))))
     end
@@ -355,20 +351,10 @@ function search_treeDB(storage_dir::String, guides::Vector{LongDNA{4}}, dist::In
         guides_ = reverse.(guides_)
     end
 
-    #= Non paralel version of the mapreduce
-    res = zeros(Int, length(guides_), dist + 1)
-    for p in prefixes
-        res += search_prefixtree(p, dist, ldb.dbi, dirname(detail), guides_, storage_dir)
-    end
-    =#
-    res = ThreadsX.mapreduce(p -> search_prefixtree(p, dist, ldb.dbi, dirname(detail), guides_, storage_dir), +, prefixes)
+    ThreadsX.map(p -> search_prefixtree(p, distance, ldb.dbi, dirname(output_file), guides_, storage_dir), prefixes)
     
-    if detail != ""
-        cleanup_detail(detail)
-    end
-
-    res = format_DF(res, dist, guides)
-    return res
+    cleanup_detail(output_file)
+    return
 end
 
 

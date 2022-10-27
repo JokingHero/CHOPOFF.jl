@@ -5,6 +5,8 @@ using CSV
 using DataFrames
 using BioSequences
 
+## SET WD when debugging
+# cd("test")
 
 @testset "ArgParse" begin
     @testset "hashDB through command line" begin
@@ -29,7 +31,7 @@ using BioSequences
         res = DataFrame(CSV.File(res_file))
         @test nrow(res) == length(guides)
         @test all(res.guide .== String.(guides))
-        @test all(Matrix(res[:, 1:2]) == Matrix(hdb_res[:, 1:2]))
+        @test all(Matrix(res[:, 2:3]) == Matrix(hdb_res[:, 2:3]))
     end
 end
 

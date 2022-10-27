@@ -651,6 +651,7 @@ function format_DF(res::Matrix{Int64}, dist::Int, guides::Vector{LongDNA{4}})
     rename!(res, col_d)
     res.guide = guides
     sort!(res, vcat(col_d, :guide))
+    select!(res, :guide, Not(:guide)) 
     return res
 end
 

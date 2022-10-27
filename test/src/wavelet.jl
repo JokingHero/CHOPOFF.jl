@@ -1,6 +1,8 @@
-using ARTEMIS.FMIndexes.WaveletMatrices: WaveletMatrix, getindex, rank, select, freq
+using ARTEMIS.FMIndexes.WaveletMatrices: WaveletMatrix, getindex, rank, freq
 using Test
 using Random
+
+# ARTEMIS.FMIndexes.WaveletMatrices.select has some issues with other select from Main...
 
 Random.seed!(12345)
 
@@ -20,6 +22,7 @@ function seq_select(a, vec, j)
 end
 
 @testset "WaveletMatrix" begin
+
     @testset "ordered" begin
         wm = WaveletMatrix([0x00, 0x01, 0x02, 0x03])
         @test length(wm) == 4
@@ -58,20 +61,20 @@ end
         @test rank(0x03, wm, 4) == 1
         @test rank(0x03, wm, 5) == 1
 
-        @test select(0x00, wm, 0) == 0
-        @test select(0x01, wm, 0) == 0
-        @test select(0x02, wm, 0) == 0
-        @test select(0x03, wm, 0) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x00, wm, 0) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x01, wm, 0) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x02, wm, 0) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x03, wm, 0) == 0
 
-        @test select(0x00, wm, 1) == 1
-        @test select(0x01, wm, 1) == 2
-        @test select(0x02, wm, 1) == 3
-        @test select(0x03, wm, 1) == 4
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x00, wm, 1) == 1
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x01, wm, 1) == 2
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x02, wm, 1) == 3
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x03, wm, 1) == 4
 
-        @test select(0x00, wm, 2) == 0
-        @test select(0x01, wm, 2) == 0
-        @test select(0x02, wm, 2) == 0
-        @test select(0x03, wm, 2) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x00, wm, 2) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x01, wm, 2) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x02, wm, 2) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x03, wm, 2) == 0
 
         @test freq(0x00, wm, 1, 4) == 1
         @test freq(0x00, wm, 2, 4) == 0
@@ -120,15 +123,15 @@ end
         @test rank(0x03, wm, 4) == 1
         @test rank(0x03, wm, 5) == 1
 
-        @test select(0x00, wm, 1) == 4
-        @test select(0x01, wm, 1) == 1
-        @test select(0x02, wm, 1) == 3
-        @test select(0x03, wm, 1) == 2
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x00, wm, 1) == 4
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x01, wm, 1) == 1
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x02, wm, 1) == 3
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x03, wm, 1) == 2
 
-        @test select(0x00, wm, 2) == 0
-        @test select(0x01, wm, 2) == 0
-        @test select(0x02, wm, 2) == 0
-        @test select(0x03, wm, 2) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x00, wm, 2) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x01, wm, 2) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x02, wm, 2) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x03, wm, 2) == 0
     end
 
     @testset "homogeneous" begin
@@ -145,14 +148,14 @@ end
         @test rank(0x01, wm, 4) == 4
         @test rank(0x01, wm, 5) == 4
 
-        @test select(0x01, wm, 1) == 1
-        @test select(0x01, wm, 2) == 2
-        @test select(0x01, wm, 3) == 3
-        @test select(0x01, wm, 4) == 4
-        @test select(0x01, wm, 5) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x01, wm, 1) == 1
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x01, wm, 2) == 2
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x01, wm, 3) == 3
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x01, wm, 4) == 4
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x01, wm, 5) == 0
 
-        @test select(0x00, wm, 1) == 0
-        @test select(0x02, wm, 1) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x00, wm, 1) == 0
+        @test ARTEMIS.FMIndexes.WaveletMatrices.select(0x02, wm, 1) == 0
 
         for i in 1:4, j in 1:4
             @test freq(0x00, wm, i, j) == 0
@@ -183,7 +186,7 @@ end
             @test rank(v, wm, i) == count(v′ -> v′ == v, x[1:i])
         end
         for v in x, j in 1:length(x)+1
-            @test select(v, wm, j) == seq_select(v, x, j)
+            @test ARTEMIS.FMIndexes.WaveletMatrices.select(v, wm, j) == seq_select(v, x, j)
         end
     end
 
@@ -198,7 +201,7 @@ end
             @test rank(a, wm, i) == count(a′ -> a′ == a, x[1:i])
         end
         for a in 0x00:0x03, j in 1:100+1
-            @test select(a, wm, j) == seq_select(a, x, j)
+            @test ARTEMIS.FMIndexes.WaveletMatrices.select(a, wm, j) == seq_select(a, x, j)
         end
     end
 
@@ -213,7 +216,7 @@ end
             @test rank(a, wm, i) == count(a′ -> a′ == a, x[1:i])
         end
         for a in 0x00000000:0x00000011, j in 1:500+1
-            @test select(a, wm, j) == seq_select(a, x, j)
+            @test ARTEMIS.FMIndexes.WaveletMatrices.select(a, wm, j) == seq_select(a, x, j)
         end
     end
 
@@ -237,7 +240,7 @@ end
             @test rank(byte, wm, i) == count(b -> b == byte, bytes[1:i])
         end
         for byte in 0x00:0xff, j in 0:len+1
-            @test select(byte, wm, j) == seq_select(byte, bytes, j)
+            @test ARTEMIS.FMIndexes.WaveletMatrices.select(byte, wm, j) == seq_select(byte, bytes, j)
         end
         for byte in 0x00:0xff
             @test freq(byte, wm, len, 1) == 0
