@@ -1,4 +1,4 @@
-# ARTEMIS
+# ARTEMIS.jl
 
 ## About
 

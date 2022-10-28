@@ -32,6 +32,7 @@ using CodecZlib
 using PathDistribution
 using Dates
 
+include("example_doc.jl")
 include("utils.jl")
 
 include("FMidx/FMindexes.jl")

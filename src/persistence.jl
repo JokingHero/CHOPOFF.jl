@@ -1,7 +1,5 @@
 """
-`save(
-    object::Any,
-    destination::String)`
+`save(object::Any, destination::String)`
 
 Uses julia serializer to save the data to binary format.
 Read more about [serialization](https://docs.julialang.org/en/v1/stdlib/Serialization/).

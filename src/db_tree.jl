@@ -129,22 +129,7 @@ search distance, however in that case number of files also grows.
 
 # Examples
 ```julia-repl
-# make a temporary directory
-tdir = tempname()
-tdb_path = joinpath(tdir, "treeDB")
-mkpath(tdb_path)
-
-# use ARTEMIS example genome
-genome = joinpath(
-    vcat(
-        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
-        "test", "sample_data", "genome", "semirandom.fa"))
-
-# finally, build a motifDB
-build_treeDB(
-    "samirandom", genome, 
-    Motif("Cas9"; distance = 3, ambig_max = 0), 
-    tdb_path)
+$(make_example_doc("treeDB"))
 ```
 """
 function build_treeDB(
@@ -306,31 +291,7 @@ interested in off-target counts returned by the treeDB.
 
 # Examples
 ```julia-repl
-# make a temporary directory
-tdir = tempname()
-tdb_path = joinpath(tdir, "treeDB")
-mkpath(tdb_path)
-
-# use ARTEMIS example genome
-artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        "test", "sample_data", "genome", "semirandom.fa"))
-
-# build a motifDB
-build_treeDB(
-    "samirandom", genome, 
-    Motif("Cas9"; distance = 3, ambig_max = 0), 
-    tdb_path)
-
-# load up example gRNAs
-using BioSequences
-guides_s = Set(readlines(joinpath(vcat(artemis_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
-guides = LongDNA{4}.(guides_s)
-    
-# finally, get results!
-tdb_res = search_treeDB(tdb_path, guides, 3)
+$(make_example_doc("treeDB"))
 ```
 """
 function search_treeDB(
@@ -443,25 +404,10 @@ into inside (left <= r) and right (outside > r) nodes.
 
 # Examples
 ```julia-repl
-# make a temporary directory
-tdir = tempname()
-tdb_path = joinpath(tdir, "treeDB")
-mkpath(tdb_path)
-
-# use ARTEMIS example genome
-genome = joinpath(
-    vcat(
-        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
-        "test", "sample_data", "genome", "semirandom.fa"))
-
-# finally, build a motifDB
-build_treeDB(
-    "samirandom", genome, 
-    Motif("Cas9"; distance = 3, ambig_max = 0), 
-    tdb_path)
+$(make_example_doc("treeDB"))
 
 # finally, view some part of the database!
-inspect_treeDB(tdb_path; inspect_prefix = "CCGTCGC")
+inspect_treeDB(db_path; inspect_prefix = "CCGTCGC")
 ```
 """
 function inspect_treeDB(storage_dir::String; levels::Int = 5, inspect_prefix::String = "")

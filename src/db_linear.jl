@@ -64,22 +64,7 @@ if interested with searches within distance 4, preferably use prefix length of
 
 # Examples
 ```julia-repl
-# make a temporary directory
-tdir = tempname()
-ldb_path = joinpath(tdir, "linearDB")
-mkpath(ldb_path)
-
-# use ARTEMIS example genome
-genome = joinpath(
-    vcat(
-        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
-        "test", "sample_data", "genome", "semirandom.fa"))
-
-# finally, build a linearDB
-build_linearDB(
-    "samirandom", genome, 
-    Motif("Cas9"; distance = 1, ambig_max = 0), 
-    ldb_path)
+$(make_example_doc())
 ```
 """
 function build_linearDB(
@@ -211,41 +196,16 @@ you would order from the lab e.g.:
 
 # Arguments
 
-`dist` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
-which off-targets are considered.  
+`output_file` - Path and name for the output file, this will be comma separated table, therefore `.csv` extension is preffered. 
+This search will create intermediate files which will have same name as `output_file`, but with a sequence prefix. Final file
+will contain all those intermediate files.
 
-`detail` - Path and name for the output file. This search will create intermediate 
-files which will have same name as detail, but with a sequence prefix. Final file
-will contain all those intermediate files. Leave `detail` empty if you are only 
-interested in off-target counts returned by the linearDB. 
+`distance` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
+which off-targets are considered.
 
 # Examples
 ```julia-repl
-# make a temporary directory
-tdir = tempname()
-ldb_path = joinpath(tdir, "linearDB")
-mkpath(ldb_path)
-
-# use ARTEMIS example genome
-artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        "test", "sample_data", "genome", "semirandom.fa"))
-
-# build a linearDB
-build_linearDB(
-    "samirandom", genome, 
-    Motif("Cas9"; distance = 3, ambig_max = 0), 
-    ldb_path)
-
-# load up example gRNAs
-using BioSequences
-guides_s = Set(readlines(joinpath(vcat(artemis_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
-guides = LongDNA{4}.(guides_s)
-    
-# finally, get results!
-ldb_res = search_linearDB(ldb_path, guides, 3)
+$(make_example_doc())
 ```
 """
 function search_linearDB(

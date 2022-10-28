@@ -740,33 +740,7 @@ Filter overlapping off-targets. Remember that off-targets have their start relat
 
 # Examples
 ```julia-repl
-# make a temporary directory
-tdir = tempname()
-ldb_path = joinpath(tdir, "linearDB")
-mkpath(ldb_path)
-
-# use ARTEMIS example genome
-artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        "test", "sample_data", "genome", "semirandom.fa"))
-
-# build a linearDB
-build_linearDB(
-    "samirandom", genome, 
-    Motif("Cas9"; distance = 3, ambig_max = 0), 
-    ldb_path)
-
-# load up example gRNAs
-using BioSequences
-guides_s = Set(readlines(joinpath(vcat(artemis_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
-guides = LongDNA{4}.(guides_s)
-    
-# find off-targets for example gRNAs using linearDB
-ldb_res = search_linearDB(ldb_path, guides, 2)
-
-
+$(make_example_doc())
 ```
 """
 function summarize_offtargets(res::DataFrame, distance::Int)
