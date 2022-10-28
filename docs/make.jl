@@ -10,7 +10,9 @@ makedocs(
     authors = "Kornel Labun",
     format = Documenter.HTML(
         sidebar_sitename = false,
-        footer = "Made with ♥ by Kornel Labun."
+        footer = "Made with ♥ by Kornel Labun.",
+        assets = ["assets/theme.css"],
+        disable_git = true
     ),
     modules  = [ARTEMIS],
     pages = [
