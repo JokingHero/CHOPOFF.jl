@@ -26,13 +26,24 @@ Uncompromised finding of CRISPR off-targets:
 * When using many cores for building the indexes - you have to have around ~1GB of RAM per thread.
 
 
+## Support
+
+You can buy me a [coffe](https://www.buymeacoffee.com/kornellabun) to show some love and appreciation!
+
+<img src="./assets/bmc_qr.png" width="25%"/>
+
+
 ## License  
 
 Copyright (C) 2022  Kornel Labun
 
+License for non-commercial applications is aGPL-3.0. 
+For commercial applications you should acquire permission or licensing contract.
+
 https://tldrlegal.com/license/gnu-affero-general-public-license-v3-(agpl-3.0)
 
-This program is free software: you can redistribute it and/or modify
+This program is free software for non-commercial applications: 
+you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
 by the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.

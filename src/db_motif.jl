@@ -130,7 +130,7 @@ distance `dist` and adjustment `adjust` during search step in `search_motifDB`.
 
 `motif`   - Motif deines what kind of gRNA to search for.
 
-`storage_dir`  - Folder path to the where index will be saved with name `linearDB.bin` and many prefix files.
+`storage_dir`  - Folder path to the where index will be saved and many prefix files.
 
 `prefix_len`  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,
                 however it will also result in large number of files. 

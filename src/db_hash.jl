@@ -89,7 +89,7 @@ Prepare hashDB index for future searches using `search_hashDB`.
 
 `motif`   - Motif defines what kind of gRNA to search for.
 
-`storage_dir`  - Folder path to the where index will be saved with name `hashDB.bin`.
+`storage_path`  - Path to the where index will be saved.
 
 `seed`  - Optional. Seed is used during hashing for randomization.
 
@@ -106,10 +106,8 @@ Prepare hashDB index for future searches using `search_hashDB`.
 
 # Examples
 ```julia-repl
-# make a temporary directory
-tdir = tempname()
-hdb_path = joinpath(tdir, "hashDB")
-mkpath(hdb_path)
+# prepare libs
+using ARTEMIS, BioSequences
 
 # use ARTEMIS example genome
 genome = joinpath(

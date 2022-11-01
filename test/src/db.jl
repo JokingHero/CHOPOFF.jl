@@ -87,15 +87,12 @@ end
     # it can/can't be found by different methods
 
     # make and run default vcfDB
-    vcf_path = joinpath(tdir, "vcfDB")
     vcf = joinpath(dirname(pathof(ARTEMIS)), "..", 
         "test", "sample_data", "artificial.vcf")
-    mkpath(vcf_path)
-    build_vcfDB(
+    vcf_db = build_vcfDB(
         "samirandom", genome, vcf,
-        Motif("Cas9"; distance = 1, ambig_max = 0),
-        vcf_path)
-    vcf_res = search_vcfDB(vcf_path, guides)
+        Motif("Cas9"; distance = 1, ambig_max = 0))
+    vcf_res = search_vcfDB(vcf_db, guides)
 
     @testset "vcfDB result is same as in saved file" begin
         ar_file = joinpath(dirname(pathof(ARTEMIS)), "..", 
@@ -237,5 +234,50 @@ end
             failed = antijoin(ldb, mdb, on = [:guide, :distance, :chromosome, :start, :strand])
             @test nrow(failed) == 0
         end
+    end
+
+
+    @testset "linearDB vs fmiDB" begin
+        fmi_dir = joinpath(tdir, "fmifDB")
+        mkpath(fmi_dir)
+        build_fmiDB(genome, fmi_dir)
+
+        # build a pamDB
+        motif = Motif("Cas9"; distance = 2)
+        pamDB = build_pamDB(fmi_dir, motif)
+
+        # prepare PathTemplates
+        mpt = build_PathTemplates(motif)
+
+        # prepare output folder
+        res_dir = joinpath(tdir, "results")
+        mkpath(res_dir)
+
+        # finally, make results!
+        res_path = joinpath(res_dir, "results.csv")
+        search_fmiDB(guides, mpt, motif, fmi_dir, res_path; distance = 2)
+        res_fmiDB = DataFrame(CSV.File(res_path))
+        res_fmiDB = filter_overlapping(res_fmiDB, 23)
+        select!(res_fmiDB, Not([:alignment_guide, :alignment_reference]))
+
+        search_linearDB(ldb_path, guides, detail_path; distance = 2)
+        ldb = DataFrame(CSV.File(detail_path))
+        ldb = filter_overlapping(ldb, 23)
+        select!(ldb, Not([:alignment_guide, :alignment_reference]))
+
+        # test outputs for brute force method!
+        failed = antijoin(ldb, res_fmiDB, on = [:guide, :distance, :chromosome, :start, :strand])
+        @test nrow(failed) == 0
+
+        # finally, make results!
+        res_path = joinpath(res_dir, "results_seed.csv")
+        search_fmiDB_seed(guides, fmi_dir, genome, pamDB, res_path; distance = 2)
+        res_fmiDB_seed = DataFrame(CSV.File(res_path))
+        res_fmiDB_seed = filter_overlapping(res_fmiDB_seed, 23)
+        select!(res_fmiDB_seed, Not([:alignment_guide, :alignment_reference]))
+
+        # test outputs for seed method!
+        failed = antijoin(ldb, res_fmiDB_seed, on = [:guide, :distance, :chromosome, :start, :strand])
+        @test nrow(failed) == 0
     end
 end

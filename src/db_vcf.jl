@@ -45,12 +45,49 @@ function parse_vcf(vcf_filepath::String)
 end
 
 
+"""
+```
+build_vcfDB(
+    name::String, 
+    genomepath::String, 
+    vcfpath::String,
+    motif::Motif;
+    storage_path::String = "")
+```
+
+Search `VcfDB` for off-targets for selected `guides`. 
+
+**Experimental! Proof-of-concept!** 
+
+This function does not yet lists all off-targets and this will be added at a later data.
+Current output is a list of counts of the ambiguous off-targets by distance.
+Distance is restricted to 0 and 1 at the moment.
+
+
+# Arguments
+`name` - Your prefered name for this index for easier identification.
+
+`genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
+               also prepare fasta index file with ".fai" extension.
+
+`vcfpath` - Path to the VCF file, it has to be compatible with your genome.
+
+`motif`   - Motif deines what kind of gRNA to search for.
+
+`storage_path`  - Folder path to the where index will be saved. 
+
+
+# Examples
+```julia-repl
+$(make_vcf_example_doc())
+```
+"""
 function build_vcfDB(
     name::String, 
     genomepath::String, 
     vcfpath::String,
-    motif::Motif,
-    storage_dir::String)
+    motif::Motif;
+    storage_path::String = "")
 
     motif = setambig(setdist(motif, 1), length(motif))
     dbi = DBInfo(genomepath, name, motif; vcf_filepath = vcfpath)
@@ -157,21 +194,48 @@ function build_vcfDB(
     close(ref)
 
     db = VcfDB(dbi, AmbigIdx(all_guides, guide_annot))
-    save(db, joinpath(storage_dir, "vcfDB.bin"))
-    @info "Finished constructing vcfDB in " * storage_dir
-    @info "Database size is:" *
-        "\n length -> " * string(length(db.ambig)) *
-        "\n consuming: " * string(round((filesize(joinpath(storage_dir, "vcfDB.bin")) * 1e-6); digits = 3)) * 
-        " mb of disk space."
-    return storage_dir
+    if storage_path != ""
+        save(db, storage_path)
+        @info "Finished constructing vcfDB in " * storage_path
+        @info "Database size is:" *
+            "\n length -> " * string(length(db.ambig)) *
+            "\n consuming: " * string(round((filesize(storage_path) * 1e-6); digits = 3)) * 
+            " mb of disk space."
+    end
+    return db
 end
 
 
+"""
+```
+search_vcfDB(
+    db::VcfDB,
+    guides::Vector{LongDNA{4}})
+```
+
+Search `VcfDB` for off-targets for selected `guides`. 
+
+**Experimental! Proof-of-concept!** 
+
+This function does not yet lists all off-targets and this will be added at a later data.
+Current output is a list of counts of the ambiguous off-targets by distance.
+Distance is restricted to 0 and 1 at the moment.
+
+
+# Arguments
+`db` - object built with `build_vcfDB`
+
+`guides` - a vector of gRNAs without PAM.
+
+# Examples
+```julia-repl
+$(make_vcf_example_doc())
+```
+"""
 function search_vcfDB(
-    storage_dir::String,
+    db::VcfDB,
     guides::Vector{LongDNA{4}})
 
-    db = load(joinpath(storage_dir, "vcfDB.bin"))
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
     if db.dbi.motif.extends5
@@ -187,6 +251,7 @@ function search_vcfDB(
         d1_combs = LongDNA{4}.(comb_of_d1_extended(string(s))) # 1 distance
         bits_mapped = map(x -> findbits(x, db.ambig), d1_combs)
         res[i, 2] += sum(reduce(.|, bits_mapped))
+        # write to file instead...
     end
 
     res = format_DF(res, 1, guides)

@@ -429,12 +429,11 @@ function main(args::Array{String})
         elseif args["%COMMAND%"] == "dictDB"
             build_dictDB(args["name"], args["genome"], motif; storage_path = args["output"])
         elseif args["%COMMAND%"] == "vcfDB"
-            build_vcfDB(args["name"], args["genome"], args["vcfDB"]["vcf"], motif, args["output"])
+            build_vcfDB(args["name"], args["genome"], args["vcfDB"]["vcf"], motif; storage_path = args["output"])
         elseif args["%COMMAND%"] == "fmi"
             build_fmiDB(args["genome"], args["output"])
         elseif args["%COMMAND%"] == "pamDB"
-            build_pamDB(args["pamDB"]["fmidir"], motif; 
-                storage_dir = joinpath(args["output"], args["name"] * ".bin"))
+            build_pamDB(args["pamDB"]["fmidir"], motif; storage_path = args["output"])
         else
             throw("Unsupported database type.")
         end
@@ -450,7 +449,8 @@ function main(args::Array{String})
                 args["database"], guides, args["output"]; 
                 distance = args["distance"], adjust = args["motifDB"]["adjust"])
         elseif args["%COMMAND%"] == "vcfDB"
-            res = search_vcfDB(args["database"], guides)
+            db = load(args["database"])
+            res = search_vcfDB(db, guides)
         elseif args["%COMMAND%"] == "fmi"
             template = load(args["fmi"]["template"]) # TODO fix motif...
             search_fmiDB(guides, template, motif, args["database"], args["output"];

@@ -4,17 +4,17 @@
     genomepath::String,
     motif::Motif,
     storage_dir::String,
-    prefix_len::Int = 7)</code></pre><p>Prepare linearDB index for future searches using <code>search_linearDB</code>.</p><p>Will return a path to the database location, same as <code>storage_dir</code>. When this database is used for the guide off-target scan it is similar  to linear in performance, hence the name. There is an optimization that  if the alignment becomes imposible against the prefix we don&#39;t search the off-targets grouped inside the prefix. Therefore, it is advantageous to select much larger prefix than maximum  search distance, however in that case number of files also grows. For example, if interested with searches within distance 4, preferably use prefix length of  7 or 8.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your prefered name for this index for easier identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>motif</code>   - Motif deines what kind of gRNA to search for.</p><p><code>storage_dir</code>  - Folder path to the where index will be saved with name <code>linearDB.bin</code> and many prefix files.</p><p><code>prefix_len</code>  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,                 however it will also result in large number of files.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+    prefix_len::Int = 7)</code></pre><p>Prepare linearDB index for future searches using <code>search_linearDB</code>.</p><p>Will return a path to the database location, same as <code>storage_dir</code>. When this database is used for the guide off-target scan it is similar  to linear in performance, hence the name. There is an optimization that  if the alignment becomes imposible against the prefix we don&#39;t search the off-targets grouped inside the prefix. Therefore, it is advantageous to select much larger prefix than maximum  search distance, however in that case number of files also grows. For example, if interested with searches within distance 4, preferably use prefix length of  7 or 8.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your prefered name for this index for easier identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>motif</code>   - Motif deines what kind of gRNA to search for.</p><p><code>storage_dir</code>  - Folder path to the where index will be saved with name <code>linearDB.bin</code> and many prefix files.</p><p><code>prefix_len</code>  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,                 however it will also result in large number of files.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">using ARTEMIS, BioSequences
+
+# make a temporary directory
 tdir = tempname()
 db_path = joinpath(tdir, &quot;linearDB&quot;)
 mkpath(db_path)
 
 # use ARTEMIS example genome
 artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+genome = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
 
 # build a linearDB
 build_linearDB(
@@ -23,8 +23,8 @@ build_linearDB(
     db_path)
 
 # load up example gRNAs
-using BioSequences
-guides_s = Set(readlines(joinpath(vcat(artemis_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, make results!
@@ -48,17 +48,17 @@ summary = summarize_offtargets(res, 3)
      guide        PAM
     
 3&#39; - CCN GGGCATGCT... - 5&#39;  -&gt; will be input: ...AGCATGCCC
-     PAM guide</code></pre><p><strong>Arguments</strong></p><p><code>output_file</code> - Path and name for the output file, this will be comma separated table, therefore <code>.csv</code> extension is preffered.  This search will create intermediate files which will have same name as <code>output_file</code>, but with a sequence prefix. Final file will contain all those intermediate files.</p><p><code>distance</code> - Defines maximum levenshtein distance (insertions, deletions, mismatches) for  which off-targets are considered.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+     PAM guide</code></pre><p><strong>Arguments</strong></p><p><code>output_file</code> - Path and name for the output file, this will be comma separated table, therefore <code>.csv</code> extension is preffered.  This search will create intermediate files which will have same name as <code>output_file</code>, but with a sequence prefix. Final file will contain all those intermediate files.</p><p><code>distance</code> - Defines maximum levenshtein distance (insertions, deletions, mismatches) for  which off-targets are considered.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">using ARTEMIS, BioSequences
+
+# make a temporary directory
 tdir = tempname()
 db_path = joinpath(tdir, &quot;linearDB&quot;)
 mkpath(db_path)
 
 # use ARTEMIS example genome
 artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+genome = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
 
 # build a linearDB
 build_linearDB(
@@ -67,8 +67,8 @@ build_linearDB(
     db_path)
 
 # load up example gRNAs
-using BioSequences
-guides_s = Set(readlines(joinpath(vcat(artemis_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, make results!
@@ -90,17 +90,17 @@ summary = summarize_offtargets(res, 3)
     motif::Motif,
     storage_dir::String,
     prefix_len::Int = 7;
-    skipmer_size::Int = Int(floor(length_noPAM(motif) / (motif.distance + 3))))</code></pre><p>Prepare motifDB index for future searches using <code>search_motifDB</code>.</p><p>Will return a path to the database location, same as <code>storage_dir</code>. When this database is used for the guide off-target scan it is similar  to <code>search_linearDB</code>, however additional filter is applied on top of  prefix filtering. Suffixes are used for next filter, similarly to  pidgeon hole principle - depending on the size of the skipkmer <code>skipkmer_size</code>. For example, Cas9 off-target within distance 4 (d) might be 20bp long. We skip <code>prefix_len</code> of 7, and are left with 13bp which can be split into 3  skipmers (r) of size 4, 1bp will be left unused. However when searching within  distance of 4 and for prefix where initial alignment was of distance 3 (m) and adjustment paramter is 0 (a). We are obliged to find at least <strong>k - (d - m + a)</strong>  which is <strong>3 - (4 - 3 + 0) = 2</strong> this many skimpers inside the off-targets. </p><p>There exist also another approach which builds on the idea that it might be more efficient to find at least two kmers of smaller size (named 01*0 seed) rather than one larger kmer  (pidgeon hole principle). You can use the <code>adjust</code> option for that during <code>search_linearDB</code> step.</p><p>Be sure to understand implications of using <code>motifDB</code> as using wrong parameters  on <code>skipmer_size</code> might result in leaky filtering in relation to the asumed  distance <code>dist</code> and adjustment <code>adjust</code> during search step in <code>search_motifDB</code>.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your prefered name for this index for easier identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>motif</code>   - Motif deines what kind of gRNA to search for.</p><p><code>storage_dir</code>  - Folder path to the where index will be saved with name <code>linearDB.bin</code> and many prefix files.</p><p><code>prefix_len</code>  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,                 however it will also result in large number of files. </p><p><code>skipmer_size</code> - Size of the skipmer as described above. Be carefull when setting this too large!</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+    skipmer_size::Int = Int(floor(length_noPAM(motif) / (motif.distance + 3))))</code></pre><p>Prepare motifDB index for future searches using <code>search_motifDB</code>.</p><p>Will return a path to the database location, same as <code>storage_dir</code>. When this database is used for the guide off-target scan it is similar  to <code>search_linearDB</code>, however additional filter is applied on top of  prefix filtering. Suffixes are used for next filter, similarly to  pidgeon hole principle - depending on the size of the skipkmer <code>skipkmer_size</code>. For example, Cas9 off-target within distance 4 (d) might be 20bp long. We skip <code>prefix_len</code> of 7, and are left with 13bp which can be split into 3  skipmers (r) of size 4, 1bp will be left unused. However when searching within  distance of 4 and for prefix where initial alignment was of distance 3 (m) and adjustment paramter is 0 (a). We are obliged to find at least <strong>k - (d - m + a)</strong>  which is <strong>3 - (4 - 3 + 0) = 2</strong> this many skimpers inside the off-targets. </p><p>There exist also another approach which builds on the idea that it might be more efficient to find at least two kmers of smaller size (named 01*0 seed) rather than one larger kmer  (pidgeon hole principle). You can use the <code>adjust</code> option for that during <code>search_linearDB</code> step.</p><p>Be sure to understand implications of using <code>motifDB</code> as using wrong parameters  on <code>skipmer_size</code> might result in leaky filtering in relation to the asumed  distance <code>dist</code> and adjustment <code>adjust</code> during search step in <code>search_motifDB</code>.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your prefered name for this index for easier identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>motif</code>   - Motif deines what kind of gRNA to search for.</p><p><code>storage_dir</code>  - Folder path to the where index will be saved and many prefix files.</p><p><code>prefix_len</code>  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,                 however it will also result in large number of files. </p><p><code>skipmer_size</code> - Size of the skipmer as described above. Be carefull when setting this too large!</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">using ARTEMIS, BioSequences
+
+# make a temporary directory
 tdir = tempname()
 db_path = joinpath(tdir, &quot;motifDB&quot;)
 mkpath(db_path)
 
 # use ARTEMIS example genome
 artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+genome = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
 
 # build a motifDB
 build_motifDB(
@@ -109,8 +109,8 @@ build_motifDB(
     db_path)
 
 # load up example gRNAs
-using BioSequences
-guides_s = Set(readlines(joinpath(vcat(artemis_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, make results!
@@ -135,17 +135,17 @@ summary = summarize_offtargets(res, 3)
      guide        PAM
     
 3&#39; - CCN GGGCATGCT... - 5&#39;  -&gt; will be input: ...AGCATGCCC
-     PAM guide</code></pre><p><strong>Arguments</strong></p><p><code>storage_dir</code> - Directory containing motifDB.</p><p><code>guides</code> - a vector of gRNAs without PAM.</p><p><code>output_file</code> - File to which write detailed results. This search will create intermediate  files which will have same name as output_file, but with a sequence prefix. Final file will contain all those intermediate files, and other files with sequence prefix will be deleted.</p><p><code>distance</code> - Defines maximum levenshtein distance (insertions, deletions, mismatches) for  which off-targets are considered.  </p><p><code>adjust</code> - This will be crutial parameter for tightening second layer of filtering after,  the initial prefix alignment. For example, Cas9 off-target within distance 4 (d) might be 20bp long. We skip <code>prefix_len</code> of 7, and are left with 13bp which can be split into 3 skipmers (r) of size 4,  1bp will be left unused. However when searching within distance of 4 and for prefix where initial  alignment was of distance 3 (m) and adjustment paramter is 0 (a). We are obliged to find at least  <code>k - (d - m + a)</code> which is <code>3 - (4 - 3 + 0) = 2</code> this many skimpers inside the off-targets. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+     PAM guide</code></pre><p><strong>Arguments</strong></p><p><code>storage_dir</code> - Directory containing motifDB.</p><p><code>guides</code> - a vector of gRNAs without PAM.</p><p><code>output_file</code> - File to which write detailed results. This search will create intermediate  files which will have same name as output_file, but with a sequence prefix. Final file will contain all those intermediate files, and other files with sequence prefix will be deleted.</p><p><code>distance</code> - Defines maximum levenshtein distance (insertions, deletions, mismatches) for  which off-targets are considered.  </p><p><code>adjust</code> - This will be crutial parameter for tightening second layer of filtering after,  the initial prefix alignment. For example, Cas9 off-target within distance 4 (d) might be 20bp long. We skip <code>prefix_len</code> of 7, and are left with 13bp which can be split into 3 skipmers (r) of size 4,  1bp will be left unused. However when searching within distance of 4 and for prefix where initial  alignment was of distance 3 (m) and adjustment paramter is 0 (a). We are obliged to find at least  <code>k - (d - m + a)</code> which is <code>3 - (4 - 3 + 0) = 2</code> this many skimpers inside the off-targets. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">using ARTEMIS, BioSequences
+
+# make a temporary directory
 tdir = tempname()
 db_path = joinpath(tdir, &quot;motifDB&quot;)
 mkpath(db_path)
 
 # use ARTEMIS example genome
 artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+genome = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
 
 # build a motifDB
 build_motifDB(
@@ -154,8 +154,8 @@ build_motifDB(
     db_path)
 
 # load up example gRNAs
-using BioSequences
-guides_s = Set(readlines(joinpath(vcat(artemis_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, make results!
@@ -176,17 +176,17 @@ summary = summarize_offtargets(res, 3)
     genomepath::String,
     motif::Motif,
     storage_dir::String,
-    prefix_len::Int = 7)</code></pre><p>Build a Vantage Point tree DB of offtargets for the given <code>motif</code>, DB groups off-targets by their prefixes, each prefix has its own Vantage Point tree.</p><p>Will return a path to the database location, same as <code>storage_dir</code>.</p><p>There is an optimization that if the alignment becomes imposible against the prefix we don&#39;t search the off-targets grouped inside the prefix. Therefore it is advantageous to select larger prefix than maximum  search distance, however in that case number of files also grows.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your prefered name for this index for easier identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>motif</code>   - Motif deines what kind of gRNA to search for.</p><p><code>storage_dir</code>  - Folder path to the where index will be saved with name <code>linearDB.bin</code> and many prefix files.</p><p><code>prefix_len</code>  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,                 however it will also result in large number of files. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+    prefix_len::Int = 7)</code></pre><p>Build a Vantage Point tree DB of offtargets for the given <code>motif</code>, DB groups off-targets by their prefixes, each prefix has its own Vantage Point tree.</p><p>Will return a path to the database location, same as <code>storage_dir</code>.</p><p>There is an optimization that if the alignment becomes imposible against the prefix we don&#39;t search the off-targets grouped inside the prefix. Therefore it is advantageous to select larger prefix than maximum  search distance, however in that case number of files also grows.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your prefered name for this index for easier identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>motif</code>   - Motif deines what kind of gRNA to search for.</p><p><code>storage_dir</code>  - Folder path to the where index will be saved with name <code>linearDB.bin</code> and many prefix files.</p><p><code>prefix_len</code>  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,                 however it will also result in large number of files. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">using ARTEMIS, BioSequences
+
+# make a temporary directory
 tdir = tempname()
 db_path = joinpath(tdir, &quot;treeDB&quot;)
 mkpath(db_path)
 
 # use ARTEMIS example genome
 artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+genome = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
 
 # build a treeDB
 build_treeDB(
@@ -195,8 +195,8 @@ build_treeDB(
     db_path)
 
 # load up example gRNAs
-using BioSequences
-guides_s = Set(readlines(joinpath(vcat(artemis_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, make results!
@@ -215,17 +215,17 @@ summary = summarize_offtargets(res, 3)
 </code></pre></div></section></article><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.inspect_treeDB" href="#ARTEMIS.inspect_treeDB"><code>ARTEMIS.inspect_treeDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">inspect_treeDB(
     storage_dir::String; 
     levels::Int = 5, 
-    inspect_prefix::String = &quot;&quot;)</code></pre><p>See small part of the full vantage point tree of the treeDB.</p><p>TreeDB can be split based on the distance to the radius (r)  into inside (left &lt;= r) and right (outside &gt; r) nodes.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+    inspect_prefix::String = &quot;&quot;)</code></pre><p>See small part of the full vantage point tree of the treeDB.</p><p>TreeDB can be split based on the distance to the radius (r)  into inside (left &lt;= r) and right (outside &gt; r) nodes.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">using ARTEMIS, BioSequences
+
+# make a temporary directory
 tdir = tempname()
 db_path = joinpath(tdir, &quot;treeDB&quot;)
 mkpath(db_path)
 
 # use ARTEMIS example genome
 artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+genome = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
 
 # build a treeDB
 build_treeDB(
@@ -234,8 +234,8 @@ build_treeDB(
     db_path)
 
 # load up example gRNAs
-using BioSequences
-guides_s = Set(readlines(joinpath(vcat(artemis_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, make results!
@@ -262,17 +262,17 @@ inspect_treeDB(db_path; inspect_prefix = &quot;CCGTCGC&quot;)</code></pre></div>
      guide        PAM
 
 3&#39; - CCN GGGCATGCT... - 5&#39;  -&gt; will be input: ...AGCATGCCC
-     PAM guide</code></pre><p><strong>Arguments</strong></p><p><code>dist</code> - Defines maximum levenshtein distance (insertions, deletions, mismatches) for  which off-targets are considered.  </p><p><code>detail</code> - Path and name for the output file. This search will create intermediate  files which will have same name as detail, but with a sequence prefix. Final file will contain all those intermediate files. Leave <code>detail</code> empty if you are only  interested in off-target counts returned by the treeDB. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+     PAM guide</code></pre><p><strong>Arguments</strong></p><p><code>dist</code> - Defines maximum levenshtein distance (insertions, deletions, mismatches) for  which off-targets are considered.  </p><p><code>detail</code> - Path and name for the output file. This search will create intermediate  files which will have same name as detail, but with a sequence prefix. Final file will contain all those intermediate files. Leave <code>detail</code> empty if you are only  interested in off-target counts returned by the treeDB. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">using ARTEMIS, BioSequences
+
+# make a temporary directory
 tdir = tempname()
 db_path = joinpath(tdir, &quot;treeDB&quot;)
 mkpath(db_path)
 
 # use ARTEMIS example genome
 artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+genome = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
 
 # build a treeDB
 build_treeDB(
@@ -281,8 +281,8 @@ build_treeDB(
     db_path)
 
 # load up example gRNAs
-using BioSequences
-guides_s = Set(readlines(joinpath(vcat(artemis_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, make results!
@@ -298,4 +298,188 @@ res = filter_overlapping(res, 23)
 
 # summarize results into a table of counts by distance
 summary = summarize_offtargets(res, 3)
-</code></pre></div></section></article><h2 id="FM-index"><a class="docs-heading-anchor" href="#FM-index">FM-index</a><a id="FM-index-1"></a><a class="docs-heading-anchor-permalink" href="#FM-index" title="Permalink"></a></h2><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.build_PathTemplates" href="#ARTEMIS.build_PathTemplates"><code>ARTEMIS.build_PathTemplates</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">build_PathTemplates(len::Int, d::Int; storagepath::String = &quot;&quot;, mismatch_only::Bool = false)</code></pre><p>Builds up a PathTemplates object. Stores  shortened version of all possible paths within each distance <code>d</code> mapped on the graph of all possible alignments of seqeunce of length <code>len</code>. Then one can use <code>templates_to_sequences_extended</code> or  <code>templates_to_sequences</code> and map guide sequence to all possible alignments quickly.</p><p><strong>Arguments</strong></p><p><code>len</code> - length of the seqeunce (e.g. guide - without PAM)</p><p><code>d</code> - Maximal distance on which to build the graph.</p><p><code>storagepath</code> - If not empty &quot;&quot;, will save the object under given path.</p><p><code>mismatch_only</code> - Whether to skip insertions/deletions.</p></div></section><section><div><pre><code class="nohighlight hljs">build_PathTemplates(motif::Motif; storagepath::String = &quot;&quot;, mismatch_only::Bool = false)</code></pre><p>Builds up a PathTemplates object. Stores  shortened version of all possible paths for given <code>Motif</code>.  Afterwards use <code>templates_to_sequences_extended</code> or  <code>templates_to_sequences</code> and map guide sequence to all possible alignments quickly.</p><p><strong>Arguments</strong></p><p><code>motif</code> - Motif object.</p><p><code>storagepath</code> - If not empty &quot;&quot;, will save the object under given path.</p><p><code>mismatch_only</code> - Whether to skip insertions/deletions.</p></div></section></article><div class="admonition is-warning"><header class="admonition-header">Missing docstring.</header><div class="admonition-body"><p>Missing docstring for <code>build_fmiDB</code>. Check Documenter&#39;s build log for details.</p></div></div><div class="admonition is-warning"><header class="admonition-header">Missing docstring.</header><div class="admonition-body"><p>Missing docstring for <code>search_fmiDB</code>. Check Documenter&#39;s build log for details.</p></div></div><div class="admonition is-warning"><header class="admonition-header">Missing docstring.</header><div class="admonition-body"><p>Missing docstring for <code>build_pamDB</code>. Check Documenter&#39;s build log for details.</p></div></div><div class="admonition is-warning"><header class="admonition-header">Missing docstring.</header><div class="admonition-body"><p>Missing docstring for <code>search_fmiDB_seed</code>. Check Documenter&#39;s build log for details.</p></div></div><h2 id="VCF"><a class="docs-heading-anchor" href="#VCF">VCF</a><a id="VCF-1"></a><a class="docs-heading-anchor-permalink" href="#VCF" title="Permalink"></a></h2><div class="admonition is-warning"><header class="admonition-header">Missing docstring.</header><div class="admonition-body"><p>Missing docstring for <code>build_vcfDB</code>. Check Documenter&#39;s build log for details.</p></div></div><div class="admonition is-warning"><header class="admonition-header">Missing docstring.</header><div class="admonition-body"><p>Missing docstring for <code>search_vcfDB</code>. Check Documenter&#39;s build log for details.</p></div></div></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../alignment_free/">« Alignment-free filters for gRNAs</a><a class="docs-footer-nextpage" href="../utils/">Utils »</a><div class="flexbox-break"></div><p class="footer-message">Made with ♥ by Kornel Labun.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.23 on <span class="colophon-date" title="Friday 28 October 2022 16:05">Friday 28 October 2022</span>. Using Julia version 1.8.2.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+</code></pre></div></section></article><h2 id="FM-index"><a class="docs-heading-anchor" href="#FM-index">FM-index</a><a id="FM-index-1"></a><a class="docs-heading-anchor-permalink" href="#FM-index" title="Permalink"></a></h2><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.build_PathTemplates" href="#ARTEMIS.build_PathTemplates"><code>ARTEMIS.build_PathTemplates</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">build_PathTemplates(len::Int, d::Int; storagepath::String = &quot;&quot;, mismatch_only::Bool = false)</code></pre><p>Builds up a PathTemplates object. Stores  shortened version of all possible paths within each distance <code>d</code> mapped on the graph of all possible alignments of seqeunce of length <code>len</code>. Then one can use <code>templates_to_sequences_extended</code> or  <code>templates_to_sequences</code> and map guide sequence to all possible alignments quickly.</p><p><strong>Arguments</strong></p><p><code>len</code> - length of the seqeunce (e.g. guide - without PAM)</p><p><code>d</code> - Maximal distance on which to build the graph.</p><p><code>storagepath</code> - If not empty &quot;&quot;, will save the object under given path.</p><p><code>mismatch_only</code> - Whether to skip insertions/deletions.</p></div></section><section><div><pre><code class="nohighlight hljs">build_PathTemplates(motif::Motif; storagepath::String = &quot;&quot;, mismatch_only::Bool = false)</code></pre><p>Builds up a PathTemplates object. Stores  shortened version of all possible paths for given <code>Motif</code>.  Afterwards use <code>templates_to_sequences_extended</code> or  <code>templates_to_sequences</code> and map guide sequence to all possible alignments quickly.</p><p><strong>Arguments</strong></p><p><code>motif</code> - Motif object.</p><p><code>storagepath</code> - If not empty &quot;&quot;, will save the object under given path.</p><p><code>mismatch_only</code> - Whether to skip insertions/deletions.</p></div></section></article><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.build_fmiDB" href="#ARTEMIS.build_fmiDB"><code>ARTEMIS.build_fmiDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">build_fmiDB(
+    genomepath::String,
+    storage_dir::String)</code></pre><p>Prepare FM-index for future searches.</p><p><strong>Arguments</strong></p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>storage_dir</code>  - Path to the DIRECTORY where index with many files will be saved.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># prepare libs
+using ARTEMIS, BioSequences
+
+# make a temporary directory
+tdir = tempname()
+fmi_dir = joinpath(tdir, &quot;fmi&quot;)
+mkpath(fmi_dir)
+
+# use ARTEMIS example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# build a fmiDB!
+build_fmiDB(genome, fmi_dir)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.search_fmiDB" href="#ARTEMIS.search_fmiDB"><code>ARTEMIS.search_fmiDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">search_fmiDB(
+    guides::Vector{LongDNA{4}}, 
+    mpt::PathTemplates, 
+    motif::Motif, 
+    fmidbdir::String,
+    output_file::String; 
+    distance::Int = 2)</code></pre><p>Search FM-index for off-targets using brute-force enumeration method.</p><p><strong>Experimental! Proof-of-concept!</strong></p><p>This method uses <code>PathTemplates</code> build on top of <code>Motif</code> to enumerate all possible off-target seqeunces, next, these sequences are found in the genome using FM-index. This method is impractically slow above distance of 2.</p><p><strong>Arguments</strong></p><p><code>guides</code> - a vector of gRNAs without PAM.</p><p><code>mpt</code> - PathTemplates object that contains abstraction for all possible alignments</p><p><code>motif</code> - Motif deines what kind of gRNA to search for. Has to be compatible with <code>mpt</code>.</p><p><code>fmidbdir</code>   - Path to the folder where FM-index was build using <code>build_fmi</code>.</p><p><code>output_file</code>  - Where output will be saved.</p><p><code>distance</code>  - Search distance, maximum of 2 is practical.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># prepare libs
+using ARTEMIS, BioSequences
+
+# make a temporary directory
+tdir = tempname()
+fmi_dir = joinpath(tdir, &quot;fmi&quot;)
+mkpath(fmi_dir)
+
+# use ARTEMIS example genome
+artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
+genome = joinpath(
+    vcat(
+        artemis_path, 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+# build FM-index
+build_fmiDB(genome, fmi_dir)
+motif = Motif(&quot;Cas9&quot;; distance = 1)
+mpt = build_PathTemplates(motif)
+
+# prepare output folder
+res_dir = joinpath(tdir, &quot;results&quot;)
+mkpath(res_dir)
+
+# load up example gRNAs
+guides_s = Set(readlines(joinpath(vcat(artemis_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides = LongDNA{4}.(guides_s)
+    
+# finally, make results!
+res_path = joinpath(res_dir, &quot;results.csv&quot;)
+search_fmiDB(guides, mpt, motif, fmi_dir, res_path; distance = 1)
+
+# load results
+using DataFrames, CSV
+res = DataFrame(CSV.File(res_path))
+
+# filter results by close proximity
+res = filter_overlapping(res, 23)
+
+# summarize results into a table of counts by distance
+summary = summarize_offtargets(res, 1)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.build_pamDB" href="#ARTEMIS.build_pamDB"><code>ARTEMIS.build_pamDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">build_pamDB(
+    fmidbdir::String, 
+    motif::Motif; 
+    storage_path::String = &quot;&quot;)</code></pre><p>Find locations of all the PAM for a given motif in the genome.</p><p>Example of what position we store for traditional Cas9 (NGG, CCN) and Cpf1 (TTTN, NAAA):</p><pre><code class="nohighlight hljs">NGG  CCN TTTN  NAAA
+^      ^    ^  ^</code></pre><p><strong>Arguments</strong></p><p><code>fmidbdir</code> - Path to directory with the FM-index build with <code>build_fmiDB</code>.</p><p><code>motif</code> - <code>Motif</code> defines which PAM we will locate in the genome.</p><p><code>storage_path</code>  - Path to the DIRECTORY where index will be saved.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># prepare libs
+using ARTEMIS, BioSequences
+
+# make a temporary directory
+tdir = tempname()
+fmi_dir = joinpath(tdir, &quot;fmi&quot;)
+mkpath(fmi_dir)
+
+# use ARTEMIS example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+# build FM-index
+build_fmiDB(genome, fmi_dir)
+
+# build a pamDB
+pamDB = build_pamDB(fmi_dir, Motif(&quot;Cas9&quot;))</code></pre></div></section></article><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.search_fmiDB_seed" href="#ARTEMIS.search_fmiDB_seed"><code>ARTEMIS.search_fmiDB_seed</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">search_fmiDB_seed(
+    guides::Vector{LongDNA{4}},
+    fmidbdir::String, 
+    genomepath::String, 
+    pamDB::PAMinFMI,
+    output_file::String; 
+    distance::Int = 2)</code></pre><p>Search FM-index for off-targets using 01*0 seed method.  Read more here: <a href="https://www.sciencedirect.com/science/article/pii/S1570866716300028">publication</a>  and <a href="https://mikael-salson.univ-lille.fr//articles/VST_Iwoca14.pdf">pdf</a>.</p><p><strong>Experimental! Proof-of-concept!</strong></p><p><strong>Arguments</strong></p><p><code>guides</code> - a vector of gRNAs without PAM.</p><p><code>fmidbdir</code>   - Path to the folder where FM-index was build using <code>build_fmi</code>.</p><p><code>genomepath</code> - Path to the genome used to build the FM-index.</p><p><code>pamDB</code> - object build with <code>build_pamDB</code> that contains locations of the PAM inside the genome.</p><p><code>output_file</code>  - Where output will be saved.</p><p><code>distance</code>  - Search distance, maximum of 2 is practical.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># prepare libs
+using ARTEMIS, BioSequences
+
+# make a temporary directory
+tdir = tempname()
+fmi_dir = joinpath(tdir, &quot;fmi&quot;)
+mkpath(fmi_dir)
+
+# use ARTEMIS example genome
+artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
+genome = joinpath(
+    vcat(
+        artemis_path, 
+        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+# build FM-index
+build_fmiDB(genome, fmi_dir)
+
+# build a pamDB
+motif = Motif(&quot;Cas9&quot;; distance = 1)
+pamDB = build_pamDB(fmi_dir, motif)
+
+# prepare PathTemplates
+mpt = build_PathTemplates(motif)
+
+# prepare output folder
+res_dir = joinpath(tdir, &quot;results&quot;)
+mkpath(res_dir)
+
+# load up example gRNAs
+guides_s = Set(readlines(joinpath(vcat(artemis_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides = LongDNA{4}.(guides_s)
+    
+# finally, make results!
+res_path = joinpath(res_dir, &quot;results.csv&quot;)
+search_fmiDB_seed(guides, fmi_dir, genome, pamDB, res_path; distance = 1)
+
+# load results
+using DataFrames, CSV
+res = DataFrame(CSV.File(res_path))
+
+# filter results by close proximity
+res = filter_overlapping(res, 23)
+
+# summarize results into a table of counts by distance
+summary = summarize_offtargets(res, 1)</code></pre></div></section></article><h2 id="VCF"><a class="docs-heading-anchor" href="#VCF">VCF</a><a id="VCF-1"></a><a class="docs-heading-anchor-permalink" href="#VCF" title="Permalink"></a></h2><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.build_vcfDB" href="#ARTEMIS.build_vcfDB"><code>ARTEMIS.build_vcfDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">build_vcfDB(
+    name::String, 
+    genomepath::String, 
+    vcfpath::String,
+    motif::Motif;
+    storage_path::String = &quot;&quot;)</code></pre><p>Search <code>VcfDB</code> for off-targets for selected <code>guides</code>. </p><p><strong>Experimental! Proof-of-concept!</strong> </p><p>This function does not yet lists all off-targets and this will be added at a later data. Current output is a list of counts of the ambiguous off-targets by distance. Distance is restricted to 0 and 1 at the moment.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your prefered name for this index for easier identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>vcfpath</code> - Path to the VCF file, it has to be compatible with your genome.</p><p><code>motif</code>   - Motif deines what kind of gRNA to search for.</p><p><code>storage_path</code>  - Folder path to the where index will be saved. </p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># prepare libs
+using ARTEMIS, BioSequences
+
+# use ARTEMIS example genome and vcf file
+artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
+genome = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+vcf = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;artificial.vcf&quot;))
+
+# load up example gRNAs
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides = LongDNA{4}.(guides_s)
+
+# example VCF file
+vcf_db = build_vcfDB(
+    &quot;samirandom&quot;, genome, vcf,
+    Motif(&quot;Cas9&quot;; distance = 1, ambig_max = 0))
+
+# search using vcfDB!
+vcf_res = search_vcfDB(vcf_db, guides)
+</code></pre></div></section></article><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.search_vcfDB" href="#ARTEMIS.search_vcfDB"><code>ARTEMIS.search_vcfDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">search_vcfDB(
+    db::VcfDB,
+    guides::Vector{LongDNA{4}})</code></pre><p>Search <code>VcfDB</code> for off-targets for selected <code>guides</code>. </p><p><strong>Experimental! Proof-of-concept!</strong> </p><p>This function does not yet lists all off-targets and this will be added at a later data. Current output is a list of counts of the ambiguous off-targets by distance. Distance is restricted to 0 and 1 at the moment.</p><p><strong>Arguments</strong></p><p><code>db</code> - object built with <code>build_vcfDB</code></p><p><code>guides</code> - a vector of gRNAs without PAM.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># prepare libs
+using ARTEMIS, BioSequences
+
+# use ARTEMIS example genome and vcf file
+artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
+genome = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+vcf = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;artificial.vcf&quot;))
+
+# load up example gRNAs
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides = LongDNA{4}.(guides_s)
+
+# example VCF file
+vcf_db = build_vcfDB(
+    &quot;samirandom&quot;, genome, vcf,
+    Motif(&quot;Cas9&quot;; distance = 1, ambig_max = 0))
+
+# search using vcfDB!
+vcf_res = search_vcfDB(vcf_db, guides)
+</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../alignment_free/">« Alignment-free filters for gRNAs</a><a class="docs-footer-nextpage" href="../utils/">Utils »</a><div class="flexbox-break"></div><p class="footer-message">Made with ♥ by Kornel Labun.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.23 on <span class="colophon-date" title="Tuesday 1 November 2022 17:33">Tuesday 1 November 2022</span>. Using Julia version 1.8.2.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

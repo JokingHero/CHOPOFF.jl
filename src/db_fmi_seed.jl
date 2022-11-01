@@ -11,7 +11,7 @@ function make_line(guide::LongDNA{4}, chrom::String, oriented_pos::Int, aln::Aln
         chrom * "," * string(oriented_pos) * "," * strand * "\n"
 end
 
-# this function uses variables from outer scope
+
 #          NGG  CCN  TTTN NAAA
 # align 
 # rev       T   F    F     T
@@ -140,12 +140,93 @@ function pam100_anchor_left!(
 end
 
 
+"""
+```
+search_fmiDB_seed(
+    guides::Vector{LongDNA{4}},
+    fmidbdir::String, 
+    genomepath::String, 
+    pamDB::PAMinFMI,
+    output_file::String; 
+    distance::Int = 2)
+```
+
+Search FM-index for off-targets using 01*0 seed method. 
+Read more here: [publication](https://www.sciencedirect.com/science/article/pii/S1570866716300028) 
+and [pdf](https://mikael-salson.univ-lille.fr//articles/VST_Iwoca14.pdf).
+
+**Experimental! Proof-of-concept!**
+
+
+# Arguments
+`guides` - a vector of gRNAs without PAM.
+
+`fmidbdir`   - Path to the folder where FM-index was build using `build_fmi`.
+
+`genomepath` - Path to the genome used to build the FM-index.
+
+`pamDB` - object build with `build_pamDB` that contains locations of the PAM inside the genome.
+
+`output_file`  - Where output will be saved.
+
+`distance`  - Search distance, maximum of 2 is practical.
+
+
+# Examples
+```julia-repl
+# prepare libs
+using ARTEMIS, BioSequences
+
+# make a temporary directory
+tdir = tempname()
+fmi_dir = joinpath(tdir, "fmi")
+mkpath(fmi_dir)
+
+# use ARTEMIS example genome
+artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
+genome = joinpath(
+    vcat(
+        artemis_path, 
+        "test", "sample_data", "genome", "semirandom.fa"))
+# build FM-index
+build_fmiDB(genome, fmi_dir)
+
+# build a pamDB
+motif = Motif("Cas9"; distance = 1)
+pamDB = build_pamDB(fmi_dir, motif)
+
+# prepare PathTemplates
+mpt = build_PathTemplates(motif)
+
+# prepare output folder
+res_dir = joinpath(tdir, "results")
+mkpath(res_dir)
+
+# load up example gRNAs
+guides_s = Set(readlines(joinpath(vcat(artemis_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides = LongDNA{4}.(guides_s)
+    
+# finally, make results!
+res_path = joinpath(res_dir, "results.csv")
+search_fmiDB_seed(guides, fmi_dir, genome, pamDB, res_path; distance = 1)
+
+# load results
+using DataFrames, CSV
+res = DataFrame(CSV.File(res_path))
+
+# filter results by close proximity
+res = filter_overlapping(res, 23)
+
+# summarize results into a table of counts by distance
+summary = summarize_offtargets(res, 1)
+```
+"""
 function search_fmiDB_seed(guides::Vector{LongDNA{4}},
     fmidbdir::String, genomepath::String, pamDB::PAMinFMI,
-    detail::String; distance::Int = 2)
+    output_file::String; distance::Int = 2)
 
     motif = setdist(pamDB.motif, distance)
-    detail_path = dirname(detail)
+    detail_path = dirname(output_file)
     chunks = distance + 2
     combs = collect(combinations(1:chunks, 2))
     # reorder combs so that options with PAM00 are first, then PAM0 then other
@@ -208,7 +289,6 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
     end
 
     ThreadsX.foreach(enumerate(gi.chrom)) do (ic, chrom)
-        @info chrom
         seq = getchromseq(gi.is_fa, Threads.nthreads() == 1 ? reader[chrom] : reader[ic])
         fmi = load(joinpath(fmidbdir, chrom * ".bin"))
         pam_fwd = pamDB.pam_loc_fwd[ic]
@@ -219,7 +299,6 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
 
         # wroking on this guide and his all possible off-targets
         for (i, g_chunks) in enumerate(guide_chunks) # for each guide
-            @info guides[i]
             g_chunks_len = map(x -> length(x[1]), g_chunks)
             g_chunks_len_rev = reverse(g_chunks_len)
             g_chunks_rev = reverse(map(x -> reverse_complement.(x), g_chunks))
@@ -229,7 +308,6 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
             # keep track of all found so far to not search same PAM multiple times
             fwd_filter = Set{Int64}()
             for ch in combs
-                @info ch
                 # if pam is included in the chunk, skip PAM matching
                 pam_in_chunk = (motif.extends5 && ch[2] == length(g_chunks)) || (!motif.extends5 && ch[1] == 1)
                 # if two chunks are adjecent - merge and skip distance matching
@@ -403,7 +481,6 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
             # REVERSE
             rve_filter = Set{Int64}()
             for ch in combs_rev
-                @info ch
                 # if pam is included in the chunk, skip PAM matching
                 pam_in_chunk = (!motif.extends5 && ch[2] == length(g_chunks_rev)) || (motif.extends5 && ch[1] == 1)
                 # if two chunks are adjecent - merge and skip distance matching
@@ -577,6 +654,6 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
         close(detail_file)
     end
     close(ref)
-    cleanup_detail(detail)
+    cleanup_detail(output_file)
     return detail
 end

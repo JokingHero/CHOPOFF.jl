@@ -14,17 +14,17 @@
 5
 
 julia&gt; minkmersize(20, 6)
-2</code></pre></div></section></article><h2 id="Persistence"><a class="docs-heading-anchor" href="#Persistence">Persistence</a><a id="Persistence-1"></a><a class="docs-heading-anchor-permalink" href="#Persistence" title="Permalink"></a></h2><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.save" href="#ARTEMIS.save"><code>ARTEMIS.save</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>save(object::Any, destination::String)</code></p><p>Uses julia serializer to save the data to binary format. Read more about <a href="https://docs.julialang.org/en/v1/stdlib/Serialization/">serialization</a>. Notice that:</p><ol><li>This function will overwrite <code>destination</code>! </li><li>This serialization is dependent on julia build! This means files can fail to work when reloaded across different julia builds.</li></ol></div></section></article><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.load" href="#ARTEMIS.load"><code>ARTEMIS.load</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>load(destination::String)</code></p><p>Load file saved with <code>save</code> function. This <strong>may not</strong> load properly files saved in other julia builds.</p></div></section></article><h2 id="Summarize-off-targets"><a class="docs-heading-anchor" href="#Summarize-off-targets">Summarize off-targets</a><a id="Summarize-off-targets-1"></a><a class="docs-heading-anchor-permalink" href="#Summarize-off-targets" title="Permalink"></a></h2><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.summarize_offtargets" href="#ARTEMIS.summarize_offtargets"><code>ARTEMIS.summarize_offtargets</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">filter_overlapping(res::DataFrame, distance::Int)</code></pre><p>Filter overlapping off-targets. Remember that off-targets have their start relative to the PAM location.</p><p><strong>Arguments</strong></p><p><code>res</code> - DataFrame created by one of the off-target finding methods, it contains columns      such as <code>:guide,  :chromosome, :strand, :distance, :start</code>. </p><p><code>distance</code> - To what distance from the <code>:start</code> do we consider the off-target to be overlapping?</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+2</code></pre></div></section></article><h2 id="Persistence"><a class="docs-heading-anchor" href="#Persistence">Persistence</a><a id="Persistence-1"></a><a class="docs-heading-anchor-permalink" href="#Persistence" title="Permalink"></a></h2><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.save" href="#ARTEMIS.save"><code>ARTEMIS.save</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>save(object::Any, destination::String)</code></p><p>Uses julia serializer to save the data to binary format. Read more about <a href="https://docs.julialang.org/en/v1/stdlib/Serialization/">serialization</a>. Notice that:</p><ol><li>This function will overwrite <code>destination</code>! </li><li>This serialization is dependent on julia build! This means files can fail to work when reloaded across different julia builds.</li></ol></div></section></article><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.load" href="#ARTEMIS.load"><code>ARTEMIS.load</code></a> — <span class="docstring-category">Function</span></header><section><div><p><code>load(destination::String)</code></p><p>Load file saved with <code>save</code> function. This <strong>may not</strong> load properly files saved in other julia builds.</p></div></section></article><h2 id="Summarize-off-targets"><a class="docs-heading-anchor" href="#Summarize-off-targets">Summarize off-targets</a><a id="Summarize-off-targets-1"></a><a class="docs-heading-anchor-permalink" href="#Summarize-off-targets" title="Permalink"></a></h2><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.summarize_offtargets" href="#ARTEMIS.summarize_offtargets"><code>ARTEMIS.summarize_offtargets</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">filter_overlapping(res::DataFrame, distance::Int)</code></pre><p>Filter overlapping off-targets. Remember that off-targets have their start relative to the PAM location.</p><p><strong>Arguments</strong></p><p><code>res</code> - DataFrame created by one of the off-target finding methods, it contains columns      such as <code>:guide,  :chromosome, :strand, :distance, :start</code>. </p><p><code>distance</code> - To what distance from the <code>:start</code> do we consider the off-target to be overlapping?</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">using ARTEMIS, BioSequences
+
+# make a temporary directory
 tdir = tempname()
 db_path = joinpath(tdir, &quot;linearDB&quot;)
 mkpath(db_path)
 
 # use ARTEMIS example genome
 artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+genome = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
 
 # build a linearDB
 build_linearDB(
@@ -33,8 +33,8 @@ build_linearDB(
     db_path)
 
 # load up example gRNAs
-using BioSequences
-guides_s = Set(readlines(joinpath(vcat(artemis_path, &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, make results!
@@ -50,19 +50,40 @@ res = filter_overlapping(res, 23)
 
 # summarize results into a table of counts by distance
 summary = summarize_offtargets(res, 3)
-</code></pre></div></section></article><h2 id="Proximity-filter"><a class="docs-heading-anchor" href="#Proximity-filter">Proximity filter</a><a id="Proximity-filter-1"></a><a class="docs-heading-anchor-permalink" href="#Proximity-filter" title="Permalink"></a></h2><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.filter_overlapping" href="#ARTEMIS.filter_overlapping"><code>ARTEMIS.filter_overlapping</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">filter_overlapping(res::DataFrame, distance::Int)</code></pre><p>Filter overlapping off-targets. Remember that off-targets have their start relative to the PAM location.</p><p><strong>Arguments</strong></p><p><code>res</code> - DataFrame created by one of the off-target finding methods, it contains columns      such as <code>:guide,  :chromosome, :strand, :distance, :start</code>. </p><p><code>distance</code> - To what distance from the <code>:start</code> do we consider the off-target to be overlapping?</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># make a temporary directory
+</code></pre></div></section></article><h2 id="Proximity-filter"><a class="docs-heading-anchor" href="#Proximity-filter">Proximity filter</a><a id="Proximity-filter-1"></a><a class="docs-heading-anchor-permalink" href="#Proximity-filter" title="Permalink"></a></h2><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.filter_overlapping" href="#ARTEMIS.filter_overlapping"><code>ARTEMIS.filter_overlapping</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">filter_overlapping(res::DataFrame, distance::Int)</code></pre><p>Filter overlapping off-targets. Remember that off-targets have their start relative to the PAM location.</p><p><strong>Arguments</strong></p><p><code>res</code> - DataFrame created by one of the off-target finding methods, it contains columns      such as <code>:guide,  :chromosome, :strand, :distance, :start</code>. </p><p><code>distance</code> - To what distance from the <code>:start</code> do we consider the off-target to be overlapping?</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs">using ARTEMIS, BioSequences
+
+# make a temporary directory
 tdir = tempname()
-ldb_path = joinpath(tdir, &quot;linearDB&quot;)
-mkpath(ldb_path)
+db_path = joinpath(tdir, &quot;linearDB&quot;)
+mkpath(db_path)
 
 # use ARTEMIS example genome
-genome = joinpath(
-    vcat(
-        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
-        &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
+genome = joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
 
-# finally, build a linearDB
+# build a linearDB
 build_linearDB(
     &quot;samirandom&quot;, genome, 
-    Motif(&quot;Cas9&quot;; distance = 1, ambig_max = 0), 
-    ldb_path)</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../find_ot/">« Find all off-targets</a><div class="flexbox-break"></div><p class="footer-message">Made with ♥ by Kornel Labun.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.23 on <span class="colophon-date" title="Friday 28 October 2022 16:05">Friday 28 October 2022</span>. Using Julia version 1.8.2.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+    Motif(&quot;Cas9&quot;), 
+    db_path)
+
+# load up example gRNAs
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides = LongDNA{4}.(guides_s)
+    
+# finally, make results!
+res_path = joinpath(tdir, &quot;linearDB&quot;, &quot;results.csv&quot;)
+search_linearDB(db_path, guides, res_path; distance = 3)
+
+# load results
+using DataFrames, CSV
+res = DataFrame(CSV.File(res_path))
+
+# filter results by close proximity
+res = filter_overlapping(res, 23)
+
+# summarize results into a table of counts by distance
+summary = summarize_offtargets(res, 3)
+</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../find_ot/">« Find all off-targets</a><div class="flexbox-break"></div><p class="footer-message">Made with ♥ by Kornel Labun.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.23 on <span class="colophon-date" title="Tuesday 1 November 2022 17:33">Tuesday 1 November 2022</span>. Using Julia version 1.8.2.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

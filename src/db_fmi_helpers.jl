@@ -3,13 +3,57 @@ struct PAMinFMI
     gi::GenomeInfo
     pam_loc_fwd::IdDict{Int, Vector{Int}} # sorted
     pam_loc_rve::IdDict{Int, Vector{Int}}
-end 
+end
 
-# this stores location of the PAMs
-# its important that PAMs positions here
-# are NGG  CCN TTTN  NAAA
-#     ^      ^    ^  ^
-function build_pamDB(fmidbdir::String, motif::Motif; storage_dir::String = "")
+
+"""
+```
+build_pamDB(
+    fmidbdir::String, 
+    motif::Motif; 
+    storage_path::String = "")
+```
+
+Find locations of all the PAM for a given motif in the genome.
+
+Example of what position we store for traditional Cas9 (NGG, CCN) and Cpf1 (TTTN, NAAA):
+```
+NGG  CCN TTTN  NAAA
+^      ^    ^  ^
+```
+
+# Arguments
+
+`fmidbdir` - Path to directory with the FM-index build with `build_fmiDB`.
+
+`motif` - `Motif` defines which PAM we will locate in the genome.
+
+`storage_path`  - Path to the DIRECTORY where index will be saved.
+
+
+# Examples
+```julia-repl
+# prepare libs
+using ARTEMIS, BioSequences
+
+# make a temporary directory
+tdir = tempname()
+fmi_dir = joinpath(tdir, "fmi")
+mkpath(fmi_dir)
+
+# use ARTEMIS example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+        "test", "sample_data", "genome", "semirandom.fa"))
+# build FM-index
+build_fmiDB(genome, fmi_dir)
+
+# build a pamDB
+pamDB = build_pamDB(fmi_dir, Motif("Cas9"))
+```
+"""
+function build_pamDB(fmidbdir::String, motif::Motif; storage_path::String = "")
     
     gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
     pam = motif.fwd[motif.pam_loci_fwd]
@@ -45,13 +89,51 @@ function build_pamDB(fmidbdir::String, motif::Motif; storage_dir::String = "")
 
     pamDB = PAMinFMI(motif, gi, pam_loc_fwd, pam_loc_rve)
 
-    if storage_dir != ""
-        save(pamDB, storage_dir)
+    if storage_path != ""
+        save(pamDB, storage_path)
     end
     return pamDB
 end
 
 
+"""
+```
+build_fmiDB(
+    genomepath::String,
+    storage_dir::String)
+```
+
+Prepare FM-index for future searches.
+
+
+# Arguments
+
+`genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
+               also prepare fasta index file with ".fai" extension.
+
+`storage_dir`  - Path to the DIRECTORY where index with many files will be saved.
+
+
+# Examples
+```julia-repl
+# prepare libs
+using ARTEMIS, BioSequences
+
+# make a temporary directory
+tdir = tempname()
+fmi_dir = joinpath(tdir, "fmi")
+mkpath(fmi_dir)
+
+# use ARTEMIS example genome
+genome = joinpath(
+    vcat(
+        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+        "test", "sample_data", "genome", "semirandom.fa"))
+
+# build a fmiDB!
+build_fmiDB(genome, fmi_dir)
+```
+"""
 function build_fmiDB(
     genomepath::String,
     storage_dir::String)
