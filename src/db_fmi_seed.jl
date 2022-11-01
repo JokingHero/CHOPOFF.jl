@@ -655,5 +655,5 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
     end
     close(ref)
     cleanup_detail(output_file)
-    return detail
+    return
 end
