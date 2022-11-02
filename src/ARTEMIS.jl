@@ -120,7 +120,7 @@ function parse_commandline(args::Array{String})
             help = "motifDB utilizes prefixes together with q-gram filtering."
         "hashDB"
             action = :command
-            help = "hashDB is extremally fast, but only estimates off-targets within distance of 1"
+            help = "hashDB is extremely fast, but only estimates off-targets within distance of 1"
         "dictDB"
             action = :command
             help = "dictDB is a simple dictionary of all unique guides and their counts."
@@ -223,7 +223,7 @@ function parse_commandline(args::Array{String})
             arg_type = Int
             default = 10
         "--max_iterations"
-            help = "How many iterations to try before quiting the building of the DB."
+            help = "How many iterations to try before quitting the building of the DB."
             arg_type = Int
             default = 10
         "--seed"
@@ -278,7 +278,7 @@ function parse_commandline(args::Array{String})
             help = "vcfDB is similar specialized database to handle .vcf files and personalized off-target search."
         "fmi"
             action = :command
-            help = "Search fmi index using bruteforce method."
+            help = "Search fmi index using brute force method."
         "fmi_seed"
             action = :command
             help = "Search fmi index using lossless 01*0 seed method."

@@ -82,7 +82,7 @@ Prepare hashDB index for future searches using `search_hashDB`.
 
 
 # Arguments
-`name` - Your prefered name for this index to ease future identification.
+`name` - Your preferred name for this index to ease future identification.
 
 `genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
                also prepare fasta index file with ".fai" extension.
@@ -111,9 +111,8 @@ using ARTEMIS, BioSequences
 
 # use ARTEMIS example genome
 genome = joinpath(
-    vcat(
-        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
-        "test", "sample_data", "genome", "semirandom.fa"))
+    vcat(splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+    test", "sample_data", "genome", "semirandom.fa"))
 
 # finally, build a hashDB
 build_hashDB(
@@ -201,8 +200,8 @@ to `max_count` specified during building of hashDB. This means
 that counts larger than `max_count` are no longer estimating correctly.
 Its likely you would not care for those guides anyhow.
 
-`right` argument specifies whether the databse should be checked in direction from 
-unique off-targets which occur once to increasingly more occuring off-targets up until 
+`right` argument specifies whether the database should be checked in direction from 
+unique off-targets which occur once to increasingly more occurring off-targets up until 
 `max_count` is reached, which may result in assuming lower than real off-target counts 
 (underestimate) for some of the sequences, however this approach will not reject any 
 gRNAs that should not be rejected and is suitable for filtering of gRNAs we do not need. 
@@ -218,7 +217,8 @@ using ARTEMIS, BioSequences
 
 # use ARTEMIS example genome
 ARTEMIS_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(vcat(ARTEMIS_path, "test", "sample_data", "genome", "semirandom.fa"))
+genome = joinpath(vcat(ARTEMIS_path, 
+    "test", "sample_data", "genome", "semirandom.fa"))
 
 # build a hashDB
 db = build_hashDB(
@@ -226,7 +226,8 @@ db = build_hashDB(
     Motif("Cas9"; distance = 1, ambig_max = 0))
 
 # load up example gRNAs
-guides_s = Set(readlines(joinpath(vcat(ARTEMIS_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides_s = Set(readlines(joinpath(vcat(ARTEMIS_path, 
+    "test", "sample_data", "crispritz_results", "guides.txt"))))
 guides = LongDNA{4}.(guides_s)
 
 # finally, get results!

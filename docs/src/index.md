@@ -2,20 +2,20 @@
 
 ## About
 
-Uncompromised finding of CRISPR off-targets:
-* many fast alignment alghoritms optimized specifically for CRISPR
+Uncompromising finding of CRISPR off-targets:
+* many fast alignment algorithms optimized specifically for CRISPR
 * search for larger distances allowing for mismatches and bulges
 * support for ambiguous bases
-* arbitrairly large genomes
+* arbitrarily large genomes
 * VCF support - with multiple overlapping SNPs
 * near-instant alignment-free off-target filtering
 * pruning of off-targets by their location (remove overlapping, competing off-targets)
 * extensively tested
-* full framework that can be extended for your own alghoritms with ease
+* full framework that can be extended for your own algorithms with ease
 
 ## Requirements
 
-* Some of the alghoritms generate as many files as there are prefixes (e.g. for prefix 7 - this will make 4^7 - 16384 files). This strategy allows us to operate the searches independently on multiple cores and not get throtled when querying large number of the guides. However, some systems have artificial limits on the number of open files, for example in ubuntu 'ulimit -n' will show the limit. Increase the limits, if it creates problems for you.
+* Some of the algorithms generate as many files as there are prefixes (e.g. for prefix 7 - this will make 4^7 - 16384 files). This strategy allows us to operate the searches independently on multiple cores and not get throttled when querying large number of the guides. However, some systems have artificial limits on the number of open files, for example in ubuntu 'ulimit -n' will show the limit. Increase the limits, if it creates problems for you.
 
 * When using many cores for building the indexes - you have to have around ~1GB of RAM per thread.
 
@@ -55,7 +55,7 @@ For use of the framework as a Julia package consult the documentation - Public I
 
 ## Support
 
-You can buy me a [coffe](https://www.buymeacoffee.com/kornellabun) to show some love and appreciation!
+You can buy me a [coffee](https://www.buymeacoffee.com/kornellabun) to show some love and appreciation!
 
 ```@raw html
 <img src="./assets/bmc_qr.png" width="25%"/>

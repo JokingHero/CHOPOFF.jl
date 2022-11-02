@@ -82,7 +82,7 @@ Search FM-index for off-targets using brute-force enumeration method.
 **Experimental! Proof-of-concept!**
 
 This method uses `PathTemplates` build on top of `Motif` to enumerate all
-possible off-target seqeunces, next, these sequences are found in the genome
+possible off-target sequences, next, these sequences are found in the genome
 using FM-index. This method is impractically slow above distance of 2.
 
 # Arguments
@@ -90,7 +90,7 @@ using FM-index. This method is impractically slow above distance of 2.
 
 `mpt` - PathTemplates object that contains abstraction for all possible alignments
 
-`motif` - Motif deines what kind of gRNA to search for. Has to be compatible with `mpt`.
+`motif` - Motif defines what kind of gRNA to search for. Has to be compatible with `mpt`.
 
 `fmidbdir`   - Path to the folder where FM-index was build using `build_fmi`.
 
@@ -111,10 +111,8 @@ mkpath(fmi_dir)
 
 # use ARTEMIS example genome
 artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        "test", "sample_data", "genome", "semirandom.fa"))
+genome = joinpath(vcat(artemis_path, 
+    "test", "sample_data", "genome", "semirandom.fa"))
 # build FM-index
 build_fmiDB(genome, fmi_dir)
 motif = Motif("Cas9"; distance = 1)
@@ -125,7 +123,8 @@ res_dir = joinpath(tdir, "results")
 mkpath(res_dir)
 
 # load up example gRNAs
-guides_s = Set(readlines(joinpath(vcat(artemis_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    "test", "sample_data", "crispritz_results", "guides.txt"))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, make results!

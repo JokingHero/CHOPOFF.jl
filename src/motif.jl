@@ -54,7 +54,7 @@ Example for Cas9 where we want to search for off-targets within distance of 4:
   ambig_max:5 
 ```
 
-Alignments will be performed from opposite to the extension direction (which is deifned by extend5).
+Alignments will be performed from opposite to the extension direction (which is defined by extend5).
 
 # Examples
 ```jldoctest
@@ -176,7 +176,7 @@ end
 """
 `setambig(motif::Motif, ambig::Int)`
 
-Set the ambiguity (how many ambigous bases are allowed, not counting PAM, not counting extension) level for `motif`.
+Set the ambiguity (how many ambiguous bases are allowed, not counting PAM, not counting extension) level for `motif`.
 
 # Examples
 ```jldoctest

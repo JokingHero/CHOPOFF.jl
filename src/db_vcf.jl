@@ -65,14 +65,14 @@ Distance is restricted to 0 and 1 at the moment.
 
 
 # Arguments
-`name` - Your prefered name for this index for easier identification.
+`name` - Your preferred name for this index for easier identification.
 
 `genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
                also prepare fasta index file with ".fai" extension.
 
 `vcfpath` - Path to the VCF file, it has to be compatible with your genome.
 
-`motif`   - Motif deines what kind of gRNA to search for.
+`motif`   - Motif defines what kind of gRNA to search for.
 
 `storage_path`  - Folder path to the where index will be saved. 
 
@@ -94,7 +94,7 @@ function build_vcfDB(
     rs_ids, rs_chroms, rs_ref, rs_ranges, rs_alt = parse_vcf(vcfpath)
     motif_len = length(motif) + motif.distance # include distance in all calculations!
 
-    # For each chromsome paralelized we build database
+    # For each chromosome parallelized we build database
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
 
@@ -139,7 +139,7 @@ function build_vcfDB(
                 end
             else # complex case multiple overlapping snps, can have multiple alternate alleles
                 alt_combs = Iterators.product(rs_alt[idxs]...)
-                temp_guides = Vector{LongDNA{4}}() # before aplying unique filter!
+                temp_guides = Vector{LongDNA{4}}() # before applying unique filter!
                 temp_annot = Vector{String}()
                 # we need to track which regions belong to which snp
                 # and which guide overlaps which snps - 
@@ -183,7 +183,7 @@ function build_vcfDB(
                         end
                     end
                 end
-                # now reduce guides by their unique sequence and set of overlaping snps
+                # now reduce guides by their unique sequence and set of overlapping snps
                 temp_merged = map(x -> string(x[1]) * x[2], zip(temp_guides, temp_annot))
                 temp_not_dup = map(x -> sum(x .== temp_merged) == 1, temp_merged)
                 append!(all_guides, temp_guides[temp_not_dup])

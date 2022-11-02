@@ -1,5 +1,5 @@
 "
-Contians information about which genome was used.
+Contains information about which genome was used.
 
 date - date and time of genome access
 filepath - path used to access genome
@@ -99,15 +99,13 @@ genome file.
 `vcf_filepath`  - Optional. Path to the VCF file to include in the searches.
 
 
-Alignments will be performed from opposite to the extension direction (which is deifned by extend5).
+Alignments will be performed from opposite to the extension direction (which is defined by extend5).
 
 # Examples
 ```julia-repl
 # use ARTEMIS example genome
-genome = joinpath(
-    vcat(
-        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
-        "test", "sample_data", "genome", "semirandom.fa"))
+genome = joinpath(vcat(splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+    "test", "sample_data", "genome", "semirandom.fa"))
 # construct example DBInfo
 DBInfo(genome, "Cas9_semirandom_noVCF", Motif("Cas9"))
 ```

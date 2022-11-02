@@ -105,37 +105,37 @@ Will return a path to the database location, same as `storage_dir`.
 When this database is used for the guide off-target scan it is similar 
 to `search_linearDB`, however additional filter is applied on top of 
 prefix filtering. Suffixes are used for next filter, similarly to 
-pidgeon hole principle - depending on the size of the skipkmer `skipkmer_size`.
+pigeon hole principle - depending on the size of the skipmer `skipmer_size`.
 For example, Cas9 off-target within distance 4 (d) might be 20bp long.
 We skip `prefix_len` of 7, and are left with 13bp which can be split into 3 
-skipmers (r) of size 4, 1bp will be left unused. However when searching within 
+skipmer (r) of size 4, 1bp will be left unused. However when searching within 
 distance of 4 and for prefix where initial alignment was of distance 3 (m) and
-adjustment paramter is 0 (a). We are obliged to find at least **k - (d - m + a)** 
-which is **3 - (4 - 3 + 0) = 2** this many skimpers inside the off-targets. 
+adjustment parameter is 0 (a). We are obliged to find at least **k - (d - m + a)** 
+which is **3 - (4 - 3 + 0) = 2** this many skipmers inside the off-targets. 
 
 There exist also another approach which builds on the idea that it might be more efficient
 to find at least two kmers of smaller size (named 01*0 seed) rather than one larger kmer 
-(pidgeon hole principle). You can use the `adjust` option for that during `search_linearDB` step.
+(pigeon hole principle). You can use the `adjust` option for that during `search_linearDB` step.
 
 Be sure to understand implications of using `motifDB` as using wrong parameters 
-on `skipmer_size` might result in leaky filtering in relation to the asumed 
+on `skipmer_size` might result in leaky filtering in relation to the assumed 
 distance `dist` and adjustment `adjust` during search step in `search_motifDB`.
 
 # Arguments
 
-`name` - Your prefered name for this index for easier identification.
+`name` - Your preferred name for this index for easier identification.
 
 `genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
                also prepare fasta index file with ".fai" extension.
 
-`motif`   - Motif deines what kind of gRNA to search for.
+`motif`   - Motif defines what kind of gRNA to search for.
 
 `storage_dir`  - Folder path to the where index will be saved and many prefix files.
 
 `prefix_len`  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,
                 however it will also result in large number of files. 
 
-`skipmer_size` - Size of the skipmer as described above. Be carefull when setting this too large!
+`skipmer_size` - Size of the skipmer as described above. Be careful when setting this too large!
 
 # Examples
 ```julia-repl
@@ -154,10 +154,10 @@ function build_motifDB(
 
     # step 1
     @info "Step 1: Searching chromosomes."
-    # For each chromsome paralelized we build database
+    # For each chromosome parallelized we build database
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
-    # Don't paralelize here as you can likely run out of memory (chromosomes are large)
+    # Don't parallelize here as you can likely run out of memory (chromosomes are large)
     prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storage_dir), dbi.gi.chrom)
     close(ref)
 
@@ -168,7 +168,7 @@ function build_motifDB(
     # Iterate over all prefixes and merge different chromosomes
     kmers = all_kmers(skipmer_size)
     kmers = Dict(zip(kmers, 1:length(kmers)))
-    @showprogress 60 for prefix in prefixes # can be paralelized here ?! memory?!
+    @showprogress 60 for prefix in prefixes # can be parallelized here ?! memory?!
         guides = Vector{LongDNA{4}}()
         loci = Vector{Loc}()
         for chrom in dbi.gi.chrom
@@ -328,12 +328,12 @@ will contain all those intermediate files, and other files with sequence prefix 
 `distance` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
 which off-targets are considered.  
 
-`adjust` - This will be crutial parameter for tightening second layer of filtering after, 
+`adjust` - This will be crucial parameter for tightening second layer of filtering after, 
 the initial prefix alignment. For example, Cas9 off-target within distance 4 (d) might be 20bp long.
 We skip `prefix_len` of 7, and are left with 13bp which can be split into 3 skipmers (r) of size 4, 
 1bp will be left unused. However when searching within distance of 4 and for prefix where initial 
-alignment was of distance 3 (m) and adjustment paramter is 0 (a). We are obliged to find at least 
-`k - (d - m + a)` which is `3 - (4 - 3 + 0) = 2` this many skimpers inside the off-targets. 
+alignment was of distance 3 (m) and adjustment parameter is 0 (a). We are obliged to find at least 
+`k - (d - m + a)` which is `3 - (4 - 3 + 0) = 2` this many skipmers inside the off-targets. 
 
 
 # Examples

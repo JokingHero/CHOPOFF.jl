@@ -28,8 +28,8 @@ end
 
 
 "
-Find for an input sequence how many seqeunces inside idx are compatible.
-Returns a vector of bits, for subseting on idx::annot.
+Find for an input sequence how many sequences inside idx are compatible.
+Returns a vector of bits, for subsetting on idx::annot.
 "
 function findbits(guide::LongDNA{4}, idx::AmbigIdx)
     bits = trues(length(idx))

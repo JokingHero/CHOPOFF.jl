@@ -125,10 +125,8 @@ fmi_dir = joinpath(tdir, "fmi")
 mkpath(fmi_dir)
 
 # use ARTEMIS example genome
-genome = joinpath(
-    vcat(
-        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
-        "test", "sample_data", "genome", "semirandom.fa"))
+genome = joinpath(vcat(splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+    "test", "sample_data", "genome", "semirandom.fa"))
 
 # build a fmiDB!
 build_fmiDB(genome, fmi_dir)
@@ -141,7 +139,7 @@ function build_fmiDB(
     gi = GenomeInfo(genomepath)
     ref = open(gi.filepath, "r")
     reader = gi.is_fa ? FASTA.Reader(ref, index = gi.filepath * ".fai") : TwoBit.Reader(ref)
-    @showprogress 60 for chrom in gi.chrom # no need for paralelization as this is super fast
+    @showprogress 60 for chrom in gi.chrom # no need for parallelization as this is super fast
         fmi = FMIndex(getchromseq(gi.is_fa, reader[chrom]), 16, r = 32)
         p = joinpath(storage_dir, chrom * ".bin")
         save(fmi, p)

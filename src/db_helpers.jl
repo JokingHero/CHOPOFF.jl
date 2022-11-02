@@ -161,7 +161,7 @@ end
 "
 Prefix is the length of our common part between guides!
 Guide reversal happens here too, so that alignment is more
-convienient.
+convenient.
 "
 function gatherofftargets(
     dbi::DBInfo,

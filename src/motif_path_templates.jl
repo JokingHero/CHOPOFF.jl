@@ -39,7 +39,7 @@ path from node 1 to node (guide length + 1). For distance 1, you would check
 all paths from node 1 to (guide length + 1) * 2.
 
 # Arguments
-`len` - length of the seqeunce (e.g. guide)
+`len` - length of the sequence (e.g. guide)
 
 `d` - Maximal distance on which to build the graph.
 
@@ -93,12 +93,12 @@ build_PathTemplates(len::Int, d::Int; storagepath::String = "", mismatch_only::B
 
 Builds up a PathTemplates object. Stores 
 shortened version of all possible paths within each distance `d`
-mapped on the graph of all possible alignments of seqeunce of length
+mapped on the graph of all possible alignments of sequence of length
 `len`. Then one can use `templates_to_sequences_extended` or 
 `templates_to_sequences` and map guide sequence to all possible alignments quickly.
 
 # Arguments
-`len` - length of the seqeunce (e.g. guide - without PAM)
+`len` - length of the sequence (e.g. guide - without PAM)
 
 `d` - Maximal distance on which to build the graph.
 
@@ -220,14 +220,14 @@ will be of the same length. The advantage of that is that outputs are unique.
 # Arguments
 `guide` - guide sequence, without PAM.
 
-`template` - PathTemplates object build for your specific guide quieries.
+`template` - PathTemplates object build for your specific guide queries.
 
 `dist` - Maximal distance on which to return the possible alignments.
 
 # Return
 
 Returns a Vector{Set{LongDNA{4}}} where distance 0 is located at index 1,
-distance 1 all posible alignments are located at distance 2 and so on...
+distance 1 all possible alignments are located at distance 2 and so on...
 
 """
 function templates_to_sequences_extended(
@@ -285,7 +285,7 @@ AAAA     1
 # Arguments
 `guide` - guide sequence, without PAM.
 
-`template` - PathTemplates object build for your specific guide quieries.
+`template` - PathTemplates object build for your specific guide queries.
 
 `dist` - Maximal distance on which to return the possible alignments.
 
@@ -347,7 +347,7 @@ function templates_to_sequences(
         append!(ps, ThreadsX.map(x -> Path(x, di), seq))
     end
 
-    # this will return simply seqeuences which can be repeats, D0 in front
+    # this will return simply sequences which can be repeats, D0 in front
     return ThreadsX.sort!(ps, by = p -> (p.dist, p.seq))
 end
 

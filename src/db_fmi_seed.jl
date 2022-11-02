@@ -105,7 +105,7 @@ function pam100_anchor_right!(
             pam00!(guide, seq, chrom, pam_pos[idx] + pam_len - 1, false, is_antisense, 
                 motif, filter, detail_file)
             # now that we know this PAM passed the proximity test
-            # this is not necesairly optimal PAM for this search
+            # this is not necessarily optimal PAM for this search
             # we need to check upstream for potentially more convenient PAMs...
             idx += 1
         end
@@ -184,10 +184,8 @@ mkpath(fmi_dir)
 
 # use ARTEMIS example genome
 artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(
-    vcat(
-        artemis_path, 
-        "test", "sample_data", "genome", "semirandom.fa"))
+genome = joinpath(vcat(artemis_path, 
+    "test", "sample_data", "genome", "semirandom.fa"))
 # build FM-index
 build_fmiDB(genome, fmi_dir)
 
@@ -203,7 +201,8 @@ res_dir = joinpath(tdir, "results")
 mkpath(res_dir)
 
 # load up example gRNAs
-guides_s = Set(readlines(joinpath(vcat(artemis_path, "test", "sample_data", "crispritz_results", "guides.txt"))))
+guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+    "test", "sample_data", "crispritz_results", "guides.txt"))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, make results!
@@ -254,7 +253,7 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
     end
 
     guides = copy(guides)
-    chunk_len = Int(floor(length(guides[1]) / chunks)) # this can not be used in actuall calculations because chunks might not be of equal size...
+    chunk_len = Int(floor(length(guides[1]) / chunks)) # this can not be used in actual calculations because chunks might not be of equal size...
 
     # important here is that last chunk is dependant on the motif Cas9 vs Cpf1 style
     # add PAM in front or in the back
@@ -285,7 +284,7 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
     reader = gi.is_fa ? FASTA.Reader(ref, index=genomepath * ".fai") : TwoBit.Reader(ref)
     if Threads.nthreads() != 1
         reader = collect(reader) # this is potentially explosive in terms of memory
-        # TODO paralelization without pre-loading each reader, maybe with ThreadsX.mapi
+        # TODO parallelization without pre-loading each reader, maybe with ThreadsX.mapi
     end
 
     ThreadsX.foreach(enumerate(gi.chrom)) do (ic, chrom)
@@ -297,7 +296,7 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
         detail_chrom = joinpath(detail_path, "detail_" * string(chrom) * ".csv")
         detail_file = open(detail_chrom, "w")
 
-        # wroking on this guide and his all possible off-targets
+        # working on this guide and his all possible off-targets
         for (i, g_chunks) in enumerate(guide_chunks) # for each guide
             g_chunks_len = map(x -> length(x[1]), g_chunks)
             g_chunks_len_rev = reverse(g_chunks_len)
@@ -310,7 +309,7 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
             for ch in combs
                 # if pam is included in the chunk, skip PAM matching
                 pam_in_chunk = (motif.extends5 && ch[2] == length(g_chunks)) || (!motif.extends5 && ch[1] == 1)
-                # if two chunks are adjecent - merge and skip distance matching
+                # if two chunks are adjacent - merge and skip distance matching
                 single_ch = (ch[2] - ch[1]) == 1
                 if single_ch
                     #    00111PAM
@@ -327,7 +326,7 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
                     # locateall returns start position of the search sequence
                     # start = end - length + 1
                     # end = start + length - 1
-                    # we return as pos PAM first/last base as location in all alghoritms
+                    # we return as pos PAM first/last base as location in all algorithms
                     fwd_pos = mapreduce(x -> locateall(x, fmi), vcat, both)
                     both_len = length(both[1])
                     if pam_in_chunk
@@ -483,7 +482,7 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
             for ch in combs_rev
                 # if pam is included in the chunk, skip PAM matching
                 pam_in_chunk = (!motif.extends5 && ch[2] == length(g_chunks_rev)) || (motif.extends5 && ch[1] == 1)
-                # if two chunks are adjecent - merge and skip distance matching
+                # if two chunks are adjacent - merge and skip distance matching
                 single_ch = (ch[2] - ch[1]) == 1
                 if single_ch
                     #    00111PAM
@@ -500,7 +499,7 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
                     # locateall returns start position of the search sequence
                     # start = end - length + 1
                     # end = start + length - 1
-                    # we return as pos PAM first/last base as location in all alghoritms
+                    # we return as pos PAM first/last base as location in all algorithms
                     rve_pos = mapreduce(x -> locateall(x, fmi), vcat, both)
                     both_len = length(both[1])
                     if pam_in_chunk

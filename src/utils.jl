@@ -85,7 +85,7 @@ function comb_of_d1(s::String, alphabet::Vector{Char} = ['A', 'C', 'T', 'G'])
                         scopy_new_ = copy(scopy_new)
                         append!(scopy_new_, k)
                         push!(allcomb, join(scopy_new_))
-                        # same as above but add base at the begining
+                        # same as above but add base at the beginning
                         scopy_new_ = copy(scopy_new)
                         prepend!(scopy_new_, k)
                         push!(allcomb, join(scopy_new_))
@@ -164,7 +164,7 @@ function comb_of_d1_extended(s::String, alphabet::Vector{Char} = ['A', 'C', 'T',
                         scopy_new_ = copy(scopy_new)
                         append!(scopy_new_, k)
                         push!(allcomb, join(scopy_new_))
-                        # same as above but add base at the begining
+                        # same as above but add base at the beginning
                         scopy_new_ = copy(scopy_new)
                         prepend!(scopy_new_, k)
                         push!(allcomb, join(scopy_new_))
@@ -236,7 +236,7 @@ function is_within_d(s::LongDNA{4}, x::LongDNA{4}, d::Int)
     # GGNGACTGA
     # which gives reference guide of GACTG 
     # which is normally dist 2        ACTGA
-    # but is valid as reference also has A there, unfortunatelly
+    # but is valid as reference also has A there, unfortunately
     # we have to assume it might be the case and we count those off-targets
     elseif dist - 1 == d
         if levenshtein(s[1:end-1], x, d) == d
@@ -273,7 +273,7 @@ end
 """
 `minkmersize(len::Int = 20, d::Int = 4)`
 
-Pidgeon hole principle: minimum
+Pigeon hole principle: minimum
 k-mer size that is required for two strings of
 size `len` to be aligned within distance of `d`.
 
@@ -310,7 +310,7 @@ end
 "
 Instead of this there is also BigMER!
 
-Transform DNA to UInt128, usefull for hashing, and space saving.
+Transform DNA to UInt128, useful for hashing, and space saving.
 We zero bits that are beyond sequence length. No clue why these bits are set.
 "
 function Base.convert(::Type{UInt128}, x::LongDNA{4})

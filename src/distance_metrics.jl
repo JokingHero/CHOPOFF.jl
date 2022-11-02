@@ -66,7 +66,7 @@ Calculate Levenshtein distance bounded by `k` maximum edit distance with a twist
     
 Levenshtein distance is the minimum number of operations (consisting of insertions, deletions,
 substitutions of a single character) required to change one string into the other.
-`guide` input seqeunce is a gRNA sequence, `ref` input is reference sequence with expansion on the 3'
+`guide` input sequence is a gRNA sequence, `ref` input is reference sequence with expansion on the 3'
 end of `k` bases. This extension will not count toward the score, if it is not covered with aligned guide.
 Return k + 1, if distance is higher than k and terminate early. This function should be 10x faster than
 `pairalign(LevenshteinDistance(), guide, ref, distance_only = true)`.
@@ -271,7 +271,7 @@ return also the alignment as an `Align` object.
 
 Levenshtein distance is the minimum number of operations (consisting of insertions, deletions,
 substitutions of a single character) required to change one string into the other.
-`guide` input seqeunce is a gRNA sequence, `ref` input is reference sequence with expansion on the 3'
+`guide` input sequence is a gRNA sequence, `ref` input is reference sequence with expansion on the 3'
 end of `k` bases. This extension will not count toward the score, if it is not covered with aligned guide.
 Return k + 1, if distance is higher than k and terminate early.
 
@@ -448,7 +448,7 @@ function prefix_align(
             j_end += 1
         end
 
-        # sets top_left and left at the begining of the iteration
+        # sets top_left and left at the beginning of the iteration
         v[i + 1, j_start] = i
         # going top is gap in the guide
         align[i + 1, j_start] = g_
@@ -528,7 +528,7 @@ function suffix_align(
                 j_end += 1
             end
 
-            # sets top_left and left at the begining of the iteration
+            # sets top_left and left at the beginning of the iteration
             v[i + 1, j_start] = i
             # going top is gap in the guide
             align[i + 1, j_start] = g_
@@ -636,7 +636,7 @@ function suffix_align!(
                 j_end += 1
             end
 
-            # sets top_left and left at the begining of the iteration
+            # sets top_left and left at the beginning of the iteration
             v[i + 1, j_start] = i
             # going top is gap in the guide
             align[i + 1, j_start] = g_
@@ -748,8 +748,8 @@ Example of two valid alignments where this implementation would fail:
 
  No idea how to resolve this problem.
 
-Based on Mayers bit-parallel alghoritm. Some references:
-# Some examples and bandend version when n > 64
+Based on Mayers bit-parallel algorithm. Some references:
+# Some examples and banded version when n > 64
 # http://www.mi.fu-berlin.de/wiki/pub/ABI/AdvancedAlgorithms11_Searching/script-03-ShiftOrUkkonenBitVecMyers.pdf
 # https://research.ijcaonline.org/volume72/number14/pxc3889214.pdf
 # http://www.mi.fu-berlin.de/wiki/pub/ABI/RnaSeqP4/myers-bitvector-verification.pdf

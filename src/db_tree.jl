@@ -108,19 +108,19 @@ Vantage Point tree.
 
 Will return a path to the database location, same as `storage_dir`.
 
-There is an optimization that if the alignment becomes imposible against
+There is an optimization that if the alignment becomes impossible against
 the prefix we don't search the off-targets grouped inside the prefix.
 Therefore it is advantageous to select larger prefix than maximum 
 search distance, however in that case number of files also grows.
 
 # Arguments
 
-`name` - Your prefered name for this index for easier identification.
+`name` - Your preferred name for this index for easier identification.
 
 `genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
                also prepare fasta index file with ".fai" extension.
 
-`motif`   - Motif deines what kind of gRNA to search for.
+`motif`   - Motif defines what kind of gRNA to search for.
 
 `storage_dir`  - Folder path to the where index will be saved with name `linearDB.bin` and many prefix files.
 
@@ -147,7 +147,7 @@ function build_treeDB(
 
     # step 1
     @info "Step 1: Searching chromosomes."
-    # For each chromsome paralelized we build database
+    # For each chromosome parallelized we build database
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
     prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storage_dir), dbi.gi.chrom)
