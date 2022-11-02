@@ -7,16 +7,20 @@ Pkg.test("ARTEMIS"; coverage = true)
 
 exclude = [
     "src/ARTEMIS.jl",
-    "src/db_linear.jl",
-    "src/motif.jl",
-    "src/db_info.jl"]
+    "src/FMidx/saca.jl",
+    "src/FMidx/WaveletMatrices.jl",
+    "src/FMidx/FMindexes.jl",
+    "src/db_fmi_seed.jl",
+    "src/example_doc.jl"]
 
 function summary_by_file(x)
     p, c = get_summary(x)
     return p/c, x.filename
-end
+end 
 
 coverage = process_folder()
+@info summary_by_file.(coverage)
+
 coverage = coverage[Base.map(p -> p.filename ∉ exclude, coverage)]
 p, c = get_summary(merge_coverage_counts(coverage))
 
