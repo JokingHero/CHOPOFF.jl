@@ -320,6 +320,7 @@ function templates_to_sequences(
 end
 
 
+# this one appends the PAM in forward fashion
 function templates_to_sequences(
     guide::LongDNA{4}, 
     template::PathTemplates,

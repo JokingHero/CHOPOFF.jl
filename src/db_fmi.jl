@@ -46,7 +46,7 @@ function search_chrom(
                 
             rve_iter = locate(reverse_complement(offt.seq), fmi)
             if !motif.extends5
-                rve_iter = rve_iter .- length(offt.seq) .+ 1
+                rve_iter = rve_iter .+ length(offt.seq) .- 1
             end
             for pos in rve_iter
                 if !(pos in rve_pos_filter)

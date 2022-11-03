@@ -76,6 +76,14 @@ struct Motif
     ambig_max::Int
 end
 
+Base.:(==)(x::Motif, y::Motif) = x.fwd == y.fwd && 
+    x.rve == y.rve &&
+    x.pam_loci_fwd == y.pam_loci_fwd && 
+    x.pam_loci_rve == y.pam_loci_rve &&
+    x.distance == y.distance &&
+    x.extends5 == y.extends5 &&
+    x.ambig_max == y.ambig_max
+
 
 function notX(s1, s2, x = 'X')
     if s1 != x

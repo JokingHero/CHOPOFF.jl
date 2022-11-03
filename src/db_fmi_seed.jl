@@ -233,6 +233,7 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
         combs_rev = combs
         combs = sort(combs, rev = true, by = x -> (x[2], x[1]))
     else
+        throw("Sorry, but not ready for testing of extends5 false yet.")
         combs_rev = sort(combs, rev = true, by = x -> (x[2], x[1]))
     end
 

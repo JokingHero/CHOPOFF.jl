@@ -66,7 +66,7 @@ export minkmersize, getseq, expand_ambiguous, all_kmers, as_kmers,
     as_skipkmers, summarize_offtargets, filter_overlapping # utils
 # export AmbigIdx, findbits # ambig_index
 export DBInfo # db_info
-export gatherofftargets!, gatherofftargets # find_offtargets
+export gatherofftargets! # find_offtargets
 export isinclusive, hamming, levenshtein, Aln, align # distance_metrics
 
 export build_linearDB, search_linearDB # db_linear

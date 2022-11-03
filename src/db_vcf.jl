@@ -1,6 +1,7 @@
 struct VcfDB
     dbi::DBInfo
     ambig::AmbigIdx
+    mtp::PathTemplates
 end
 
 
@@ -193,7 +194,8 @@ function build_vcfDB(
     end
     close(ref)
 
-    db = VcfDB(dbi, AmbigIdx(all_guides, guide_annot))
+    mtp = build_PathTemplates(length_noPAM(motif), motif.distance)
+    db = VcfDB(dbi, AmbigIdx(all_guides, guide_annot), mtp)
     if storage_path != ""
         save(db, storage_path)
         @info "Finished constructing vcfDB in " * storage_path
@@ -244,14 +246,13 @@ function search_vcfDB(
 
     # TODO check that seq is in line with motif
     res = zeros(Int, length(guides_), 2)
-    len_noPAM = length_noPAM(db.dbi.motif)
     for (i, s) in enumerate(guides_)
-        res[i, 1] += sum(findbits(s, db.ambig))
-        
-        d1_combs = LongDNA{4}.(comb_of_d1_extended(string(s))) # 1 distance
-        bits_mapped = map(x -> findbits(x, db.ambig), d1_combs)
-        res[i, 2] += sum(reduce(.|, bits_mapped))
-        # write to file instead...
+        pat = ARTEMIS.templates_to_sequences_extended(s, db.mtp)
+        # all sequences are length of 21
+
+        for di in 1:2
+            res[i, di] += sum(Base.mapreduce(x -> findbits(x, db.ambig), .|, pat[di]))
+        end
     end
 
     res = format_DF(res, 1, guides)

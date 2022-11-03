@@ -88,7 +88,6 @@ end
 
 
 add_guides!(vec::Vector{String}, guides::Vector{LongDNA{4}}) = append!(vec, string.(guides))
-#add_guides!(vec::Vector{DNAMer{20}}, guides::Vector{LongDNA{4}}) = append!(vec, DNAMer{20}.(guides))
 add_guides!(vec::Vector{UInt128}, guides::Vector{UInt128}) = append!(vec, guides)
 add_guides!(vec::Vector{UInt64}, guides::Vector{UInt64}) = append!(vec, guides)
 
@@ -150,14 +149,15 @@ end
 
 """
 ```
-gatherofftargets!(output::T, dbi::DBInfo) 
-    where {T<:Union{Vector{String}, Vector{UInt64}, Vector{UInt128}}}
+gatherofftargets!(
+    output::T,
+    dbi::DBInfo) where {T<:Union{Vector{String}, Vector{UInt64}, Vector{UInt128}}}
 ```
 
 Gathers all off-targets that conform to the given `dbi` Motif.
 
 This function appends to the `output` during the run, however it will also return all ambiguous 
-guides in return object. We use UInt64 and UInt128 to compress space that the gRNAs use. When using 
+guides in return object. We can use UInt64 and UInt128 to compress space that the gRNAs use. When using 
 large genomes or non-specific PAMs you might run out of memory when using this function.
 
 # Examples
@@ -172,6 +172,14 @@ dbi = DBInfo(genome, "Cas9_semirandom_noVCF", Motif("Cas9"))
 # finally gather all off-targets
 guides = Vector{String}()
 ambig = gatherofftargets!(guides, dbi)
+
+# here in the format of UInt64 encoding
+guides2 = Vector{UInt64}()
+ambig2 = gatherofftargets!(guides2, dbi)
+guide_with_extension_len = length_noPAM(dbi.motif) + dbi.motif.distance
+
+# transform UInt64 to LongDNA and String
+guides2 = String.(LongDNA{4}.(guides2, guide_with_extension_len))
 ```
 """
 function gatherofftargets!(

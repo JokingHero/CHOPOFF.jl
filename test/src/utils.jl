@@ -3,7 +3,7 @@ using Test
 
 using BioSequences
 using ARTEMIS: safeadd, smallestutype, base_to_idx, 
-    getseq, extension, levenshtein, comb_of_d1, comb_of_d, minkmersize, balance,
+    getseq, extension, levenshtein, minkmersize, balance,
     locate_telomeres, findall, expand_ambiguous, convert, 
     all_kmers, as_bitvector_of_kmers, as_kmers
 using Combinatorics
@@ -46,21 +46,6 @@ using Combinatorics
         @test balance(collect(1:10)) == 5
         @test balance(collect(1:11)) == 6
         @test balance([1, 1, 1, 1, 2, 5, 5, 5, 5]) == 2
-    end
-
-    @testset "comb_of_d" begin
-        d = 6
-        iter = Int(floor(4^6 / 100))
-        all_comb = [join(x) for x in multiset_permutations(repeat(['A', 'C', 'T', 'G'], d), d)]
-        for i in 1:iter
-            seq = rand(all_comb)
-            all_comb_dist = [levenshtein(LongDNA{4}(seq), LongDNA{4}(x), 4) for x in all_comb]
-            for dist in [0, 1, 2, 3]
-                all_comb_d = all_comb[all_comb_dist .== dist]
-                combd, combd_b = comb_of_d(seq, dist)
-                @test Set(combd) == Set(all_comb_d)
-            end
-        end
     end
 
 
