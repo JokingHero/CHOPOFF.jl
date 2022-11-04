@@ -6,12 +6,12 @@ using ARTEMIS
 Pkg.test("ARTEMIS"; coverage = true)
 
 exclude = [
-    "src/ARTEMIS.jl",
-    "src/FMidx/saca.jl",
+    "src/ARTEMIS.jl", # contains hard to test command line interface
+    "src/FMidx/saca.jl", # FMidx stuff is tested, but this package is not base ARTEMIS
     "src/FMidx/WaveletMatrices.jl",
     "src/FMidx/FMindexes.jl",
     "src/db_fmi_seed.jl",
-    "src/example_doc.jl"]
+    "src/example_doc.jl"] # contains docs 
 
 function summary_by_file(x)
     p, c = get_summary(x)
