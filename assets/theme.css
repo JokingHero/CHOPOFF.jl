@@ -1,0 +1,11 @@
+@font-face {
+    font-family: 'CutiveMono-Regular';
+    src: url('CutiveMono-Regular.ttf') format('truetype');
+    src: url('CutiveMono-Regular.woff2') format('woff2');
+}
+
+h1, h2, .breadcrumb {
+    font-family: 'CutiveMono-Regular';
+}
+
+  

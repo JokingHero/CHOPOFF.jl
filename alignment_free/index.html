@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Alignment-free filters for gRNAs · ARTEMIS.jl</title><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.045/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.13.24/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script><link href="../assets/theme.css" rel="stylesheet" type="text/css"/></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../"><img class="docs-light-only" src="../assets/logo.png" alt="ARTEMIS.jl logo"/><img class="docs-dark-only" src="../assets/logo-dark.png" alt="ARTEMIS.jl logo"/></a><form class="docs-search" action="../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../">General</a></li><li><span class="tocitem">API</span><ul><li><a class="tocitem" href="../abstract_gRNA/">Abstract gRNA</a></li><li><a class="tocitem" href="../find_potential_ot/">Find potential off-targets</a></li><li><a class="tocitem" href="../align_gRNA/">Align gRNA and off-target</a></li><li class="is-active"><a class="tocitem" href>Alignment-free filters for gRNAs</a></li><li><a class="tocitem" href="../find_ot/">Find all off-targets</a></li><li><a class="tocitem" href="../utils/">Utils</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">API</a></li><li class="is-active"><a href>Alignment-free filters for gRNAs</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Alignment-free filters for gRNAs</a></li></ul></nav><div class="docs-right"><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><h1 id="Alignment-free-filters-for-gRNAs"><a class="docs-heading-anchor" href="#Alignment-free-filters-for-gRNAs">Alignment-free filters for gRNAs</a><a id="Alignment-free-filters-for-gRNAs-1"></a><a class="docs-heading-anchor-permalink" href="#Alignment-free-filters-for-gRNAs" title="Permalink"></a></h1><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.build_hashDB" href="#ARTEMIS.build_hashDB"><code>ARTEMIS.build_hashDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">build_hashDB(
+    name::String, 
+    genomepath::String, 
+    motif::Motif;
+    storage_path::String = &quot;&quot;,
+    seed::UInt64 = UInt64(0x726b2b9d438b9d4d),
+    max_iterations::Int = 10,
+    max_count::Int = 10,
+    precision::DataType = UInt16)</code></pre><p>Prepare hashDB index for future searches using <code>search_hashDB</code>.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your preferred name for this index to ease future identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>motif</code>   - Motif defines what kind of gRNA to search for.</p><p><code>storage_path</code>  - Path to the where index will be saved.</p><p><code>seed</code>  - Optional. Seed is used during hashing for randomization.</p><p><code>max_iterations</code> - When finding hashing structure for binary fuse filter it might fail sometimes,                     we will retry <code>max_iterations</code> number of times though.</p><p><code>max_count</code>  - Above this count we put all unique off-targets into one bin.                 Put number here that is the minimum number of off-targets that you think is fine                for the distance of 1.</p><p><code>precision</code>- The higher the precision the larger the database, but also chances for error decrease dramatically.              We support UInt8, UInt16, and UInt32.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># prepare libs
+using ARTEMIS, BioSequences
+
+# use ARTEMIS example genome
+genome = joinpath(
+    vcat(splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+    test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# finally, build a hashDB
+build_hashDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 1, ambig_max = 0))</code></pre></div></section></article><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.search_hashDB" href="#ARTEMIS.search_hashDB"><code>ARTEMIS.search_hashDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">search_hashDB(
+    db::HashDB,
+    guides::Vector{LongDNA{4}},
+    right::Bool)</code></pre><p>Estimate off-target counts for <code>guides</code> using hashDB stored at <code>storage_dir</code>.</p><p>Probabilistic filter offers a guarantee that it will always be correct when a sequence  is in the set (no false negatives), but may overestimate that a sequence is in the set  while it is not (false positive) with low probability. If both columns in the results are 0,  it is guaranteed this gRNA has no off-targets in the genome!</p><p>Also, maximum count for each off-target in the database is capped, to <code>max_count</code> specified during building of hashDB. This means  that counts larger than <code>max_count</code> are no longer estimating correctly. Its likely you would not care for those guides anyhow.</p><p><code>right</code> argument specifies whether the database should be checked in direction from  unique off-targets which occur once to increasingly more occurring off-targets up until  <code>max_count</code> is reached, which may result in assuming lower than real off-target counts  (underestimate) for some of the sequences, however this approach will not reject any  gRNAs that should not be rejected and is suitable for filtering of gRNAs we do not need.  Left (<code>right = false</code>, or hight-counts to low-counts) approach is also supported,  which can be used for ordering of gRNAs to the best of database ability.  Left approach may overestimate counts for some gRNAs. When gRNA is reported as  off-target free it is also guaranteed to be true in both cases (low-to-high and high-to-low).</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># prepare libs
+using ARTEMIS, BioSequences
+
+# use ARTEMIS example genome
+ARTEMIS_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
+genome = joinpath(vcat(ARTEMIS_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# build a hashDB
+db = build_hashDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 1, ambig_max = 0))
+
+# load up example gRNAs
+guides_s = Set(readlines(joinpath(vcat(ARTEMIS_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides = LongDNA{4}.(guides_s)
+
+# finally, get results!
+hdb_res = search_hashDB(db, guides, false)</code></pre></div></section></article><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.build_dictDB" href="#ARTEMIS.build_dictDB"><code>ARTEMIS.build_dictDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">build_dictDB(
+    name::String, 
+    genomepath::String, 
+    motif::Motif;
+    storage_path::String = &quot;&quot;)</code></pre><p>Prepare dictDB index for future searches using <code>search_dictDB</code>.</p><p><strong>Arguments</strong></p><p><code>name</code> - Your preferred name for this index to ease future identification.</p><p><code>genomepath</code> - Path to the genome file, it can either be fasta or 2bit file. In case of fasta                also prepare fasta index file with &quot;.fai&quot; extension.</p><p><code>motif</code>   - Motif defines what kind of gRNA to search for.</p><p><code>storage_path</code>  - Path to the where index will be saved.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># prepare libs
+using ARTEMIS, BioSequences
+
+# use ARTEMIS example genome
+genome = joinpath(vcat(splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# build a hashDB!
+db = build_dictDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 1, ambig_max = 0))</code></pre></div></section></article><article class="docstring"><header><a class="docstring-binding" id="ARTEMIS.search_dictDB" href="#ARTEMIS.search_dictDB"><code>ARTEMIS.search_dictDB</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia hljs">search_dictDB(
+    db::DictDB,
+    guides::Vector{LongDNA{4}})</code></pre><p>Summarize off-target counts for <code>guides</code> using <code>dictDB</code>.</p><p>This is simple dictionary storing all possible off-targets and their counts for a given <code>Motif</code>. If you find no off-targets using this method it is guaranteed this gRNA has no off-targets in the genome! Beware that the dictionary can be very big (e.g. human genome ~ 8Gb).</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl hljs"># prepare libs
+using ARTEMIS, BioSequences
+
+# use ARTEMIS example genome
+ARTEMIS_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
+genome = joinpath(vcat(ARTEMIS_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;genome&quot;, &quot;semirandom.fa&quot;))
+
+# build a dictDB
+db = build_dictDB(
+    &quot;samirandom&quot;, genome, 
+    Motif(&quot;Cas9&quot;; distance = 1, ambig_max = 0))
+
+# load up example gRNAs
+guides_s = Set(readlines(joinpath(vcat(ARTEMIS_path, 
+    &quot;test&quot;, &quot;sample_data&quot;, &quot;crispritz_results&quot;, &quot;guides.txt&quot;))))
+guides = LongDNA{4}.(guides_s)
+
+# finally, get results!
+res = search_dictDB(db, guides)</code></pre></div></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../align_gRNA/">« Align gRNA and off-target</a><a class="docs-footer-nextpage" href="../find_ot/">Find all off-targets »</a><div class="flexbox-break"></div><p class="footer-message">Made with ♥ by Kornel Labun.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.23 on <span class="colophon-date" title="Friday 4 November 2022 15:39">Friday 4 November 2022</span>. Using Julia version 1.8.2.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
