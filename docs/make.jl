@@ -26,10 +26,9 @@ makedocs(
             "Utils" => "utils.md"],
         ])
 
-#=
 deploydocs(
-    repo = "github.com/JuliaDocs/Documenter.jl.git",
+    repo = "github.com/JokingHero/ARTEMIS.jl.git",
     target = "build",
+    branch = "gh-pages",
     push_preview = true,
 )
-=#
