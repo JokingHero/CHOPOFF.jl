@@ -3,7 +3,8 @@
 
 # ARTEMIS
 
-![Logo](./docs/src/assets/logo-dark.png)
+![Logo](./docs/src/assets/logo-dark.png#gh-dark-mode-only)
+![Logo](./docs/src/assets/logo.png#gh-light-mode-only)
 
 ## About
 
