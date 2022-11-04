@@ -30,5 +30,6 @@ deploydocs(
     repo = "github.com/JokingHero/ARTEMIS.jl.git",
     target = "build",
     branch = "gh-pages",
+    versions = nothing, # currently make things simple
     push_preview = true,
 )
