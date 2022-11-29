@@ -441,9 +441,11 @@ function main(args::Array{String})
         args = args["search"]
         guides = LongDNA{4}.(readlines(args["guides"]))
         if args["%COMMAND%"] == "treeDB"
-            res = search_treeDB(args["database"], guides, args["detail"]; distance = args["distance"])
+            res = search_treeDB(args["database"], guides, args["output"]; 
+                distance = args["distance"])
         elseif args["%COMMAND%"] == "linearDB"
-            res = search_linearDB(args["database"], guides, args["detail"]; distance = args["distance"])
+            res = search_linearDB(args["database"], guides, args["output"]; 
+                distance = args["distance"])
         elseif args["%COMMAND%"] == "motifDB"
             search_motifDB(
                 args["database"], guides, args["output"]; 
