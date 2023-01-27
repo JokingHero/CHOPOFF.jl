@@ -198,10 +198,20 @@ end
 
 function do_linear_chrom(chrom_name::String, chrom::K, dbi::DBInfo, prefix_len::Int, storage_dir::String) where K<:BioSequence
     @info "Working on $chrom_name"
-    output_fwd = gatherofftargets(dbi, chrom, chrom_name, false, prefix_len)
-    output_rve = gatherofftargets(dbi, chrom, chrom_name, true, prefix_len)
-    fwd = ThreadsX.collect(x.prefix for x in output_fwd)
-    rve = ThreadsX.collect(x.prefix for x in output_rve)
+    if isempty(dbi.motif.fwd)
+        fwd = []
+    else
+        output_fwd = gatherofftargets(dbi, chrom, chrom_name, false, prefix_len)
+        fwd = ThreadsX.collect(x.prefix for x in output_fwd)
+    end
+
+    if isempty(dbi.motif.rve)
+        rve = []
+    else
+        output_rve = gatherofftargets(dbi, chrom, chrom_name, true, prefix_len)
+        rve = ThreadsX.collect(x.prefix for x in output_rve)
+    end
+
     prefixes = unique(vcat(fwd, rve))
     ThreadsX.map(prefixes) do prefix
         fwd_idx = findfirst(x -> x == prefix, fwd)

@@ -119,7 +119,7 @@ end
 function Motif(alias::String,
     fwdmotif::String, fwdpam::String,
     forward_strand::Bool = true, reverse_strand::Bool = true,
-    distance::Int = 3, extends5::Bool = true, ambig_max::Int = 3)
+    distance::Int = 3, extends5::Bool = true, ambig_max::Int = 0)
     if length(fwdmotif) != length(fwdpam)
         throw("fwd_motif and fwd_pam have to have the same length!")
     end
