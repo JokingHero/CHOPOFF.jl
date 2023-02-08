@@ -157,6 +157,5 @@ function search_fmiDB(
     fwd_offt = map(x -> templates_to_sequences(x, mpt, motif; dist = distance), guides_)
     ThreadsX.map(ch -> search_chrom(ch, dirname(output_file), guides_, motif, fwd_offt, fmidbdir), gi.chrom)
     cleanup_detail(output_file)
-    @info "Done!"
     return 
 end

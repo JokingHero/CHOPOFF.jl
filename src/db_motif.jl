@@ -365,6 +365,5 @@ function search_motifDB(
         p, distance, sdb.dbi, dirname(output_file), guides_, gskipmers, sdb.kmers, adjust, storage_dir), sdb.prefixes)
     
     cleanup_detail(output_file)
-    @info "Done!"
     return
 end

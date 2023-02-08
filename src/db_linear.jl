@@ -230,6 +230,5 @@ function search_linearDB(
     ThreadsX.map(p -> search_prefix(p, distance, ldb.dbi, dirname(output_file), guides_, storage_dir), prefixes)
     
     cleanup_detail(output_file)
-    @info "Done!"
     return
 end
