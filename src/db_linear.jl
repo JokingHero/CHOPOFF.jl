@@ -232,3 +232,80 @@ function search_linearDB(
     cleanup_detail(output_file)
     return
 end
+
+
+function search_linearDB2(
+    storage_dir::String, 
+    guides::Vector{LongDNA{4}}, 
+    output_file::String;
+    distance::Int = 4,
+    early_stopping::Vector{Float64} = [1, 0, 10, 250, Inf])
+
+    if length(early_stopping) != (distance + 1)
+        error("Specify one early stopping condition for a each distance, starting from distance 0.")
+    end
+
+    ldb = load(joinpath(storage_dir, "linearDB.bin"))
+    prefixes = collect(ldb.prefixes)
+    if distance > length(first(prefixes)) || distance > ldb.dbi.motif.distance
+        error("For this database maximum distance is " * 
+              string(min(ldb.dbi.motif.distance, length(first(prefixes)))))
+    end
+
+    guides_ = copy(guides)
+    # reverse guides so that PAM is always on the left
+    if ldb.dbi.motif.extends5
+        guides_ = reverse.(guides_)
+    end
+
+    # instead of paralelizing on the prefix (large batch of work, we will paralelize on small pieces)
+    # for each guide we keep track of all off-targets in a table
+    # we have to filter out overlapping ones with each addition
+    # we have to keep a counter of the off-target by distance count, if counter reached - stop searching this guide
+    for prefix in prefixes
+        # prefix alignment against all the guides
+        suffix_len = length_noPAM(ldb.dbi.motif) + ldb.dbi.motif.distance - length(prefix)
+
+        # we should do it only for guides that are not early stopped yet!!!
+        prefix_aln = ThreadsX.map(g -> prefix_align(g, prefix, suffix_len, distance), guides_)
+        isfinal = ThreadsX.map(x -> x.isfinal, prefix_aln)
+
+        if all(isfinal)
+            return
+        end
+
+        detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
+        detail_file = open(detail_path, "w")
+
+        # if any of the guides requires further alignment 
+        # load the SuffixDB and iterate
+        sdb = load(joinpath(storage_dir, string(prefix) * ".bin"))
+        for i in 1:length(guides_) # here paraelilze? each guide on its own??
+            if !isfinal[i]
+                for (j, suffix) in enumerate(sdb.suffix)
+                    suffix_aln = suffix_align(suffix, prefix_aln[i])
+                    if suffix_aln.dist <= distance
+                        sl_idx = sdb.suffix_loci_idx[j]
+                        offtargets = sdb.loci[sl_idx.start:sl_idx.stop]
+                        if ldb.dbi.motif.extends5
+                            guide_stranded = reverse(prefix_aln[i].guide)
+                            aln_guide = reverse(suffix_aln.guide)
+                            aln_ref = reverse(suffix_aln.ref)
+                        else
+                            guide_stranded = prefix_aln[i].guide
+                            aln_guide = suffix_aln.guide
+                            aln_ref = suffix_aln.ref
+                        end
+                        noloc = string(guide_stranded) * "," * aln_guide * "," * 
+                                aln_ref * "," * string(suffix_aln.dist) * ","
+                        for offt in offtargets # we stop writing to file, we keep it in memory now
+                            write(detail_file, noloc * decode(offt, ldb.dbi) * "\n")
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return
+end
