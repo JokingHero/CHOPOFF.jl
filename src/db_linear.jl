@@ -234,15 +234,25 @@ function search_linearDB(
 end
 
 
-function search_linearDB2(
-    storage_dir::String, 
-    guides::Vector{LongDNA{4}}, 
+function search_linearDB_with_es(
+    storage_dir::String,
+    guides::Vector{LongDNA{4}},
     output_file::String;
-    distance::Int = 4,
-    early_stopping::Vector{Float64} = [1, 0, 10, 250, Inf])
+    distance::Int = 3,
+    early_stopping::Vector{Float64} = [1, 5, 10, 300]) # has to be increasing value, "up to N"
+    max_range = (distance * 2 + 1)
 
     if length(early_stopping) != (distance + 1)
         error("Specify one early stopping condition for a each distance, starting from distance 0.")
+    end
+
+    if length(any(diff(early_stopping) <= 0))
+        error("Each consecutive stopping condition has to be bigger than the previous.")
+    end
+
+    if any(early_stopping > 1e5)
+        @warn "Your early stopping condition contains large numbers." * 
+            "You might run out of memory and the program may potentially crush."
     end
 
     ldb = load(joinpath(storage_dir, "linearDB.bin"))
@@ -258,54 +268,90 @@ function search_linearDB2(
         guides_ = reverse.(guides_)
     end
 
-    # instead of paralelizing on the prefix (large batch of work, we will paralelize on small pieces)
-    # for each guide we keep track of all off-targets in a table
-    # we have to filter out overlapping ones with each addition
-    # we have to keep a counter of the off-target by distance count, if counter reached - stop searching this guide
+    is_es = falses(length(guides_)) # which guides are early stopped already
+    es_accumulator = zeros(Int64, length(early_stopping), length(guides_))
+    all_offt = Vector{Vector{Offtarget}}()
+    all_offt_lock = ReentrantLock()
+
     for prefix in prefixes
         # prefix alignment against all the guides
         suffix_len = length_noPAM(ldb.dbi.motif) + ldb.dbi.motif.distance - length(prefix)
 
         # we should do it only for guides that are not early stopped yet!!!
-        prefix_aln = ThreadsX.map(g -> prefix_align(g, prefix, suffix_len, distance), guides_)
-        isfinal = ThreadsX.map(x -> x.isfinal, prefix_aln)
-
-        if all(isfinal)
-            return
+        prefix_aln = ThreadsX.map(zip(guides_, is_es)) do x
+            (g, is_esg) = x
+            if is_esg
+                return PrefixAlignment(
+                    Array{Int64}(undef, 0, 0), 
+                    Array{AlnPath}(undef, 0, 0), 
+                    dna"", 0, dna"", 0, 0, 0, 0, 0, true)
+            else
+                return prefix_align(g, prefix, suffix_len, distance)
+            end
         end
+        isfinal = ThreadsX.map(x -> x.isfinal, prefix_aln) # isfinal contains also es condition
 
-        detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
-        detail_file = open(detail_path, "w")
+        if all(isfinal) # either all guides are es, or they have no alignment to that prefix
+            continue
+        end
 
         # if any of the guides requires further alignment 
         # load the SuffixDB and iterate
         sdb = load(joinpath(storage_dir, string(prefix) * ".bin"))
-        for i in 1:length(guides_) # here paraelilze? each guide on its own??
+        
+        for i in 1:length(guides_)
             if !isfinal[i]
-                for (j, suffix) in enumerate(sdb.suffix)
-                    suffix_aln = suffix_align(suffix, prefix_aln[i])
-                    if suffix_aln.dist <= distance
-                        sl_idx = sdb.suffix_loci_idx[j]
-                        offtargets = sdb.loci[sl_idx.start:sl_idx.stop]
-                        if ldb.dbi.motif.extends5
-                            guide_stranded = reverse(prefix_aln[i].guide)
-                            aln_guide = reverse(suffix_aln.guide)
-                            aln_ref = reverse(suffix_aln.ref)
-                        else
-                            guide_stranded = prefix_aln[i].guide
-                            aln_guide = suffix_aln.guide
-                            aln_ref = suffix_aln.ref
+                early_stopped = Threads.Atomic{Bool}(false)
+        
+                Threads.@threads for j in 1:length(sdb.suffix)
+                    if !early_stopped[]
+                        lock(all_offt_lock) do
+                            suffix_aln = suffix_align(sdb.suffix[j], prefix_aln[i])
+                            if suffix_aln.dist <= distance
+                                sl_idx = sdb.suffix_loci_idx[j]
+                                offtargets = sdb.loci[sl_idx.start:sl_idx.stop]
+                                
+                                for offt in offtargets
+                                    (old_dist, new_dist) = insert_smth!(
+                                        all_offt[i], 
+                                        Offtarget(offt, suffix_aln.dist, suffix_aln.guide, suffix_aln.ref), 
+                                        max_range)
+                                    if !isnothing(old_dist) # decrease replaced object distance
+                                        es_accumulator[i, old_dist + 1] -= 1
+                                    end
+                                    if !isnothing(new_dist)
+                                        es_accumulator[i, new_dist + 1] += 1
+                                        if es_accumulator[i, new_dist + 1] >= early_stopping[new_dist + 1]
+                                            early_stopped[] = true
+                                        end
+                                    end
+                                end
+                            end
                         end
-                        noloc = string(guide_stranded) * "," * aln_guide * "," * 
-                                aln_ref * "," * string(suffix_aln.dist) * ","
-                        for offt in offtargets # we stop writing to file, we keep it in memory now
-                            write(detail_file, noloc * decode(offt, ldb.dbi) * "\n")
-                        end
+                    else
+                        break # makes sure to terminate Threads when they are to be stopped
                     end
                 end
             end
         end
     end
 
+    # TODO write to file
+    detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
+    detail_file = open(detail_path, "w")
+    if ldb.dbi.motif.extends5
+        guide_stranded = reverse(prefix_aln[i].guide)
+        aln_guide = reverse(suffix_aln.guide)
+        aln_ref = reverse(suffix_aln.ref)
+    else
+        guide_stranded = prefix_aln[i].guide
+        aln_guide = suffix_aln.guide
+        aln_ref = suffix_aln.ref
+    end
+    noloc = string(guide_stranded) * "," * aln_guide * "," * 
+            aln_ref * "," * string(suffix_aln.dist) * ","
+
+    write(detail_file, noloc * decode(offt, ldb.dbi) * "\n")
+    close(detail_file)
     return
 end

@@ -2,7 +2,7 @@ using Test
 
 using ARTEMIS: DBInfo, Loc, decode, 
     Motif, length_noPAM, removepam, combinestrings, notX,
-    AmbigIdx, findbits, setdist
+    AmbigIdx, findbits, setdist, Offtarget, insert_offtarget!
 using BioSequences
 
 @testset "structures" begin
@@ -45,5 +45,53 @@ using BioSequences
         @test sum(findbits(dna"GCAA", idx)) == 0
         @test sum(findbits(dna"GGA", idx)) == 3
         @test idx.annot[findbits(dna"ACTG", idx)][1] == "rs131;rs1"
+    end
+
+    function rand_offtarget()
+        Offtarget(Loc(rand(UInt8.([1, 2, 3])), rand(UInt8.(1:10)), rand([true, false])), rand(1:10), "smth", "smth")
+    end
+
+    @testset "Offtarget" begin
+        x = Vector{Offtarget}()
+        r = 3 # distance of 1 gives range of 3
+
+        # testing case with 0 elements
+        (o, i) = insert_offtarget!(x, Offtarget(Loc(UInt8(1), UInt8(1), true), 2, "", ""), r)
+        @test length(x) == 1 && isnothing(o) && i == 2
+
+        # testing case with idx 1
+        # in range, but less distance
+        (o, i) = insert_offtarget!(x, Offtarget(Loc(UInt8(1), UInt8(1), true), 0, "", ""), r)
+        @test length(x) == 1 && o == 2 && i == 0
+        # in range, but now back larger distance
+        (o, i) = insert_offtarget!(x, Offtarget(Loc(UInt8(1), UInt8(0), true), 2, "", ""), r)
+        @test length(x) == 1 && isnothing(o) && isnothing(i)
+
+        # testing cases with last idx
+        # insert first
+        (o, i) = insert_offtarget!(x, Offtarget(Loc(UInt8(2), UInt8(1), true), 2, "", ""), r)
+        @test length(x) == 2 && isnothing(o) && i == 2
+        # in range, but less distance
+        (o, i) = insert_offtarget!(x, Offtarget(Loc(UInt8(2), UInt8(2), true), 0, "", ""), r)
+        @test length(x) == 2 && o == 2 && i == 0
+        # in range, but now back larger distance
+        (o, i) = insert_offtarget!(x, Offtarget(Loc(UInt8(2), UInt8(3), true), 2, "", ""), r)
+        @test length(x) == 2 && isnothing(o) && isnothing(i)
+
+        # testing cases with middle idx
+        # test the case of insertion in the middle, outside of range
+        (o, i) = insert_offtarget!(x, Offtarget(Loc(UInt8(1), UInt8(10), true), 2, "", ""), r)
+        @test length(x) == 3 && isnothing(o) && i == 2
+        # in range to middle element, but less distance
+        (o, i) = insert_offtarget!(x, Offtarget(Loc(UInt8(1), UInt8(7), true), 1, "", ""), r)
+        @test length(x) == 3 && o == 2 && i == 1
+        # in range to middle element, but less distance
+        (o, i) = insert_offtarget!(x, Offtarget(Loc(UInt8(1), UInt8(6), true), 0, "", ""), r)
+        @test length(x) == 3 && o == 1 && i == 0
+        # in range, but now back larger distance
+        (o, i) = insert_offtarget!(x, Offtarget(Loc(UInt8(1), UInt8(5), true), 2, "", ""), r)
+        @test length(x) == 3 && isnothing(o) && isnothing(i)
+        (o, i) = insert_offtarget!(x, Offtarget(Loc(UInt8(1), UInt8(7), true), 2, "", ""), r)
+        @test length(x) == 3 && isnothing(o) && isnothing(i)
     end
 end

@@ -127,3 +127,80 @@ function decode(loc::Loc, dbi::DBInfo)
     strand = loc.isplus ? "+" : "-"
     return dbi.gi.chrom[loc.chrom] * "," * string(loc.pos) * "," * strand
 end
+
+
+struct Offtarget{T<:Unsigned,K<:Unsigned}
+    loc::Loc{T,K}
+    dist::Int
+    aln_guide::String
+    aln_ref::String
+end
+
+function Base.show(io::IO, m::Offtarget)
+    show(io, "$(m.loc.chrom):$(m.loc.isplus ? '+' : '-'):$(m.loc.pos); $(m.dist)")
+end
+
+import Base: isless
+isless(x::Offtarget, y::Offtarget) = isless(
+    (x.loc.chrom, x.loc.isplus, x.loc.pos, x.dist), 
+    (y.loc.chrom, y.loc.isplus, y.loc.pos, y.dist))
+
+"""x has to be >= to y"""
+function is_in_range(x::Offtarget, y::Offtarget, range::Int)
+    return x.loc.chrom == y.loc.chrom && x.loc.isplus == y.loc.isplus && ((x.loc.pos - y.loc.pos) <= range)
+end
+
+"""
+Insert to vector checking which offtarget is overlapping which, so that 
+we can filter out those almost same site off-targets, we take the one with smallest distance.
+This returns two values, first indicates distance of the offtarget that it replaced (or nothing)
+second returns distance of the offtraget it added (or nothing).
+"""
+function insert_offtarget!(x::Vector{Offtarget}, offt::Offtarget, range::Int)
+    if isempty(x)
+        push!(x, offt)
+        return nothing, offt.dist
+    end
+    # idx of first value in a >= x, if x >= all in a lastindex(a) + 1
+    idx = searchsortedfirst(x, offt)
+
+    if idx == 1
+        le = x[1]
+        if is_in_range(le, offt, range)
+            if le.dist > offt.dist
+                x[1] = offt
+                return le.dist, offt.dist
+            else
+                return nothing, nothing
+            end
+        end
+    elseif idx == (lastindex(x) + 1)
+        le = x[end]
+        if is_in_range(offt, le, range)
+            if le.dist > offt.dist
+                x[end] = offt
+                return le.dist, offt.dist
+            else
+                return nothing, nothing
+            end
+        end
+    else
+        le = x[idx - 1] # smaller than offt
+        le2 = x[idx] # larger or equal
+        in_range_le = is_in_range(offt, le, range)
+        in_range_le2 = is_in_range(le2, offt, range)
+        if in_range_le && le.dist > offt.dist
+            x[idx - 1] = offt
+            return le.dist, offt.dist
+        elseif in_range_le2 && le2.dist > offt.dist
+            x[idx] = offt
+            return le2.dist, offt.dist
+        elseif in_range_le || in_range_le2 # in range but distance is no good
+            return nothing, nothing
+        end
+    end
+
+    # when not in range of anything we just insert
+    insert!(x, idx, offt)
+    return nothing, offt.dist
+end
