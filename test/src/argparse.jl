@@ -6,7 +6,7 @@ using DataFrames
 using BioSequences
 
 ## SET WD when debugging
-# cd("test")
+cd("test")
 
 @testset "ArgParse" begin
     @testset "hashDB through command line" begin

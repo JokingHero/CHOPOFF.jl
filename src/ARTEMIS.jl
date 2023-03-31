@@ -308,6 +308,14 @@ function parse_commandline(args::Array{String})
             required = false
     end
 
+    @add_arg_table! s["search"]["linearDB"] begin
+        "--early_stopping"
+            help = "Adjust parameter for motifDB."
+            arg_type = Int
+            nargs = '*'
+            required = false
+    end
+
     @add_arg_table! s["search"]["fmi"] begin
         "--template"
             help = "Path to the table with the template. You can build a template with 'build  template'."
@@ -444,8 +452,14 @@ function main(args::Array{String})
             res = search_treeDB(args["database"], guides, args["output"]; 
                 distance = args["distance"])
         elseif args["%COMMAND%"] == "linearDB"
-            res = search_linearDB(args["database"], guides, args["output"]; 
-                distance = args["distance"])
+            if length(args["linearDB"]["early_stopping"]) == 0
+                res = search_linearDB_with_es(args["database"], guides, args["output"]; 
+                    distance = args["distance"], 
+                    early_stopping = args["linearDB"]["early_stopping"])
+            else
+                res = search_linearDB(args["database"], guides, args["output"]; 
+                    distance = args["distance"])
+            end
         elseif args["%COMMAND%"] == "motifDB"
             search_motifDB(
                 args["database"], guides, args["output"]; 
