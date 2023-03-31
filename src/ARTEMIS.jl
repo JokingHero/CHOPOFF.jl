@@ -69,7 +69,7 @@ export DBInfo # db_info
 export gatherofftargets! # find_offtargets
 export isinclusive, hamming, levenshtein, Aln, align # distance_metrics
 
-export build_linearDB, search_linearDB # db_linear
+export build_linearDB, search_linearDB, search_linearDB_with_es # db_linear
 export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 export build_hashDB, search_hashDB # db_hash

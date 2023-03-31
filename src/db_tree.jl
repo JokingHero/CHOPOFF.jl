@@ -238,7 +238,6 @@ function search_prefixtree(
                     end
                 end
 
-                
                 # ext is not zero only when ext is used for alignment between VP and guide
                 if (node.inside != 0) && ((dist_i - dist - ext - 1) <= node.radius)
                     push!(queue, node.inside)

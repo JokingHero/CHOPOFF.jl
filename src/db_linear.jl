@@ -234,23 +234,68 @@ function search_linearDB(
 end
 
 
+"""
+```
+search_linearDB_with_es(
+    storage_dir::String,
+    guides::Vector{LongDNA{4}},
+    output_file::String;
+    distance::Int = 3,
+    early_stopping::Vector{Int} = [1, 5, 10, 300])
+```
+
+Find off-targets for `guides` within distance of `dist` using linearDB located at `storage_dir`.
+Apply early stopping condition, which could be interpreated as finding "up to N offtargets within distance X".
+In this implementation you are not guaranteed which offtargets will be found first and also what number 
+of offtargets will be reported back, you are only guaranteed that early stopping condition will be applied, and 
+results may differ for each run due to thread race.
+
+Assumes your guides do not contain PAM, and are all in the same direction as 
+you would order from the lab e.g.:
+
+```
+5' - ...ACGTCATCG NGG - 3'  -> will be input: ...ACGTCATCG
+     guide        PAM
+    
+3' - CCN GGGCATGCT... - 5'  -> will be input: ...AGCATGCCC
+     PAM guide
+```
+
+# Arguments
+
+`output_file` - Path and name for the output file, this will be comma separated table, therefore `.csv` extension is preferred. 
+This search will create intermediate files which will have same name as `output_file`, but with a sequence prefix. Final file
+will contain all those intermediate files.
+
+`distance` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
+which off-targets are considered.
+
+`early_stopping` - Integer vector. Early stopping condition. For example for distance 2, we need vector with 3 values e.g. [1, 1, 5].
+Which means we will search with "up to 1 offtargets within distance 0", "up to 1 offtargets within distance 1", "up to 5 offtargets within distance 2".
+Each consecutive value in the vector has to be equal or bigger than the previous.
+
+# Examples
+```julia-repl
+$(make_example_doc())
+```
+"""
 function search_linearDB_with_es(
     storage_dir::String,
     guides::Vector{LongDNA{4}},
     output_file::String;
     distance::Int = 3,
-    early_stopping::Vector{Float64} = [1, 5, 10, 300]) # has to be increasing value, "up to N"
+    early_stopping::Vector{Int} = [1, 5, 10, 300]) # has to be increasing value, "up to N"
     max_range = (distance * 2 + 1)
 
     if length(early_stopping) != (distance + 1)
         error("Specify one early stopping condition for a each distance, starting from distance 0.")
     end
 
-    if length(any(diff(early_stopping) <= 0))
-        error("Each consecutive stopping condition has to be bigger than the previous.")
+    if any(diff(early_stopping) .< 0)
+        error("Each consecutive stopping condition has to be bigger or equal than the previous.")
     end
 
-    if any(early_stopping > 1e5)
+    if any(early_stopping .> 1e5)
         @warn "Your early stopping condition contains large numbers." * 
             "You might run out of memory and the program may potentially crush."
     end
@@ -267,10 +312,11 @@ function search_linearDB_with_es(
     if ldb.dbi.motif.extends5
         guides_ = reverse.(guides_)
     end
+    g_count = length(guides_)
 
-    is_es = falses(length(guides_)) # which guides are early stopped already
-    es_accumulator = zeros(Int64, length(early_stopping), length(guides_))
-    all_offt = Vector{Vector{Offtarget}}()
+    is_es = falses(g_count) # which guides are early stopped already
+    es_accumulator = zeros(Int64, g_count, length(early_stopping))
+    all_offt = [Vector{Offtarget}() for _ in 1:g_count]
     all_offt_lock = ReentrantLock()
 
     for prefix in prefixes
@@ -299,7 +345,7 @@ function search_linearDB_with_es(
         # load the SuffixDB and iterate
         sdb = load(joinpath(storage_dir, string(prefix) * ".bin"))
         
-        for i in 1:length(guides_)
+        for i in 1:g_count
             if !isfinal[i]
                 early_stopped = Threads.Atomic{Bool}(false)
         
@@ -312,7 +358,7 @@ function search_linearDB_with_es(
                                 offtargets = sdb.loci[sl_idx.start:sl_idx.stop]
                                 
                                 for offt in offtargets
-                                    (old_dist, new_dist) = insert_smth!(
+                                    (old_dist, new_dist) = insert_offtarget!(
                                         all_offt[i], 
                                         Offtarget(offt, suffix_aln.dist, suffix_aln.guide, suffix_aln.ref), 
                                         max_range)
@@ -332,26 +378,32 @@ function search_linearDB_with_es(
                         break # makes sure to terminate Threads when they are to be stopped
                     end
                 end
+
+                if early_stopped[]
+                    is_es[i] = true
+                end
             end
         end
     end
 
-    # TODO write to file
-    detail_path = joinpath(detail, "detail_" * string(prefix) * ".csv")
-    detail_file = open(detail_path, "w")
-    if ldb.dbi.motif.extends5
-        guide_stranded = reverse(prefix_aln[i].guide)
-        aln_guide = reverse(suffix_aln.guide)
-        aln_ref = reverse(suffix_aln.ref)
-    else
-        guide_stranded = prefix_aln[i].guide
-        aln_guide = suffix_aln.guide
-        aln_ref = suffix_aln.ref
+    detail_file = open(output_file, "w")
+    write(detail_file, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
+    for i in 1:g_count
+        for j in 1:length(all_offt[i])
+            offt = all_offt[i][j]
+            if ldb.dbi.motif.extends5
+                aln_guide = reverse(offt.aln_guide)
+                aln_ref = reverse(offt.aln_ref)
+            else
+                aln_guide = offt.aln_guide
+                aln_ref = offt.aln_ref
+            end
+            
+            noloc = string(guides[i]) * "," * aln_guide * "," * 
+                aln_ref * "," * string(offt.dist) * ","
+            write(detail_file, noloc * decode(offt.loc, ldb.dbi) * "\n")
+        end
     end
-    noloc = string(guide_stranded) * "," * aln_guide * "," * 
-            aln_ref * "," * string(suffix_aln.dist) * ","
-
-    write(detail_file, noloc * decode(offt, ldb.dbi) * "\n")
     close(detail_file)
     return
 end

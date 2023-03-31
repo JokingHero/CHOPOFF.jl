@@ -283,4 +283,26 @@ end
         failed = antijoin(ldb, res_fmiDB_seed, on = [:guide, :distance, :chromosome, :start, :strand])
         @test nrow(failed) == 0
     end
+
+
+    @testset "linearDB vs linearDB early stopped" begin
+        ldb_filt = DataFrame(CSV.File(detail_path))
+        ldb_filt = filter_overlapping(ldb_filt, 3*2 + 1)
+        ldb_res_filt = summarize_offtargets(ldb_filt, 3)
+
+        
+        detail_path_es = joinpath(ldb_path, "detail_es.csv")
+        # find all offtargets with overlap filtering on the go
+        search_linearDB_with_es(ldb_path, guides, detail_path_es; distance = 3, early_stopping = [50, 50, 50, 50])
+        ldbes = DataFrame(CSV.File(detail_path_es))
+        ldbes_res = summarize_offtargets(ldbes, 3)
+        @test ldb_res_filt == ldbes_res
+
+        # find all offtargets with es with overlap filtering
+        search_linearDB_with_es(ldb_path, [dna"NNNNNNNNNNNNNNNNNNNN"], 
+            detail_path_es; distance = 3, early_stopping = repeat([2], 4))
+        ldbes = DataFrame(CSV.File(detail_path_es))
+        # because of the Thread break there it is highly non-deterministic how many offtargets we will get
+        @test nrow(ldbes) >= 2
+    end
 end
