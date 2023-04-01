@@ -6,7 +6,7 @@ using CSV
 using DataFrames
 
 ## SET WD when debugging
-cd("test")
+# cd("test")
 
 ## CRISPRitz compare functions - we test with up to 4 distance
 function asguide(x::String)
