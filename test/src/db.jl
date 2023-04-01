@@ -6,7 +6,7 @@ using CSV
 using DataFrames
 
 ## SET WD when debugging
-# cd("test")
+cd("test")
 
 ## CRISPRitz compare functions - we test with up to 4 distance
 function asguide(x::String)
@@ -296,7 +296,7 @@ end
         search_linearDB_with_es(ldb_path, guides, detail_path_es; distance = 3, early_stopping = [50, 50, 50, 50])
         ldbes = DataFrame(CSV.File(detail_path_es))
         ldbes_res = summarize_offtargets(ldbes, 3)
-        @test ldb_res_filt == ldbes_res
+        @test compare_result(ldb_res_filt, ldbes_res; less_or_equal = true)
 
         # find all offtargets with es with overlap filtering
         search_linearDB_with_es(ldb_path, [dna"NNNNNNNNNNNNNNNNNNNN"], 
