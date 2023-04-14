@@ -86,10 +86,12 @@ function build_linearDB(
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
     # Don't paralelize here as you can likely run out of memory (chromosomes are large)
-    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storage_dir), dbi.gi.chrom)
+    prefixes = Base.mapreduce(
+        x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storage_dir), 
+        union,
+        dbi.gi.chrom)
     close(ref)
-
-    prefixes = Set(vcat(prefixes...))
+    prefixes = Set(prefixes)
 
     # step 2
     @info "Step 2: Constructing per prefix db."

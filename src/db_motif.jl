@@ -110,7 +110,7 @@ For example, Cas9 off-target within distance 4 (d) might be 20bp long.
 We skip `prefix_len` of 7, and are left with 13bp which can be split into 3 
 skipmer (r) of size 4, 1bp will be left unused. However when searching within 
 distance of 4 and for prefix where initial alignment was of distance 3 (m) and
-adjustment parameter is 0 (a). We are obliged to find at least **k - (d - m + a)** 
+adjustment parameter is 0 (a). We are obliged to find at least **r - (d - m + a)** 
 which is **3 - (4 - 3 + 0) = 2** this many skipmers inside the off-targets. 
 
 There exist also another approach which builds on the idea that it might be more efficient
@@ -158,10 +158,12 @@ function build_motifDB(
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
     # Don't parallelize here as you can likely run out of memory (chromosomes are large)
-    prefixes = Base.map(x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storage_dir), dbi.gi.chrom)
+    prefixes = Base.mapreduce(
+        x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storage_dir), 
+        union,
+        dbi.gi.chrom)
     close(ref)
-
-    prefixes = Set(vcat(prefixes...))
+    prefixes = Set(prefixes)
 
     # step 2
     @info "Step 2: Constructing per prefix db."
@@ -333,7 +335,7 @@ the initial prefix alignment. For example, Cas9 off-target within distance 4 (d)
 We skip `prefix_len` of 7, and are left with 13bp which can be split into 3 skipmers (r) of size 4, 
 1bp will be left unused. However when searching within distance of 4 and for prefix where initial 
 alignment was of distance 3 (m) and adjustment parameter is 0 (a). We are obliged to find at least 
-`k - (d - m + a)` which is `3 - (4 - 3 + 0) = 2` this many skipmers inside the off-targets. 
+`r - (d - m + a)` which is `3 - (4 - 3 + 0) = 2` this many skipmers inside the off-targets. 
 
 
 # Examples
