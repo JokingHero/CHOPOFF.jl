@@ -2,41 +2,40 @@ __precompile__(true)
 
 module ARTEMIS
 
-using Dates: isequal
-using Base: Float32
-using ArgParse: command_actions
+using Dates: isequal # MIT
+using Base: Float32 # MIT
+using ArgParse: command_actions # MIT
 
-using FastFilter
-using StaticArrays
+using FastFilter # Apache 2 - my very own
+using StaticArrays # MIT
 
-using CRC32c
-using Dates
-using Statistics
-using StatsBase
-using Random
+using CRC32c # MIT
+using Dates # MIT
+using Statistics # MIT
+using StatsBase # MIT
+using Random # MIT
 using Combinatorics
-using BioSymbols
-using BioSequences
-using Serialization
-using FASTX
-using TwoBit
-using DataFrames
-using Transducers
-using ThreadsX
-using Pkg
-using ArgParse
-using CSV
-using ProgressMeter
-using VariantCallFormat
-using CodecZlib
-using PathDistribution
-using Dates
+using BioSymbols # MIT
+using BioSequences # MIT
+using Serialization # MIT
+using FASTX # MIT
+using TwoBit # MIT
+using DataFrames # MIT
+using Transducers # MIT
+using ThreadsX # MIT
+using Pkg # MIT
+using ArgParse # MIT
+using CSV # MIT
+using ProgressMeter # MIT
+using VariantCallFormat # MIT
+using CodecZlib # MIT
+using PathDistribution # MIT
 
 include("example_doc.jl")
 include("utils.jl")
 
-include("FMidx/FMindexes.jl")
-using .FMIndexes
+include("FMidx/FMindexes.jl") 
+using .FMIndexes # MIT
 
 include("ambig_index.jl")
 include("persistence.jl")
