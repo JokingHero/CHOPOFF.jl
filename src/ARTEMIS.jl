@@ -86,7 +86,7 @@ function parse_commandline(args::Array{String})
         prog = "ARTEMIS", 
         description = "Fast and reliable off-target detection for CRISPR guideRNAs.",
         epilog = "This standalone is build on top of the ARTEMIS.jl package.",
-        version = Pkg.TOML.parse(read(joinpath(dirname(pathof(ARTEMIS)), "..", "Project.toml"), String))["version"],
+        version = "1.0.0", # keep this in sync with Project.toml, dont automatize as build step will be broken
         add_version = true)
 
     @add_arg_table! s begin

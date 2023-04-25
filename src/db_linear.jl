@@ -92,6 +92,7 @@ function build_linearDB(
         dbi.gi.chrom)
     close(ref)
     prefixes = Set(prefixes)
+    GC.gc() # free memory
 
     # step 2
     @info "Step 2: Constructing per prefix db."

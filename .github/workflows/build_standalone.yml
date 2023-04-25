@@ -17,7 +17,7 @@ jobs:
         os: [ubuntu-latest, macOS-latest]
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - uses: julia-actions/setup-julia@v1
         with:
           version: ${{ matrix.julia-version }}
@@ -30,7 +30,7 @@ jobs:
         run: echo "artemis_name=ARTEMIS_v${{ env.artemis }}-julia_v${{ env.jver }}_${{ matrix.julia-arch }}-${{ matrix.os }}" >> $GITHUB_ENV
       - name: "Build"
         run: ./build_standalone.sh --noprecompile
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v3
         with:
           name: ${{ env.artemis_name }}
           path: build/
@@ -41,7 +41,7 @@ jobs:
     needs: build_release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v3
       - name: Display structure of downloaded files
         run: ls -R
       - name: tar.gz
