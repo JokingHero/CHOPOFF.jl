@@ -150,6 +150,7 @@ function build_treeDB(
     # For each chromosome parallelized we build database
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
+    mkpath(storage_dir)
     prefixes = Base.mapreduce(
         x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storage_dir), 
         union,
@@ -313,6 +314,7 @@ function search_treeDB(
         guides_ = reverse.(guides_)
     end
 
+    mkpath(dirname(output_file))
     ThreadsX.map(p -> search_prefixtree(p, distance, ldb.dbi, dirname(output_file), guides_, storage_dir), prefixes)
     
     cleanup_detail(output_file)
