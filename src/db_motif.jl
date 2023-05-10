@@ -158,6 +158,7 @@ function build_motifDB(
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
     # Don't parallelize here as you can likely run out of memory (chromosomes are large)
+    mkpath(storage_dir)
     prefixes = Base.mapreduce(
         x -> do_linear_chrom(x, getchromseq(dbi.gi.is_fa, reader[x]), dbi, prefix_len, storage_dir), 
         union,
@@ -363,6 +364,7 @@ function search_motifDB(
 
     prefix_len = length(first(sdb.prefixes))
     gskipmers = ThreadsX.map(x -> collect(Set(as_skipkmers(x[(prefix_len + 1):end], sdb.kmer_size))), guides_)
+    mkpath(dirname(output_file))
     ThreadsX.map(p -> search_prefix(
         p, distance, sdb.dbi, dirname(output_file), guides_, gskipmers, sdb.kmers, adjust, storage_dir), sdb.prefixes)
     
