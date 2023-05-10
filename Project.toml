@@ -40,7 +40,7 @@ TwoBit = "75842c30-9b2d-11e9-3f58-f17fe2b89951"
 VariantCallFormat = "28eba6e3-a997-4ad9-87c6-d933b8bca6c1"
 
 [compat]
-julia = "1.8"
+julia = "1.9"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

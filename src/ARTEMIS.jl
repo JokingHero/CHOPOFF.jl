@@ -385,9 +385,9 @@ end
 function main(args::Array{String})
     args = parse_commandline(args)
     
-    for (arg, val) in args
-        println(" $arg  =>  $val")
-    end
+    #for (arg, val) in args
+    #    println(" $arg  =>  $val")
+    #end
 
     if args["%COMMAND%"] == "build"
         args = args["build"]
