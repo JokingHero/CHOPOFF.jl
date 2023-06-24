@@ -60,7 +60,7 @@ Search `VcfDB` for off-targets for selected `guides`.
 
 **Experimental! Proof-of-concept!** 
 
-This function does not yet lists all off-targets and this will be added at a later data.
+This function does not yet lists all off-targets and this will be added at a later date.
 Current output is a list of counts of the ambiguous off-targets by distance.
 Distance is restricted to 0 and 1 at the moment.
 
@@ -219,7 +219,7 @@ Search `VcfDB` for off-targets for selected `guides`.
 
 **Experimental! Proof-of-concept!** 
 
-This function does not yet lists all off-targets and this will be added at a later data.
+This function does not yet lists all off-targets and this will be added at a later date.
 Current output is a list of counts of the ambiguous off-targets by distance.
 Distance is restricted to 0 and 1 at the moment.
 

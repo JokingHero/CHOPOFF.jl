@@ -23,9 +23,9 @@ Uncompromising finding of CRISPR off-targets:
 
 ## Requirements
 
-* Some of the algorithms generate as many files as there are prefixes (e.g. for prefix 7 - this will make 4^7 - 16384 files). This strategy allows us to operate the searches independently on multiple cores and not get throttled when querying large number of the guides. However, some systems have artificial limits on the number of open files, for example in ubuntu 'ulimit -n' will show the limit. Increase the limits, if it creates problems for you.
+* Some algorithms generate as many files as there are prefixes (e.g. for prefix 7 - this will make 4^7 - 16384 files). This strategy allows us to operate the searches independently on multiple cores and not get throttled when querying large number of the guides. However, some systems have artificial limits on the number of open files, for example in Ubuntu 'ulimit -n' will show the limit. Increase the limits, if it creates problems for you.
 
-* When using many cores for building the indexes - you have to have around ~1GB of RAM per thread.
+* When using many cores for building the indexes - you have to have around ~1 GB of RAM per thread.
 
 
 ## Support
@@ -37,7 +37,7 @@ You can buy me a [coffee](https://www.buymeacoffee.com/kornellabun) to show some
 
 ## License  
 
-Copyright (C) 2022  Kornel Labun
+Copyright © 2022 Kornel Labun
 
 License for non-commercial applications is aGPL-3.0. 
 For commercial applications you should acquire permission or licensing contract.

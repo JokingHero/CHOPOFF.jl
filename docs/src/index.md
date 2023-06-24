@@ -15,9 +15,9 @@ Uncompromising finding of CRISPR off-targets:
 
 ## Requirements
 
-* Some of the algorithms generate as many files as there are prefixes (e.g. for prefix 7 - this will make 4^7 - 16384 files). This strategy allows us to operate the searches independently on multiple cores and not get throttled when querying large number of the guides. However, some systems have artificial limits on the number of open files, for example in ubuntu 'ulimit -n' will show the limit. Increase the limits, if it creates problems for you.
+* Some algorithms generate as many files as there are prefixes (e.g. for prefix 7 - this will make 4^7 - 16384 files). This strategy allows us to operate the searches independently on multiple cores and not get throttled when querying large number of the guides. However, some systems have artificial limits on the number of open files, for example in Ubuntu 'ulimit -n' will show the limit. Increase the limits, if it creates problems for you.
 
-* When using many cores for building the indexes - you have to have around ~1GB of RAM per thread.
+* When using many cores for building the indexes - you have to have around ~1 GB of RAM per thread.
 
 ## Build application
 
@@ -26,13 +26,13 @@ It is possible to build ARTEMIS into standalone application - which includes all
 To build a standalone application run `./build_standalone.sh` script from the main directory. Script will
 produce binary in a "build" folder. Then you can run from inside that folder `./bin/ARTEMIS --help`. To learn about building a database run `./bin/ARTEMIS build --help` and to use existing database check out `./bin/ARTEMIS search --help`. It is possible to skip testing + precompile step to speed up the build process with `./build_standalone.sh --noprecompile`.
 
-You can alternatively download latest release from the releases page on the github.
+You can alternatively download the latest release from the releases' page on the GitHub.
 
 When using application as self-contained compiled software, you can control number of cores by setting `JULIA_NUM_THREADS` environment variable.
 
 ## No-build application
 
-Run ARTEMIS package as an **application**,  without building first. From the directory of the package run:
+Run ARTEMIS package as an **application**, without building first. From the directory of the package run:
 
 ```bash
 julia --threads 4 --project="." ./src/ARTEMIS.jl --help
@@ -44,7 +44,7 @@ For search of off-targets you have a couple of options:
 - `linearDB` - most rigorously tested
 - `motifDB` - the fastest
 - `treeDB` - will work best for longer gRNAs
-- `fmiDB` - smallest file size, very fast, but only for distances ≤ 2
+- `fmiDB` - the smallest file size, very fast, but only for distances ≤ 2
 
 If you would like to **filter** or **rank** gRNAs to only those that are most likely off-target free you want to use `hashDB` or
 slower and much larger, but less probabilistic `dictDB`.
@@ -64,7 +64,7 @@ You can buy me a [coffee](https://www.buymeacoffee.com/kornellabun) to show some
 
 ## LICENSE
 
-Copyright (C) 2022  Kornel Labun
+Copyright © 2022 Kornel Labun
 
 License for non-commercial applications is aGPL-3.0. 
 For commercial applications you should acquire permission or licensing contract.
