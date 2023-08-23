@@ -451,7 +451,7 @@ function main(args::Array{String})
             res = search_treeDB(args["database"], guides, args["output"]; 
                 distance = args["distance"])
         elseif args["%COMMAND%"] == "linearDB"
-            if length(args["linearDB"]["early_stopping"]) == 0
+            if length(args["linearDB"]["early_stopping"]) != 0
                 res = search_linearDB_with_es(args["database"], guides, args["output"]; 
                     distance = args["distance"], 
                     early_stopping = args["linearDB"]["early_stopping"])
