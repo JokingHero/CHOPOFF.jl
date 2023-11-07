@@ -132,8 +132,8 @@ function build_hashDB(
 
     dbi = DBInfo(genomepath, name, motif)
     if motif.distance != 1
-        @info "Distance enforced to 1."
-        motif = setdist(motif, 1)
+        @warn "Distance higher than 1."
+        #motif = setdist(motif, 1)
     end
     @info "Building Motif templates..."
     mtp = build_PathTemplates(length_noPAM(motif), motif.distance)

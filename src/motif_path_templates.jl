@@ -230,7 +230,7 @@ Returns a Vector{Set{LongDNA{4}}} where distance 0 is located at index 1,
 distance 1 all possible alignments are located at distance 2 and so on...
 
 """
-function templates_to_sequences_extended(
+function templates_to_sequences_extended( # TODO make this much faster?!
     guide::LongDNA{4}, 
     template::PathTemplates;
     dist::Int = template.distance)

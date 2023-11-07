@@ -57,6 +57,7 @@ include("db_vcf.jl")
 include("db_fmi_helpers.jl")
 include("db_fmi.jl")
 include("db_fmi_seed.jl")
+include("db_fmi_hash.jl")
 
 
 export Motif, length_noPAM, length, setambig, setdist # motif
@@ -79,6 +80,7 @@ export build_PathTemplates
 
 export build_fmiDB, search_fmiDB
 export build_pamDB, search_fmiDB_seed
+export search_fmiDB_hash
 
 ## Standalone binary generation
 function parse_commandline(args::Array{String})
