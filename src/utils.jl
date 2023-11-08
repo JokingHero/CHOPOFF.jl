@@ -280,7 +280,7 @@ function expand_ambiguous(x::LongDNA{4})
     iter = Iterators.product(amb_dna...)
     res = [copy(x) for i in 1:length(iter)]
     i = 1
-    for comb in Iterators.product(amb_dna...)
+    for comb in iter
         for (idx, dna) in zip(amb_idx, comb)
             res[i][idx] = dna
         end
