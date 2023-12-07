@@ -1,15 +1,32 @@
-struct Path
-    seq::LongDNA{4}
-    dist::Int
-end
+#struct Path
+#    seq::LongDNA{4}
+#    dist::Int
+#end
 
 
 struct PathTemplates
-    paths::IdDict{Int64, Vector{Vector{Int64}}}
+    paths::Matrix{Int}
+    distances::Vector{Int}
     len::Int # length without the PAM
-    distance::Int
+    max_distance::Int
+    mismatch_only::Bool
 end
 
+function restrictDistance(mpt::PathTemplates, distance::Int)
+    if distance == mpt.max_distance
+        return mpt
+    elseif distance > mpt.max_distance
+        throw("This PathTemplates only support distances up to " * string(mpt.max_distance))
+    elseif distance < 0
+        throw("Distance can't be below 0.")
+    end
+    paths_expanded = mpt.paths
+    paths_expanded = paths_expanded[:, 1:end - (mpt.max_distance - distance)]
+    not_dups = map(!, BitVector(nonunique(DataFrame(paths_expanded, :auto)))) # how can there be no duplicated function?!
+    not_over_dist = BitVector(mpt.distances .<= distance)
+    not = not_dups .& not_over_dist
+    return PathTemplates(paths_expanded[not, :], mpt.distances[not], mpt.len, distance, mpt.mismatch_only)
+end
 
 function remove_1_before_non_horizontal!(x::Vector{Int}, base::Vector{Int})
     x_not_in_base = (.!in.(x, Ref(base))) << 1
@@ -86,6 +103,46 @@ function adj_matrix_of_guide(len::Int, d::Int; mismatch_only::Bool = false)
 end
 
 
+# guide + not guide + N + Gap + remove last index as it is ending node
+# 1:20    21:40       41  42
+# 1:len   len+1:len*2 len*2 + 1, len*2 + 2, len*2 + 3
+
+#   DNA    TwoBit
+# A 0x01   0x00
+# C 0x02   0x01
+# G 0x04   0x02
+# T 0x08   0x03
+
+# to guide + not guide 1 + not guide 2 + not guide 3 + A C G T
+# and expand N
+function expand_ambiguous_paths(x::Vector{Int}, len::Int, max_dist::Int)
+    y = vcat(x, repeat([len*2 + 1], len + max_dist - length(x)))
+    n_pos = [len*4 + 1, len*4 + 2, len*4 + 3, len*4 + 4]
+    notguide_pos = [len, len*2, len*3] # + actual guide position
+
+    combinations = []
+    mask = BitVector()
+    for yi in y
+        if yi == (len * 2 + 1) # this is N
+            push!(combinations, n_pos)
+            push!(mask, true)
+        elseif yi in len+1:len*2 # this is not guide position
+            push!(combinations, notguide_pos .+ yi .- len)
+            push!(mask, true)
+        else
+            push!(mask, false)
+        end
+    end
+
+    iter = Iterators.product(combinations...)
+    res = transpose(repeat(y, 1, length(iter)))
+    for (i, comb) in enumerate(iter)
+        res[i, mask] = collect(comb)
+    end
+    return res
+end
+
+
 """
 ```
 build_PathTemplates(len::Int, d::Int; storagepath::String = "", mismatch_only::Bool = false)
@@ -138,7 +195,19 @@ function build_PathTemplates(len::Int, d::Int; storagepath::String = "", mismatc
         paths[di - 1] = pd
     end
 
-    paths = PathTemplates(paths, len, d)
+    # now we need to expland the paths so that no ambioguity is left
+    # because not guide can have 3 types A -> C T G we will build our guide sequence on top of that
+    # new mapping is 
+    # guide + not guide 1 + not guide 2 + not guide 3
+    # all N can be explanded into all possible positions
+    paths_expanded = [mapreduce(x -> expand_ambiguous_paths(x, len, d), vcat, paths[i]) for i in 0:d]
+    distances = vcat([repeat([i], size(paths_expanded[i + 1], 1)) for i in 0:d]...)
+    paths_expanded = vcat(paths_expanded...)
+    not_dups = map(!, BitVector(nonunique(DataFrame(paths_expanded, :auto)))) # how can there be no duplicated function?!
+    distances = distances[not_dups]
+    paths_expanded = paths_expanded[not_dups, :]
+
+    paths = PathTemplates(paths_expanded, distances, len, d, mismatch_only)
     if storagepath != ""
         save(paths, storagepath)
     end
@@ -171,38 +240,102 @@ function build_PathTemplates(motif::Motif; storagepath::String = "", mismatch_on
     return build_PathTemplates(len, d; storagepath = storagepath, mismatch_only = mismatch_only)
 end
 
+# already in the UInt64 form for folding into one UInt64 as in 
+# Base.convert(::Type{UInt64}, x::LongDNA{4}), but in bulk and applied to templates
+ALPHABET_TWOBIT = Dict(
+    DNA_A => UInt64(0x00), 
+    DNA_C => UInt64(0x01), 
+    DNA_G => UInt64(0x02),
+    DNA_T => UInt64(0x03))
+
+# eeded for searching inside the FM-index
+ALPHABET_UINT8 = Dict(
+    DNA_A => reinterpret(UInt8, DNA_A), 
+    DNA_C => reinterpret(UInt8, DNA_C), 
+    DNA_G => reinterpret(UInt8, DNA_G),
+    DNA_T => reinterpret(UInt8, DNA_T))
+
 
 """
 ```
-guide_to_template_format(guide::LongDNA{4})
+guide_to_template_format(
+    guide::LongDNA{4}; 
+    alphabet::Dict{DNA, Unsigned} = ALPHABET_TWOBIT)
 ```
 
 Helper that allows you to create mapping vector for the Paths.
 Then enumerating possible alignments becomes simple subsetting.
 
+This g_ is a twobitnucleotide mapping.
+
+   DNA    TwoBit
+ A 0x01   0x00
+ C 0x02   0x01
+ G 0x04   0x02
+ T 0x08   0x03
+
+ to guide + not guide 1 + not guide 2 + not guide 3 + A C G T
+
 g_[Path_vector]
 """
-function guide_to_template_format(guide::LongDNA{4})
-    g_ = copy(guide)
+function guide_to_template_format(guide::LongDNA{4}; 
+    alphabet::Dict{DNA, Unsigned} = ALPHABET_TWOBIT)
+    
+    len = length(guide)
+    g_ = repeat([0xff], len * 4 + 4)
     for (i, base) in enumerate(guide)
         if base == DNA_A
-            not_base = DNA_B
+            g_[i] = alphabet[DNA_A]
+            g_[len * 1 + i] = alphabet[DNA_C]
+            g_[len * 2 + i] = alphabet[DNA_G]
+            g_[len * 3 + i] = alphabet[DNA_T]
         elseif base == DNA_C 
-            not_base = DNA_D
-        elseif base == DNA_T
-            not_base = DNA_V
-        elseif base == DNA_G 
-            not_base = DNA_H
+            g_[i] = alphabet[DNA_C]
+            g_[len * 1 + i] = alphabet[DNA_A]
+            g_[len * 2 + i] = alphabet[DNA_G]
+            g_[len * 3 + i] = alphabet[DNA_T]
+        elseif base == DNA_G
+            g_[i] = alphabet[DNA_G]
+            g_[len * 1 + i] = alphabet[DNA_A]
+            g_[len * 2 + i] = alphabet[DNA_C]
+            g_[len * 3 + i] = alphabet[DNA_T]
+        elseif base == DNA_T 
+            g_[i] = alphabet[DNA_T]
+            g_[len * 1 + i] = alphabet[DNA_A]
+            g_[len * 2 + i] = alphabet[DNA_C]
+            g_[len * 3 + i] = alphabet[DNA_G]
         end
-        push!(g_, not_base)
     end
-    push!(g_, DNA_N)
-    push!(g_, DNA_Gap)
-    return collect(g_)
+    g_[len * 4 + 1] = alphabet[DNA_A]
+    g_[len * 4 + 2] = alphabet[DNA_C]
+    g_[len * 4 + 3] = alphabet[DNA_G]
+    g_[len * 4 + 4] = alphabet[DNA_T]
+    return g_
+end
+
+
+"""
+```
+asUInt64(x::AbstractVecOrMat)
+```
+
+Helper that allows you to create one UInt64 for each row out of each PathTemplate.
+
+    matp = guide_in_template_format[pathTemplate]
+    map(as64, eachrow(matp))
+"""
+function asUInt64(x::AbstractVecOrMat)
+    y = zero(UInt64)
+    for c in x
+        y = (y << 2) | UInt64(c)
+    end
+    mask = (one(UInt64) << (2 * length(x))) - 1
+    return reinterpret(UInt64, y & mask)
 end
 
 
 
+#= all of this is about to be removed I think
 """
 ```
 templates_to_sequences_extended(
@@ -351,7 +484,7 @@ function templates_to_sequences(
     # this will return simply sequences which can be repeats, D0 in front
     return ThreadsX.sort!(ps, by = p -> (p.dist, p.seq))
 end
-
+=#
 
 
 

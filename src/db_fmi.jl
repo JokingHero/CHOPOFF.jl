@@ -3,16 +3,20 @@ function search_chrom(
     detail::String, 
     guides::Vector{LongDNA{4}},
     motif::Motif,
-    fwd_offt::Vector{Vector{Path}},
+    mpt::PathTemplates,
     storage_dir::String)
 
     #ref = open(genomepath, "r")
     #reader = gi.is_fa ? FASTA.Reader(ref, index=genomepath * ".fai") : TwoBit.Reader(ref)
     #seq = getchromseq(gi.is_fa, reader[chrom])
     fmi = load(joinpath(storage_dir, chrom * ".bin"))
-    
     detail_path = joinpath(detail, "detail_" * string(chrom) * ".csv")
     detail_file = open(detail_path, "w")
+
+    guides_uint64 = guide_to_template_format.(copy(guides))
+    guides_uint64_rc = guide_to_template_format.(reverse_complement.(copy(guides)))
+    guides_fmi = guide_to_template_format.(copy(guides_); alphabet = ALPHABET_UINT8)
+    guides_fmi_rc = guide_to_template_format.(reverse_complement.(copy(guides_)); alphabet = ALPHABET_UINT8)
 
     # wroking on this guide and his all possible off-targets
     for (i, fwd_offt_i) in enumerate(fwd_offt) # for each guide
@@ -153,9 +157,14 @@ function search_fmiDB(
     gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
     guides_ = copy(guides)
 
+
+    if length(guide) != mpt.len
+        throw("Wrong guide length.")
+    end
+    mpt = restrictDistance(mpt, distance)
+
     # we input guides that are in forward search configuration
-    fwd_offt = map(x -> templates_to_sequences(x, mpt, motif; dist = distance), guides_)
-    ThreadsX.map(ch -> search_chrom(ch, dirname(output_file), guides_, motif, fwd_offt, fmidbdir), gi.chrom)
+    ThreadsX.map(ch -> search_chrom(ch, dirname(output_file), guides_, motif, mpt, fmidbdir), gi.chrom)
     cleanup_detail(output_file)
     return 
 end

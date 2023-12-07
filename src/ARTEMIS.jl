@@ -57,7 +57,7 @@ include("db_vcf.jl")
 include("db_fmi_helpers.jl")
 include("db_fmi.jl")
 include("db_fmi_seed.jl")
-include("db_fmi_hash.jl")
+include("db_fmi_bff.jl")
 
 
 export Motif, length_noPAM, length, setambig, setdist # motif

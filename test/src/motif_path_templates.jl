@@ -6,10 +6,17 @@ using Combinatorics
 @testset "motif_path_templates.jl" begin
 
     @testset "templates_to_sequences" begin
-        dist = 1
+        dist = 2
         motif = Motif("test"; distance = dist)
         g_len = length_noPAM(motif)
-        template = ARTEMIS.build_PathTemplates(length_noPAM(motif), motif.distance)
+        template = ARTEMIS.build_PathTemplates(motif)
+        template_minus1 = ARTEMIS.restrictDistance(template, dist - 1)
+        @test_throws ARTEMIS.restrictDistance(template, -1)
+        @test_throws ARTEMIS.restrictDistance(template, 4)
+        @test maximum(template_minus1.distances) == (dist - 1)
+        @test size(template_minus1.paths)[2] == dist - 1 + g_len
+
+
         # all possible combinations for guide + extension (dist = 1) with 3 letters
         all_comb = [join(x) for x in multiset_permutations(repeat(['A', 'C', 'T', 'G'], g_len + dist), g_len + dist)]
         all_comb = LongDNA{4}.(all_comb)

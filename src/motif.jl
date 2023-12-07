@@ -253,3 +253,25 @@ function appendPAM_forward(offtarget::LongDNA{4}, motif::Motif)
     end
     return motif.fwd[motif.pam_loci_fwd] * offtarget
 end
+
+
+function visualize_motif(motif::Motif; separator::String = "_")
+    s = string(motif.fwd[motif.pam_loci_fwd])
+    if motif.extends5
+        s = string(length_noPAM(motif)) * "N" * separator * s
+    else
+        s = s * separator * string(length_noPAM(motif)) * "N"
+    end
+    return s
+end
+
+
+function display_motif(motif::Motif)
+    return "Alias: " * motif.alias * "\n" * 
+        "Maximum search distance: " * string(motif.distance) * "\n" * 
+        "Number of allowed ambigous bp: " * string(motif.ambig_max) * "\n" * 
+        visualize_motif(motif; separator = "-")
+end
+
+Base.show(io::IO, ::MIME"text/plain", f::Motif) = print(io, display_motif(f))
+Base.print(io::IO, f::Motif) = print(io, f.alias * "_" * visualize_motif(f) * "_maxDist" * string(f.distance) * "_maxAmbig" * string(f.ambig_max))
