@@ -11,11 +11,10 @@ using Combinatorics
         g_len = length_noPAM(motif)
         template = ARTEMIS.build_PathTemplates(motif)
         template_minus1 = ARTEMIS.restrictDistance(template, dist - 1)
-        @test_throws ARTEMIS.restrictDistance(template, -1)
-        @test_throws ARTEMIS.restrictDistance(template, 4)
+        @test_throws String ARTEMIS.restrictDistance(template, -1)
+        @test_throws String ARTEMIS.restrictDistance(template, 4)
         @test maximum(template_minus1.distances) == (dist - 1)
-        @test size(template_minus1.paths)[2] == dist - 1 + g_len
-
+        @test size(template_minus1.paths)[2] == dist - 1 + length(motif)
 
         # all possible combinations for guide + extension (dist = 1) with 3 letters
         all_comb = [join(x) for x in multiset_permutations(repeat(['A', 'C', 'T', 'G'], g_len + dist), g_len + dist)]
@@ -42,30 +41,18 @@ using Combinatorics
 
         for i in 1:iter
             guide = ARTEMIS.getseq(g_len)
-            
-            # might have redundant sequences
-            pat = ARTEMIS.templates_to_sequences(guide, template; dist = dist)
-
-            # appends PAM in the forward fashion
-            pat2 = ARTEMIS.templates_to_sequences(guide, template, motif; dist = dist)
-    
-            # expands to the maximal alignment length
-            pat3 = ARTEMIS.templates_to_sequences_extended(guide, template; dist = dist)
+            guide_uint8 = ARTEMIS.guide_to_template_format(guide; alphabet = ARTEMIS.ALPHABET_UINT8)
+            all_potential_ot_with_PAM = guide_uint8[template.paths]
+            all_potential_ot_no_PAM = all_potential_ot_with_PAM[:, length(motif.pam_loci_fwd) + 1:end]
+            all_potential_ot_no_PAM = reinterpret(DNA, all_potential_ot_no_PAM) # back to DNA
+            all_potential_ot_no_PAM = map(LongDNA{4}, eachrow(all_potential_ot_no_PAM))
             
             # do the actual alignment between all possible references and a guide
             all_comb_dist = [levenshtein(guide, x, dist) for x in all_comb]
             for d in 0:dist
                 all_comb_d = all_comb[all_comb_dist .== d]
                 # the simplest case uses expanded reference, is therefore the same as our all possible cominations
-                @test setdiff(Set(all_comb_d), pat3[d + 1]) == Set([])
-                
-                pat_d = map(x -> x.seq, filter(x -> x.dist == d, pat))
-                pat_d2 = map(x -> x.seq[1:end-1], filter(x -> x.dist == d, pat2)) # -1 removes PAM
-                @test setdiff(Set(pat_d), Set(pat_d2)) == Set([])
-
-                # notice <= here, this is because sequences might be redundant in pat_d
-                all_comb_d = all_comb[all_comb_dist .<= d]
-                @test setdiff_by_size(pat_d, all_comb_d)
+                @test setdiff(Set(all_comb_d), all_potential_ot_no_PAM[template.distances .== d]) == Set([])
             end
         end
     end

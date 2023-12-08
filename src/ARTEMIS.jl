@@ -411,7 +411,7 @@ function main(args::Array{String})
             build_treeDB(args["name"], args["genome"], motif, args["output"], 
                 args["treeDB"]["prefix_length"])
         elseif args["%COMMAND%"] == "template"
-            build_PathTemplates(length_noPAM(motif), motif.distance; 
+            build_PathTemplates(motif; 
                 storagepath = joinpath(args["output"], args["name"] * ".bin"))
         elseif args["%COMMAND%"] == "linearDB"
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
