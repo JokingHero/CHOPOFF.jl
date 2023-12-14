@@ -6,7 +6,7 @@ using CSV
 using DataFrames
 
 ## SET WD when debugging
-# cd("test")
+cd("test")
 
 ## CRISPRitz compare functions - we test with up to 4 distance
 function asguide(x::String)
@@ -258,7 +258,7 @@ end
 
         # finally, make results!
         res_path = joinpath(res_dir, "results.csv")
-        search_fmiDB(guides, mpt, motif, fmi_dir, res_path; distance = 2)
+        search_fmiDB(guides, mpt, fmi_dir, res_path; distance = 2)
         res_fmiDB = DataFrame(CSV.File(res_path))
         res_fmiDB = filter_overlapping(res_fmiDB, 23)
         select!(res_fmiDB, Not([:alignment_guide, :alignment_reference]))

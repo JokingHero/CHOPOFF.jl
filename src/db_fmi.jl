@@ -2,7 +2,6 @@ function search_chrom(
     chrom::String, 
     detail::String, 
     guides::Vector{LongDNA{4}},
-    motif::Motif,
     mpt::PathTemplates,
     storage_dir::String)
 
@@ -13,50 +12,60 @@ function search_chrom(
     detail_path = joinpath(detail, "detail_" * string(chrom) * ".csv")
     detail_file = open(detail_path, "w")
 
-    guides_uint64 = guide_to_template_format.(copy(guides))
-    guides_uint64_rc = guide_to_template_format.(reverse_complement.(copy(guides)))
-    guides_fmi = guide_to_template_format.(copy(guides_); alphabet = ALPHABET_UINT8)
-    guides_fmi_rc = guide_to_template_format.(reverse_complement.(copy(guides_)); alphabet = ALPHABET_UINT8)
+    guides_fmi = guide_to_template_format.(copy(guides); alphabet = ALPHABET_UINT8)
+    guides_fmi_rc = guide_to_template_format.(complement.(copy(guides)); alphabet = ALPHABET_UINT8)
 
     # wroking on this guide and his all possible off-targets
-    for (i, fwd_offt_i) in enumerate(fwd_offt) # for each guide
+    for (i, g) in enumerate(guides) # for each guide
+        if mpt.motif.extends5
+            guide_stranded = reverse(g)
+        else
+            guide_stranded = g
+        end
+
+        ot = guides_fmi[i][mpt.paths] # GGN + 20N + extension
+        reverse!(ot; dims = 2) # extension + 20N + NGG
+        ot_rc = guides_fmi_rc[i][mpt.paths] # CCN + 20N + extension
+        ot_len = size(ot)[2]
+
         fwd_pos_filter = Set{Int64}([])
         rve_pos_filter = Set{Int64}([])
 
         curr_dist = 0
-        for offt in fwd_offt_i # for each potential OT
+        for i in 1:size(ot)[1] # for each potential OT
+            ot_i = @view ot[i, :]
+            ot_rc_i = @view ot_rc[i, :]
             # keep track of overlapping positions
-            if offt.dist > curr_dist
+            if mpt.distances[i] > curr_dist
                 fwd_pos_filter = union(fwd_pos_filter, fwd_pos_filter .+ 1, fwd_pos_filter .-1)
                 rve_pos_filter = union(rve_pos_filter, rve_pos_filter .+ 1, rve_pos_filter .-1)
-                curr_dist = offt.dist
+                curr_dist = mpt.distances[i]
             end
 
-            fwd_iter = locate(offt.seq, fmi)
-            if motif.extends5 
-                fwd_iter = fwd_iter .+ length(offt.seq) .- 1
+            fwd_iter = locate(ot_i, fmi)
+            if mpt.motif.extends5 
+                fwd_iter = fwd_iter .+ ot_len .- 1
             end
 
             for pos in fwd_iter
                 if !(pos in fwd_pos_filter)
                     push!(fwd_pos_filter, pos)
-                    
-                    line = string(guides[i]) * "," * "no_alignment" * "," * 
-                        string(offt.seq) * "," * string(offt.dist) * "," *
+                    line = string(guide_stranded) * "," * "no_alignment" * "," * 
+                        string(LongDNA{4}(reinterpret(DNA, ot_i))) * "," * string(mpt.distances[i]) * "," *
                         chrom * "," * string(pos) * "," * "+" * "\n"
                     write(detail_file, line)
                 end
             end
                 
-            rve_iter = locate(reverse_complement(offt.seq), fmi)
-            if !motif.extends5
-                rve_iter = rve_iter .+ length(offt.seq) .- 1
+            rve_iter = locate(ot_rc_i, fmi)
+            if !mpt.motif.extends5
+                rve_iter = rve_iter .+ ot_len .- 1
             end
             for pos in rve_iter
                 if !(pos in rve_pos_filter)
                     push!(rve_pos_filter, pos)
-                    line = string(guides[i]) * "," * "no_alignment" * "," * 
-                        string(offt.seq) * "," * string(offt.dist) * "," *
+                    line = string(guide_stranded) * "," * "no_alignment" * "," * 
+                    string(LongDNA{4}(reinterpret(DNA, ot_rc_i))) * "," * string(mpt.distances[i]) * "," *
                         chrom * "," * string(pos) * "," * "-" * "\n"
                     write(detail_file, line)
                 end
@@ -133,7 +142,7 @@ guides = LongDNA{4}.(guides_s)
     
 # finally, make results!
 res_path = joinpath(res_dir, "results.csv")
-search_fmiDB(guides, mpt, motif, fmi_dir, res_path; distance = 1)
+search_fmiDB(guides, mpt, fmi_dir, res_path; distance = 1)
 
 # load results
 using DataFrames, CSV
@@ -147,7 +156,7 @@ summary = summarize_offtargets(res, 1)
 ```
 """
 function search_fmiDB(
-    guides::Vector{LongDNA{4}}, mpt::PathTemplates, motif::Motif, fmidbdir::String,
+    guides::Vector{LongDNA{4}}, mpt::PathTemplates, fmidbdir::String,
     output_file::String; distance::Int = 2)
 
     if distance > 2
@@ -158,13 +167,17 @@ function search_fmiDB(
     guides_ = copy(guides)
 
 
-    if length(guide) != mpt.len
+    if any(length.(guides) .!= length_noPAM(mpt.motif))
         throw("Wrong guide length.")
     end
-    mpt = restrictDistance(mpt, distance)
+    guides_ = copy(guides)
+    # reverse guides so that PAM is always on the left
+    if mpt.motif.extends5
+        guides_ = reverse.(guides_)
+    end
 
-    # we input guides that are in forward search configuration
-    ThreadsX.map(ch -> search_chrom(ch, dirname(output_file), guides_, motif, mpt, fmidbdir), gi.chrom)
+    mpt = restrictDistance(mpt, distance)
+    ThreadsX.map(ch -> search_chrom(ch, dirname(output_file), guides_, mpt, fmidbdir), gi.chrom)
     cleanup_detail(output_file)
     return 
 end
