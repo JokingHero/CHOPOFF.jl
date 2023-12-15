@@ -13,7 +13,7 @@ function search_chrom(
     detail_file = open(detail_path, "w")
 
     guides_fmi = guide_to_template_format.(copy(guides); alphabet = ALPHABET_UINT8)
-    guides_fmi_rc = guide_to_template_format.(complement.(copy(guides)); alphabet = ALPHABET_UINT8)
+    guides_fmi_rc = guide_to_template_format.(copy(guides), true; alphabet = ALPHABET_UINT8)
 
     # wroking on this guide and his all possible off-targets
     for (i, g) in enumerate(guides) # for each guide

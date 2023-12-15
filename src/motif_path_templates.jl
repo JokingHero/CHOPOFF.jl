@@ -343,6 +343,8 @@ guide_to_template_format(
 
 Helper that allows you to create mapping vector for the Paths.
 Then enumerating possible alignments becomes simple subsetting.
+It assumes guides are in PAM - Ns config here. For antisense we 
+have to complement the PAM and guide seqeunce here.
 
 This g_ is a twobitnucleotide mapping.
 
@@ -356,8 +358,12 @@ This g_ is a twobitnucleotide mapping.
 
 g_[Path_vector]
 """
-function guide_to_template_format(guide::LongDNA{4}; 
+function guide_to_template_format(guide::LongDNA{4}, is_antisense = false; 
     alphabet::Union{Dict{DNA, UInt8}, Dict{DNA, UInt64}} = ALPHABET_TWOBIT)
+
+    if is_antisense
+        guide = complement(guide)
+    end
     
     len = length(guide)
     g_ = repeat([0xff], len * 4 + 4)
@@ -384,10 +390,10 @@ function guide_to_template_format(guide::LongDNA{4};
             g_[len * 3 + i] = alphabet[DNA_G]
         end
     end
-    g_[len * 4 + 1] = alphabet[DNA_A]
-    g_[len * 4 + 2] = alphabet[DNA_C]
-    g_[len * 4 + 3] = alphabet[DNA_G]
-    g_[len * 4 + 4] = alphabet[DNA_T]
+    g_[len * 4 + 1] = is_antisense ? alphabet[DNA_T] : alphabet[DNA_A]
+    g_[len * 4 + 2] = is_antisense ? alphabet[DNA_G] : alphabet[DNA_C]
+    g_[len * 4 + 3] = is_antisense ? alphabet[DNA_C] : alphabet[DNA_G]
+    g_[len * 4 + 4] = is_antisense ? alphabet[DNA_A] : alphabet[DNA_T]
     return g_
 end
 
