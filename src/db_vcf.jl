@@ -1,7 +1,7 @@
 struct VcfDB
     dbi::DBInfo
     ambig::AmbigIdx
-    mtp::PathTemplates
+    mpt::PathTemplates
 end
 
 
@@ -194,8 +194,8 @@ function build_vcfDB(
     end
     close(ref)
 
-    mtp = build_PathTemplates(length_noPAM(motif), motif.distance)
-    db = VcfDB(dbi, AmbigIdx(all_guides, guide_annot), mtp)
+    mpt = build_PathTemplates(motif)
+    db = VcfDB(dbi, AmbigIdx(all_guides, guide_annot), mpt)
     if storage_path != ""
         save(db, storage_path)
         @info "Finished constructing vcfDB in " * storage_path
@@ -238,20 +238,42 @@ function search_vcfDB(
     db::VcfDB,
     guides::Vector{LongDNA{4}})
 
+    if any(isambig.(guides)) # TODO
+        throw("Ambiguous bases are not allowed in guide queries.")
+    end
+
     guides_ = copy(guides)
+    dist = db.mpt.motif.distance # use maximal distance as the performance is always bottlenecked by that
+    mpt = restrictDistance(db.mpt, dist)
+    mpt = removePAM(mpt)
+
+    if any(length_noPAM(mpt.motif) .!= length.(guides_))
+        throw("Guide queries are not of the correct length to use with this Motif: " * string(db.dbi.motif))
+    end
     # reverse guides so that PAM is always on the left
-    if db.dbi.motif.extends5
+    if mpt.motif.extends5
         guides_ = reverse.(guides_)
     end
 
-    # TODO check that seq is in line with motif
+    guides_uint8 = guide_to_template_format.(copy(guides_); alphabet = ARTEMIS.ALPHABET_UINT8)
+    guides_uint2 = guide_to_template_format.(copy(guides_); alphabet = ARTEMIS.ALPHABET_TWOBIT)
+
     res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
-        pat = ARTEMIS.templates_to_sequences_extended(s, db.mtp)
-        # all sequences are length of 21
+        pat_uint2 = guides_uint2[i][mpt.paths]
+        pat_uint2 = map(asUInt64, eachrow(pat_uint2))
 
-        for di in 1:2
-            res[i, di] += sum(Base.mapreduce(x -> findbits(x, db.ambig), .|, pat[di]))
+        pat_uint8 = guides_uint8[i][mpt.paths]
+        pat_uint8 = reinterpret(DNA, pat_uint8) # back to DNA
+        pat_uint8 = map(LongDNA{4}, eachrow(pat_uint8))
+
+        # further reduce non-unique seqeunces
+        uniq = .!duplicated(pat_uint2)
+        pat_uint8 = pat_uint8[uniq, :]
+        distances = mpt.distances[uniq]
+
+        for di in 0:dist
+            res[i, di + 1] = sum(Base.mapreduce(x -> findbits(x, db.ambig), .|, pat_uint8[distances .== di, :]))
         end
     end
 

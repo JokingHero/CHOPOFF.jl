@@ -1,6 +1,6 @@
 struct DictDB
     dict::IdDict
-    mtp::PathTemplates
+    mpt::PathTemplates
     dbi::DBInfo
     ambig::Union{AmbigIdx, Nothing}
 end
@@ -70,9 +70,9 @@ function build_dictDB(
     @info "Building Dictionary..."
     dict, ambig = build_guide_dict(dbi, Int(typemax(UInt32)), UInt64)
     @info "Building Motif templates..."
-    mtp = build_PathTemplates(length_noPAM(motif), motif.distance)
+    mpt = build_PathTemplates(motif)
 
-    db = DictDB(dict, mtp, dbi, ambig)
+    db = DictDB(dict, mpt, dbi, ambig)
     if storage_path != ""
         save(db, storage_path)
         @info "Finished constructing dictDB in " * storage_path
@@ -126,27 +126,40 @@ function search_dictDB(
     db::DictDB,
     guides::Vector{LongDNA{4}})
 
-    guides_ = copy(guides)
-    dist = db.mtp.distance # use maximal distance as the performance is always bottlenecked by that
+    if any(isambig.(guides)) # TODO
+        throw("Ambiguous bases are not allowed in guide queries.")
+    end
 
-    if any(length_noPAM(db.dbi.motif) .!= length.(guides_))
+    guides_ = copy(guides)
+    dist = db.mpt.motif.distance # use maximal distance as the performance is always bottlenecked by that
+    mpt = restrictDistance(db.mpt, dist)
+    mpt = removePAM(mpt)
+
+    if any(length_noPAM(mpt.motif) .!= length.(guides_))
         throw("Guide queries are not of the correct length to use with this Motif: " * string(db.dbi.motif))
     end
     # reverse guides so that PAM is always on the left
-    if db.dbi.motif.extends5
+    if mpt.motif.extends5
         guides_ = reverse.(guides_)
     end
 
+    guides_uint2 = guide_to_template_format.(copy(guides_); alphabet = ALPHABET_TWOBIT)
     res = zeros(Int, length(guides_), dist + 1)
     for (i, s) in enumerate(guides_)
 
-        pat = ARTEMIS.templates_to_sequences_extended(s, db.mtp)
-        for di in 1:(dist + 1)
-            res[i, di] = Base.mapreduce(x -> get(db.dict, convert(UInt64, x), 0), +, pat[di])
+        pat = guides_uint2[i][mpt.paths]
+        pat = map(asUInt64, eachrow(pat))
+        # further reduce non-unique seqeunces
+        uniq = .!duplicated(pat)
+        pat = pat[uniq, :]
+        distances = mpt.distances[uniq]
 
-            if !isnothing(db.ambig)
-                res[i, di] += sum(Base.mapreduce(x -> findbits(x, db.ambig), .|, pat[di]))
-            end
+        for di in 0:dist
+            res[i, di + 1] = Base.mapreduce(x -> get(db.dict, x, 0), +, pat[distances .== di, :]; init = 0)
+
+            #if !isnothing(db.ambig) # TODO?!
+            #    res[i, di] += sum(Base.mapreduce(x -> findbits(x, db.ambig), .|, pat[this_di]))
+            #end
         end
     end
 

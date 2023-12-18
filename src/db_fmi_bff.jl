@@ -1,6 +1,6 @@
 struct BinaryFuseFilterDB
     dbi::DBInfo
-    mtp::PathTemplates
+    mpt::PathTemplates
     ambig::Union{AmbigIdx, Nothing}
 end
 
@@ -66,7 +66,7 @@ function build_binaryFuseFilterDB(
 
     dbi = DBInfo(genomepath, name, motif)
     @info "Building Motif templates..."
-    mtp = build_PathTemplates(length_noPAM(motif), motif.distance)
+    mpt = build_PathTemplates(motif)
 
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
@@ -98,7 +98,7 @@ function build_binaryFuseFilterDB(
     ambig = nothing # ambig = length(ambig) > 0 ? AmbigIdx(ambig, nothing) : nothing
     close(ref)
 
-    save(BinaryFuseFilterDB(dbi, mtp, ambig), 
+    save(BinaryFuseFilterDB(dbi, mpt, ambig), 
          file_path(storage_path, "BinaryFuseFilterDB.bin"))
 
     @info "Finished."
@@ -114,6 +114,7 @@ function search_chrom2(
     guides::Vector{LongDNA{4}},
     bffddbir::String, 
     fmidbdir::String, 
+    bffDB::BinaryFuseFilterDB,
     distance::Int)
 
     guides_uint64 = guide_to_template_format.(copy(guides))
@@ -142,7 +143,7 @@ function search_chrom2(
         for (o, ot) in enumerate(pat)
             subs = expand_ambiguous(LongDNA{4}(ot.seq) * repeat(dna"N", len - length(ot.seq)))
             for sub in subs 
-                if !isnothing(ARTEMIS.get_count_idx(db.bins, convert(UInt64, sub), right))
+                if ARTEMIS.get_count_idx(db.bins, convert(UInt64, sub), right) == 0
                     pat_in_genome[o] = true
                     continue # we skip the checks as one of the subsequences was found in the genome
                 end

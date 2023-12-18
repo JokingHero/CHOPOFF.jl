@@ -24,8 +24,13 @@ function search_chrom(
         end
 
         ot = guides_fmi[i][mpt.paths] # GGN + 20N + extension
-        reverse!(ot; dims = 2) # extension + 20N + NGG
         ot_rc = guides_fmi_rc[i][mpt.paths] # CCN + 20N + extension
+        if mpt.motif.extends5
+            reverse!(ot; dims = 2) # extension + 20N + NGG
+        else # Cpf1
+            reverse!(ot_rc; dims = 2) # extension + 20N + NAAA
+        end
+        
         ot_len = size(ot)[2]
 
         fwd_pos_filter = Set{Int64}([])

@@ -151,8 +151,7 @@ end
         build_fmiDB(genome, fmi_dir)
 
         # build a pamDB
-        motif = Motif("Cpf1"; distance = 2)
-        pamDB = build_pamDB(fmi_dir, motif)
+        motif = Motif("Cpf1"; distance = 1)
 
         # prepare PathTemplates
         mpt = build_PathTemplates(motif)
@@ -163,12 +162,12 @@ end
 
         # finally, make results!
         res_path = joinpath(res_dir, "results.csv")
-        search_fmiDB(guides, mpt, motif, fmi_dir, res_path; distance = 2)
+        search_fmiDB(guides, mpt, fmi_dir, res_path; distance = 1)
         res_fmiDB = DataFrame(CSV.File(res_path))
         res_fmiDB = filter_overlapping(res_fmiDB, 23)
         select!(res_fmiDB, Not([:alignment_guide, :alignment_reference]))
 
-        search_linearDB(ldb_path, guides, detail_path; distance = 2)
+        search_linearDB(ldb_path, guides, detail_path; distance = 1)
         ldb = DataFrame(CSV.File(detail_path))
         ldb = filter_overlapping(ldb, 23)
         select!(ldb, Not([:alignment_guide, :alignment_reference]))

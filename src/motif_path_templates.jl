@@ -6,10 +6,11 @@
 """
 ```
 PathTemplates(
-    paths::Matrix{Int}
-    distances::Vector{Int}
-    mismatch_only::Bool
-    motif::Motif)
+    paths::Matrix{Int},
+    distances::Vector{Int},
+    mismatch_only::Bool,
+    motif::Motif,
+    withPAM::Bool)
 ```
 
 Contains an expanded version of the alignment graph. Expanded means that all
@@ -25,6 +26,8 @@ NGG PAM will actually be represented 4 times with different base A, C, T, G.
 `mismatch_only`   -  Whether insertions/deletions are included.
 
 `motif` - Motif object defining maximal distance, length of the sequence without PAM, length of PAM etc.
+
+`withPAM` - Whether the paths and distances were calcualted with or without PAM.
 """
 struct PathTemplates
     paths::Matrix{Int}
@@ -33,6 +36,7 @@ struct PathTemplates
     #max_distance::Int
     mismatch_only::Bool
     motif::Motif
+    withPAM::Bool
 end
 
 
@@ -49,7 +53,19 @@ function restrictDistance(mpt::PathTemplates, distance::Int)
     not_dups = map(!, BitVector(nonunique(DataFrame(paths_expanded, :auto)))) # how can there be no duplicated function?!
     not_over_dist = BitVector(mpt.distances .<= distance)
     not = not_dups .& not_over_dist
-    return PathTemplates(paths_expanded[not, :], mpt.distances[not], mpt.mismatch_only, mpt.motif)
+    return PathTemplates(paths_expanded[not, :], mpt.distances[not], mpt.mismatch_only, mpt.motif, mpt.withPAM)
+end
+
+
+function removePAM(mpt::PathTemplates)
+    if !mpt.withPAM
+        return mpt
+    end
+
+    paths_expanded = mpt.paths
+    paths_expanded = paths_expanded[:, (length(mpt.motif.pam_loci_fwd) + 1):end]
+    not_dups = map(!, BitVector(nonunique(DataFrame(paths_expanded, :auto)))) # how can there be no duplicated function?!
+    return PathTemplates(paths_expanded[not_dups, :], mpt.distances[not_dups], mpt.mismatch_only, mpt.motif, false)
 end
 
 
@@ -310,7 +326,7 @@ function build_PathTemplates(motif::Motif; storagepath::String = "", mismatch_on
     distances = distances[not_dups]
     paths_expanded = paths_expanded[not_dups, :]
 
-    paths = PathTemplates(paths_expanded, distances, mismatch_only, motif)
+    paths = PathTemplates(paths_expanded, distances, mismatch_only, motif, true)
     if storagepath != ""
         save(paths, storagepath)
     end
@@ -406,7 +422,7 @@ asUInt64(x::AbstractVecOrMat)
 Helper that allows you to create one UInt64 for each row out of each PathTemplate.
 
     matp = guide_in_template_format[pathTemplate]
-    map(as64, eachrow(matp))
+    map(asUInt64, eachrow(matp))
 """
 function asUInt64(x::AbstractVecOrMat)
     y = zero(UInt64)
@@ -415,6 +431,28 @@ function asUInt64(x::AbstractVecOrMat)
     end
     mask = (one(UInt64) << (2 * length(x))) - 1
     return reinterpret(UInt64, y & mask)
+end
+
+
+"""
+```
+duplicated(x::Vector{UInt64})
+```
+
+Helper that allows to find which values occur more than once in the Vector. 
+Returns BitVector of duplciated positions.
+"""
+function duplicated(x::Vector{UInt64})
+    s = Set(Vector{UInt64}())
+    b = BitVector(zeros(length(x)))
+    for (i, xi) in enumerate(x)
+        if xi in s
+            b[i] = true
+        else
+            push!(s, xi)
+        end
+    end
+    return b
 end
 
 

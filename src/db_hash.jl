@@ -1,6 +1,6 @@
 struct HashDB{T<:Unsigned, K<:Union{UInt8, UInt16, UInt32}}
     dbi::DBInfo
-    mtp::PathTemplates
+    mpt::PathTemplates
     bins::Vector{BinaryFuseFilter{K}}
     counts::Vector{T}
     ambig::Union{AmbigIdx, Nothing}
@@ -14,7 +14,7 @@ function get_count_idx(bins::Vector{BinaryFuseFilter{K}}, guide::UInt64, right::
             return i
         end
     end
-    return nothing
+    return 0
 end
 
 
@@ -45,13 +45,13 @@ function guides_to_bins(
     err_l = 0
     for (guide, real_count) in zip(guides, counts)
         est_count_right = get_count_idx(bins, guide, true)
-        if isnothing(est_count_right) 
+        if est_count_right == 0
             throw("All guides should be inside!")
         else
             est_count_right = bins_counts[est_count_right]
         end
         est_count_left = get_count_idx(bins, guide, false)
-        if isnothing(est_count_left) 
+        if est_count_left == 0
             throw("All guides should be inside!")
         else
             est_count_left = bins_counts[est_count_left]
@@ -136,7 +136,7 @@ function build_hashDB(
         #motif = setdist(motif, 1)
     end
     @info "Building Motif templates..."
-    mtp = build_PathTemplates(length_noPAM(motif), motif.distance)
+    mpt = build_PathTemplates(motif)
     
     # gather all unique off-targets
     guides = Vector{UInt64}()
@@ -146,7 +146,7 @@ function build_hashDB(
     # guides are here of length 21
     bins, counts, err_left, err_right = 
         guides_to_bins(guides, seed, max_iterations, max_count; precision = precision)
-    db = HashDB(dbi, mtp, bins, counts, ambig)
+    db = HashDB(dbi, mpt, bins, counts, ambig)
 
     if storage_path != ""
         save(db, storage_path)
@@ -239,7 +239,7 @@ function search_hashDB(
     guides::Vector{LongDNA{4}},
     right::Bool)
 
-    if any(isambig.(guides)) # TODO I think we support it now - should not matter much
+    if any(isambig.(guides)) # TODO
         throw("Ambiguous bases are not allowed in guide queries.")
     end
 
@@ -255,33 +255,32 @@ function search_hashDB(
         guides_ = reverse.(guides_)
     end
 
+    dist = db.mpt.motif.distance # use maximal distance as the performance is always bottlenecked by that
+    mpt = restrictDistance(db.mpt, dist)
+    mpt = removePAM(mpt)
+
+    guides_uint2 = guide_to_template_format.(copy(guides_); alphabet = ALPHABET_TWOBIT)
     res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
 
-        pat = templates_to_sequences_extended(s, db.mtp; dist = 1)
-        d0 = collect(pat[1])
-        d1 = collect(pat[2])
+        pat = guides_uint2[i][mpt.paths]
+        pat = map(asUInt64, eachrow(pat))
+        # further reduce non-unique seqeunces
+        uniq = .!duplicated(pat)
+        pat = pat[uniq, :]
+        distances = mpt.distances[uniq]
 
-        for d0_s in convert.(UInt64, d0)
-            idx = get_count_idx(db.bins, d0_s, right)
-            if !isnothing(idx)
-                res[i, 1] += db.counts[idx]
-            end
+        for di in 0:dist
+            res[i, di + 1] = Base.mapreduce(x -> get_count_idx(db.bins, x, right), +, pat[distances .== di, :]; init = 0)
         end
 
-        for d1_s in convert.(UInt64, d1)
-            idx = get_count_idx(db.bins, d1_s, right)
-            if !isnothing(idx)
-                res[i, 2] += db.counts[idx]
-            end
-        end
-
-        if !isnothing(db.ambig)
-            bits_mapped = Base.map(x -> findbits(x, db.ambig), d0)
-            res[i, 1] += sum(reduce(.|, bits_mapped))
-            bits_mapped = Base.map(x -> findbits(x, db.ambig), d1)
-            res[i, 2] +=  sum(reduce(.|, bits_mapped))
-        end
+        # TODO
+        #if !isnothing(db.ambig)
+        #    bits_mapped = Base.map(x -> findbits(x, db.ambig), d0)
+        #    res[i, 1] += sum(reduce(.|, bits_mapped))
+        #    bits_mapped = Base.map(x -> findbits(x, db.ambig), d1)
+        #    res[i, 2] +=  sum(reduce(.|, bits_mapped))
+        #end
     end
 
     res = format_DF(res, 1, guides)

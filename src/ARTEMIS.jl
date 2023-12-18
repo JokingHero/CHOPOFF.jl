@@ -469,8 +469,8 @@ function main(args::Array{String})
             db = load(args["database"])
             res = search_vcfDB(db, guides)
         elseif args["%COMMAND%"] == "fmi"
-            template = load(args["fmi"]["template"]) # TODO fix motif...
-            search_fmiDB(guides, template, motif, args["database"], args["output"];
+            template = load(args["fmi"]["template"])
+            search_fmiDB(guides, template, args["database"], args["output"];
                 distance = args["distance"])
         elseif args["%COMMAND%"] == "fmi_seed"
             pamDB = load(args["fmi_seed"]["pamDB"])
