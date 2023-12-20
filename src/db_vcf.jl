@@ -269,11 +269,11 @@ function search_vcfDB(
 
         # further reduce non-unique seqeunces
         uniq = .!duplicated(pat_uint2)
-        pat_uint8 = pat_uint8[uniq, :]
+        pat_uint8 = pat_uint8[uniq]
         distances = mpt.distances[uniq]
 
         for di in 0:dist
-            res[i, di + 1] = sum(Base.mapreduce(x -> findbits(x, db.ambig), .|, pat_uint8[distances .== di, :]))
+            res[i, di + 1] = sum(Base.mapreduce(x -> findbits(x, db.ambig), .|, pat_uint8[distances .== di]))
         end
     end
 

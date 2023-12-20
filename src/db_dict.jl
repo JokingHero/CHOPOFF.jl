@@ -132,8 +132,8 @@ function search_dictDB(
 
     guides_ = copy(guides)
     dist = db.mpt.motif.distance # use maximal distance as the performance is always bottlenecked by that
-    mpt = restrictDistance(db.mpt, dist)
-    mpt = removePAM(mpt)
+    # mpt = restrictDistance(db.mpt, dist)
+    mpt = removePAM(db.mpt)
 
     if any(length_noPAM(mpt.motif) .!= length.(guides_))
         throw("Guide queries are not of the correct length to use with this Motif: " * string(db.dbi.motif))
@@ -151,11 +151,11 @@ function search_dictDB(
         pat = map(asUInt64, eachrow(pat))
         # further reduce non-unique seqeunces
         uniq = .!duplicated(pat)
-        pat = pat[uniq, :]
+        pat = pat[uniq]
         distances = mpt.distances[uniq]
 
         for di in 0:dist
-            res[i, di + 1] = Base.mapreduce(x -> get(db.dict, x, 0), +, pat[distances .== di, :]; init = 0)
+            res[i, di + 1] = Base.mapreduce(x -> get(db.dict, x, 0), +, pat[distances .== di]; init = 0)
 
             #if !isnothing(db.ambig) # TODO?!
             #    res[i, di] += sum(Base.mapreduce(x -> findbits(x, db.ambig), .|, pat[this_di]))

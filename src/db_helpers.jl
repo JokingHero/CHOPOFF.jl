@@ -130,7 +130,7 @@ function normalize_to_PAMseqEXT(
         # EXT ... NAA
         guides .= reverse_complement.(guides)
         guides_pos = last.(guides_pos)
-        # becomes TTA ... EXT
+        # becomes TTN ... EXT
     else #!dbi.motif.extends5 && !is_antisense
         # TTN ... EXT
         guides_pos = first.(guides_pos)

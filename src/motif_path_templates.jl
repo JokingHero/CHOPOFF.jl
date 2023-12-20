@@ -48,12 +48,12 @@ function restrictDistance(mpt::PathTemplates, distance::Int)
     elseif distance < 0
         throw("Distance can't be below 0.")
     end
-    paths_expanded = mpt.paths
-    paths_expanded = paths_expanded[:, 1:end - (mpt.motif.distance - distance)]
-    not_dups = map(!, BitVector(nonunique(DataFrame(paths_expanded, :auto)))) # how can there be no duplicated function?!
+    #paths_expanded = mpt.paths
+    #paths_expanded = paths_expanded[:, 1:end - (mpt.motif.distance - distance)]
+    #not_dups = map(!, BitVector(nonunique(DataFrame(paths_expanded, :auto)))) # how can there be no duplicated function?!
     not_over_dist = BitVector(mpt.distances .<= distance)
-    not = not_dups .& not_over_dist
-    return PathTemplates(paths_expanded[not, :], mpt.distances[not], mpt.mismatch_only, mpt.motif, mpt.withPAM)
+    #not = not_dups .& not_over_dist
+    return PathTemplates(mpt.paths[not_over_dist, :], mpt.distances[not_over_dist], mpt.mismatch_only, mpt.motif, mpt.withPAM)
 end
 
 
@@ -454,7 +454,6 @@ function duplicated(x::Vector{UInt64})
     end
     return b
 end
-
 
 
 #= all of this is about to be removed I think

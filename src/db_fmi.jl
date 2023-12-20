@@ -168,13 +168,11 @@ function search_fmiDB(
         throw("Max distance is 2, anything more than that is impractically slow.")
     end
 
-    gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
-    guides_ = copy(guides)
-
-
     if any(length.(guides) .!= length_noPAM(mpt.motif))
         throw("Wrong guide length.")
     end
+
+    gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
     if mpt.motif.extends5

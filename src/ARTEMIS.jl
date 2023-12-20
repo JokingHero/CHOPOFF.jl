@@ -81,6 +81,7 @@ export build_PathTemplates
 export build_fmiDB, search_fmiDB
 export build_pamDB, search_fmiDB_seed
 export search_fmiDB_hash
+export build_binaryFuseFilterDB, search_binaryFuseFilterDB
 
 ## Standalone binary generation
 function parse_commandline(args::Array{String})

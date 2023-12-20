@@ -22,7 +22,7 @@ using Combinatorics
         @test_throws String ARTEMIS.restrictDistance(template, -1)
         @test_throws String ARTEMIS.restrictDistance(template, 4)
         @test maximum(template_minus1.distances) == (dist - 1)
-        @test size(template_minus1.paths)[2] == dist - 1 + length(motif)
+        @test size(template_minus1.paths)[2] == dist + length(motif)
 
         # all possible combinations for guide + extension (dist = 1) with 3 letters
         all_comb = [join(x) for x in multiset_permutations(repeat(['A', 'C', 'T', 'G'], g_len + dist), g_len + dist)]

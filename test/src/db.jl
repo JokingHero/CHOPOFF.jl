@@ -284,6 +284,40 @@ end
         @test nrow(failed) == 0
     end
 
+    @testset "linearDB vs bffDB" begin
+        fmi_dir = joinpath(tdir, "fmifDB")
+        mkpath(fmi_dir)
+        build_fmiDB(genome, fmi_dir)
+
+        # build a pamDB
+        motif = Motif("Cas9"; distance = 2)
+
+        bff_dir = joinpath(tdir, "bffDB")
+        mkpath(bff_dir)
+        build_binaryFuseFilterDB("testBFF", genome, motif, bff_dir)
+
+        # prepare output folder
+        res_dir = joinpath(tdir, "resultsBFF")
+        mkpath(res_dir)
+
+        # finally, make results!
+        res_path = joinpath(res_dir, "results.csv")
+        search_binaryFuseFilterDB(bff_dir, fmi_dir, guides, res_path; distance = 2)
+        
+        res_bffDB = DataFrame(CSV.File(res_path))
+        res_bffDB = filter_overlapping(res_bffDB, 23)
+        select!(res_bffDB, Not([:alignment_guide, :alignment_reference]))
+
+        search_linearDB(ldb_path, guides, detail_path; distance = 2)
+        ldb = DataFrame(CSV.File(detail_path))
+        ldb = filter_overlapping(ldb, 23)
+        select!(ldb, Not([:alignment_guide, :alignment_reference]))
+
+        # test outputs for brute force method!
+        failed = antijoin(ldb, res_bffDB, on = [:guide, :distance, :chromosome, :start, :strand])
+        @test nrow(failed) == 0
+    end
+
 
     @testset "linearDB vs linearDB early stopped" begin
         ldb_filt = DataFrame(CSV.File(detail_path))

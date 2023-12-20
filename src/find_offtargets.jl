@@ -96,13 +96,18 @@ add_guides!(vec::Vector{UInt64}, guides::Vector{UInt64}) = append!(vec, guides)
 Will push guides found by the dbi.motif into the output as strings.
 Guides are as is for forward strand and reverse complemented when on reverse strand.
 Guides do not contain PAM sequence here.
+
+remove_pam - whether PAM sequence should be removed
+normalzie - whether all guides should be flipped into PAMseqEXT e.g. GGn-20N-3bp
 "
 function pushguides!(
     output::T,
     ambig::Vector{LongDNA{4}},
     dbi::DBInfo,
     chrom::K,
-    is_antisense::Bool) where {
+    is_antisense::Bool;
+    remove_pam::Bool = true,
+    normalize::Bool = true) where {
         T<:Union{
             Vector{String},
             Vector{UInt128}, 
@@ -117,14 +122,19 @@ function pushguides!(
         guides_pos = findguides(dbi, chrom, is_antisense)
         guides = ThreadsX.map(guides_pos) do x 
             guide = LongDNA{4}(chrom[x])
-            guide = removepam(guide, pam_loci)
+            if remove_pam 
+                guide = removepam(guide, pam_loci)
+            end
             return guide
         end
 
         if dbi.motif.distance > 0
             guides = add_extension(guides, guides_pos, dbi, chrom, is_antisense)
         end
-        guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, is_antisense)
+
+        if normalize
+            guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, is_antisense)
+        end
         guides_pos = nothing # not needed for anything and uses a lot of space
         
         idx = ThreadsX.map(isambig, guides)

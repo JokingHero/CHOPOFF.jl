@@ -256,8 +256,7 @@ function search_hashDB(
     end
 
     dist = db.mpt.motif.distance # use maximal distance as the performance is always bottlenecked by that
-    mpt = restrictDistance(db.mpt, dist)
-    mpt = removePAM(mpt)
+    mpt = removePAM(db.mpt)
 
     guides_uint2 = guide_to_template_format.(copy(guides_); alphabet = ALPHABET_TWOBIT)
     res = zeros(Int, length(guides_), 2)
@@ -267,11 +266,11 @@ function search_hashDB(
         pat = map(asUInt64, eachrow(pat))
         # further reduce non-unique seqeunces
         uniq = .!duplicated(pat)
-        pat = pat[uniq, :]
+        pat = pat[uniq]
         distances = mpt.distances[uniq]
 
         for di in 0:dist
-            res[i, di + 1] = Base.mapreduce(x -> get_count_idx(db.bins, x, right), +, pat[distances .== di, :]; init = 0)
+            res[i, di + 1] = Base.mapreduce(x -> get_count_idx(db.bins, x, right), +, pat[distances .== di]; init = 0)
         end
 
         # TODO
