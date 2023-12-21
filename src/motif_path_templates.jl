@@ -319,10 +319,15 @@ function build_PathTemplates(motif::Motif; storagepath::String = "", mismatch_on
     # new mapping is 
     # guide + not guide 1 + not guide 2 + not guide 3
     # all N can be explanded into all possible positions
-    paths_expanded = [mapreduce(x -> expand_ambiguous_paths(x, motif), vcat, paths[i]) for i in 0:d]
+    @info "Making paths_expanded"
+    paths_expanded = [ThreadsX.mapreduce(x -> expand_ambiguous_paths(x, motif), vcat, paths[i]) for i in 0:d]
+    @info "Created paths_expanded"
     distances = vcat([repeat([i], size(paths_expanded[i + 1], 1)) for i in 0:d]...)
+    @info "created distances"
     paths_expanded = vcat(paths_expanded...)
+    @info "vcat finished!"
     not_dups = map(!, BitVector(nonunique(DataFrame(paths_expanded, :auto)))) # how can there be no duplicated function?!
+    @info "unique finished!"
     distances = distances[not_dups]
     paths_expanded = paths_expanded[not_dups, :]
 
