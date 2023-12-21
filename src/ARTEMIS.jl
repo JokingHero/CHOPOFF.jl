@@ -478,9 +478,9 @@ function main(args::Array{String})
             build_pamDB(args["pamDB"]["fmidir"], motif; storage_path = args["output"])
         elseif args["%COMMAND%"] == "bffDB"
             prec = UInt32
-            if args["hashDB"]["precision"] == "UInt8"
+            if args["bffDB"]["precision"] == "UInt8"
                 prec = UInt8
-            elseif args["hashDB"]["precision"] == "UInt16"
+            elseif args["bffDB"]["precision"] == "UInt16"
                 prec = UInt16
             end
             build_binaryFuseFilterDB(args["name"], args["genome"], motif, args["output"];
