@@ -135,6 +135,9 @@ function parse_commandline(args::Array{String})
         "pamDB"
             action = :command
             help = "Build DB of PAMs of a genome"
+        "bffDB"
+            action = :command
+            help = "Build DB of BFFs of a genome"
         "template"
             action = :command
             help = "Build templates with specific Motif."
@@ -242,6 +245,25 @@ function parse_commandline(args::Array{String})
             default = "UInt16"
     end
 
+    @add_arg_table! s["build"]["bffDB"] begin
+        "--max_iterations"
+            help = "How many iterations to try before quitting the building of the DB."
+            arg_type = Int
+            default = 10
+        "--seed"
+            help = "Initial seed for database build."
+            arg_type = UInt64
+            default = UInt64(0x726b2b9d438b9d4d)
+        "--precision"
+            help = "Whether to use UInt8, UInt16 or UInt32 to store the keys."
+            arg_type = String
+            range_tester = (
+                x -> x == "UInt8" || 
+                x == "UInt16" ||
+                x == "UInt32")
+            default = "UInt16"
+    end
+
     @add_arg_table! s["build"]["dictDB"] begin
         "--max_count"
             help = "Maximum count value for given off-target sequence. " * 
@@ -284,6 +306,9 @@ function parse_commandline(args::Array{String})
         "fmi_seed"
             action = :command
             help = "Search fmi index using lossless 01*0 seed method."
+        "bffDB"
+            action = :command
+            help = "Search FM-index using Binary Fuse Filter method."
         "--distance"
             help = "Maximum edit distance to analyze. Must be less or equal to the distance that was used when building db."
             arg_type = Int
@@ -331,7 +356,14 @@ function parse_commandline(args::Array{String})
             arg_type = String
             required = true
         "--pamDB"
-            help = "Path to the file with pamDB. - Make with build_pamDB."
+            help = "Path to the file with pamDB."
+            arg_type = String
+            required = true
+    end
+
+    @add_arg_table! s["search"]["bffDB"] begin
+        "--fmiDB"
+            help = "Path to the folder with FM-index."
             arg_type = String
             required = true
     end
@@ -444,6 +476,15 @@ function main(args::Array{String})
             build_fmiDB(args["genome"], args["output"])
         elseif args["%COMMAND%"] == "pamDB"
             build_pamDB(args["pamDB"]["fmidir"], motif; storage_path = args["output"])
+        elseif args["%COMMAND%"] == "bffDB"
+            prec = UInt32
+            if args["hashDB"]["precision"] == "UInt8"
+                prec = UInt8
+            elseif args["hashDB"]["precision"] == "UInt16"
+                prec = UInt16
+            end
+            build_binaryFuseFilterDB(args["name"], args["genome"], motif, args["output"];
+                seed = args["bffDB"]["seed"], max_iterations = args["bffDB"]["max_iterations"], precision = prec)
         else
             throw("Unsupported database type.")
         end
@@ -476,6 +517,9 @@ function main(args::Array{String})
         elseif args["%COMMAND%"] == "fmi_seed"
             pamDB = load(args["fmi_seed"]["pamDB"])
             search_fmiDB_seed(guides, args["database"], args["fmi_seed"]["genome"], pamDB, args["output"];
+                distance = args["distance"])
+        elseif args["%COMMAND%"] == "bffDB"
+            search_binaryFuseFilterDB(args["database"], args["bffDB"]["fmiDB"], guides, args["output"];
                 distance = args["distance"])
         else
             throw("Unsupported database type.")

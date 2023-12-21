@@ -68,7 +68,7 @@ function build_binaryFuseFilterDB(
     storage_path::String;
     seed::UInt64 = UInt64(0x726b2b9d438b9d4d),
     max_iterations::Int = 10,
-    precision::DataType = UInt16)
+    precision::DataType = UInt32)
 
     dbi = DBInfo(genomepath, name, motif)
     @info "Building Motif templates..."
