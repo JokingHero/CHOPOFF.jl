@@ -159,6 +159,7 @@ end
 function expand_ambiguous_paths(x::Vector{Int}, motif::Motif)
     len = length_noPAM(motif)
     max_dist = motif.distance
+    output_type = smallestutype(unsigned(len*4 + 4))
 
     #        A          C          G          T
     n_pos = [len*4 + 1, len*4 + 2, len*4 + 3, len*4 + 4]
@@ -250,11 +251,11 @@ function expand_ambiguous_paths(x::Vector{Int}, motif::Motif)
     y = vcat(pam_translated, y)
 
     iter = Iterators.product(combinations...)
-    res = transpose(repeat(y, 1, length(iter)))
+    res = permutedims(repeat(y, 1, length(iter)))
     for (i, comb) in enumerate(iter)
         res[i, mask] = collect(comb)
     end
-    return res
+    return convert.(output_type, res)
 end
 
 
@@ -280,7 +281,6 @@ mapped on the graph of all possible alignments of sequence of length
 
 """
 function build_PathTemplates(motif::Motif; storagepath::String = "", mismatch_only::Bool = false)
-
     len = length_noPAM(motif)
     d = motif.distance
 
@@ -291,7 +291,6 @@ function build_PathTemplates(motif::Motif; storagepath::String = "", mismatch_on
     # guide + not guide + N + Gap + remove last index as it is ending node
     # 1:20    21:40       41  42
     # 1:len   len+1:len*2 len*2 + 1, len*2 + 2, len*2 + 3
-
     adj = adj_matrix_of_guide(len, d; mismatch_only = mismatch_only)
     ngp = repeat([len * 2 + 1, len * 2 + 2, len * 2 + 3], len * d)
     # replace noParents (mismatches - not guide) with proper links to noParents
@@ -319,15 +318,12 @@ function build_PathTemplates(motif::Motif; storagepath::String = "", mismatch_on
     # new mapping is 
     # guide + not guide 1 + not guide 2 + not guide 3
     # all N can be explanded into all possible positions
-    @info "Making paths_expanded"
-    paths_expanded = [ThreadsX.mapreduce(x -> expand_ambiguous_paths(x, motif), vcat, paths[i]) for i in 0:d]
-    @info "Created paths_expanded"
+    paths_expanded = [
+        ThreadsX.mapreduce(x -> ARTEMIS.expand_ambiguous_paths(x, motif), vcat, paths[i]; 
+        init = Matrix{UInt8}(undef, 0, length(motif) + motif.distance)) for i in 0:d]
     distances = vcat([repeat([i], size(paths_expanded[i + 1], 1)) for i in 0:d]...)
-    @info "created distances"
     paths_expanded = vcat(paths_expanded...)
-    @info "vcat finished!"
     not_dups = map(!, BitVector(nonunique(DataFrame(paths_expanded, :auto)))) # how can there be no duplicated function?!
-    @info "unique finished!"
     distances = distances[not_dups]
     paths_expanded = paths_expanded[not_dups, :]
 
