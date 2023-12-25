@@ -318,15 +318,23 @@ function build_PathTemplates(motif::Motif; storagepath::String = "", mismatch_on
     # new mapping is 
     # guide + not guide 1 + not guide 2 + not guide 3
     # all N can be explanded into all possible positions
-    paths_expanded = [
-        ThreadsX.mapreduce(x -> ARTEMIS.expand_ambiguous_paths(x, motif), vcat, paths[i]; 
-        init = Matrix{UInt8}(undef, 0, length(motif) + motif.distance)) for i in 0:d]
-    distances = vcat([repeat([i], size(paths_expanded[i + 1], 1)) for i in 0:d]...)
-    paths_expanded = vcat(paths_expanded...)
+    paths_expanded = Base.mapreduce(x -> expand_ambiguous_paths(x, motif), vcat, paths[0]; 
+        init = Matrix{UInt8}(undef, 0, length(motif) + motif.distance))
+    paths_lengths = [size(paths_expanded)[1]]
+    for i in 1:d
+        paths_i = ThreadsX.mapreduce(x -> expand_ambiguous_paths(x, motif), vcat, paths[i]; 
+            init = Matrix{UInt8}(undef, 0, length(motif) + motif.distance))
+        push!(paths_lengths, size(paths_i)[1])
+        paths_expanded = vcat(paths_expanded, paths_i)
+        paths_i = nothing
+    end
+    paths = nothing
     not_dups = map(!, BitVector(nonunique(DataFrame(paths_expanded, :auto)))) # how can there be no duplicated function?!
-    distances = distances[not_dups]
-    paths_expanded = paths_expanded[not_dups, :]
+    paths_expanded = paths_expanded[not_dups, :] # filters out around 2%
 
+    distances = vcat([repeat([convert(UInt8, i)], paths_lengths[i + 1]) for i in 0:d]...)
+    distances = distances[not_dups]
+    
     paths = PathTemplates(paths_expanded, distances, mismatch_only, motif, true)
     if storagepath != ""
         save(paths, storagepath)
