@@ -219,9 +219,11 @@ version = "2.0.0"
 
 [[deps.FastFilter]]
 deps = ["Random"]
-git-tree-sha1 = "01dd64a9e77973f8bf058bf471e4064120171e3c"
+git-tree-sha1 = "7859e289f39d3151956dcbdc3d0891b9b1956b95"
+repo-rev = "main"
+repo-url = "https://github.com/JokingHero/FastFilter.jl"
 uuid = "5470531f-076d-47a9-aacb-e15e1e7f44ac"
-version = "0.1.0"
+version = "0.1.1"
 
 [[deps.FileIO]]
 deps = ["Pkg", "Requires", "UUIDs"]
