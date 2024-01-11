@@ -362,6 +362,10 @@ function parse_commandline(args::Array{String})
     end
 
     @add_arg_table! s["search"]["bffDB"] begin
+        "--genome"
+            help = "Path to the genome."
+            arg_type = String
+            required = true
         "--fmiDB"
             help = "Path to the folder with FM-index."
             arg_type = String
@@ -519,7 +523,7 @@ function main(args::Array{String})
             search_fmiDB_seed(guides, args["database"], args["fmi_seed"]["genome"], pamDB, args["output"];
                 distance = args["distance"])
         elseif args["%COMMAND%"] == "bffDB"
-            search_binaryFuseFilterDB(args["database"], args["bffDB"]["fmiDB"], guides, args["output"];
+            search_binaryFuseFilterDB(args["database"], args["bffDB"]["fmiDB"], args["bffDB"]["genome"], guides, args["output"];
                 distance = args["distance"])
         else
             throw("Unsupported database type.")

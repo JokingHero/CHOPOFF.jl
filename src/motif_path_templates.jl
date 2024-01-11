@@ -19,7 +19,8 @@ NGG PAM will actually be represented 4 times with different base A, C, T, G.
 
 # Arguments
 `paths` - contains potential off-target seqeunces in the order of columns: PAM + offtarget sequence + Ns to reach 
- number of bases as maximum distance allows
+ number of bases as maximum distance allows. There are two encodings employed here. First encoding up to the `restricted_len`
+ is the UNIT8/2BIT encoding where all bases have to be ACTG, the other encoding is keeping ambigous bases.
 
 `distances` - specifies alignment distances for each potential off-target row
 
@@ -28,6 +29,10 @@ NGG PAM will actually be represented 4 times with different base A, C, T, G.
 `motif` - Motif object defining maximal distance, length of the sequence without PAM, length of PAM etc.
 
 `withPAM` - Whether the paths and distances were calcualted with or without PAM.
+
+`restrict_to_len` -  To which length ambiguity should be expanded and after which length ambiguity should be collapsed if possible.
+For example: ACTG and ANNN with restriction to length 2, would result in these seqeunces: ACNN AANN AGNN ATNN
+This length does not includes PAM - it applies directly to the guide seqeunce. The default is full length of the guide and its maximal distance.
 """
 struct PathTemplates
     paths::Matrix{Int}
@@ -37,6 +42,7 @@ struct PathTemplates
     mismatch_only::Bool
     motif::Motif
     withPAM::Bool
+    restrict_to_len::Int
 end
 
 
@@ -48,12 +54,14 @@ function restrictDistance(mpt::PathTemplates, distance::Int)
     elseif distance < 0
         throw("Distance can't be below 0.")
     end
-    #paths_expanded = mpt.paths
-    #paths_expanded = paths_expanded[:, 1:end - (mpt.motif.distance - distance)]
-    #not_dups = map(!, BitVector(nonunique(DataFrame(paths_expanded, :auto)))) # how can there be no duplicated function?!
+
+    trim = length_noPAM(mpt.motif) + mpt.motif.distance - mpt.restrict_to_len
+    paths_expanded = mpt.paths
+    paths_expanded = paths_expanded[:, 1:(end - trim)]
+    not_dups = map(!, BitVector(nonunique(DataFrame(paths_expanded, :auto)))) # how can there be no duplicated function?!
     not_over_dist = BitVector(mpt.distances .<= distance)
-    #not = not_dups .& not_over_dist
-    return PathTemplates(mpt.paths[not_over_dist, :], mpt.distances[not_over_dist], mpt.mismatch_only, mpt.motif, mpt.withPAM)
+    not = not_dups .& not_over_dist 
+    return PathTemplates(mpt.paths[not, :], mpt.distances[not], mpt.mismatch_only, mpt.motif, mpt.withPAM)
 end
 
 
@@ -156,7 +164,9 @@ end
 
 # to guide + not guide 1 + not guide 2 + not guide 3 + A C G T
 # and expand ambigous in PAM and extension Ns
-function expand_ambiguous_paths(x::Vector{Int}, motif::Motif)
+function expand_ambiguous_paths(x::Vector{Int}, motif::Motif; restrict_to_len = length_noPAM(motif) + motif.distance, withPAM::Bool = false)
+
+    restrict_to_len = length(x) > restrict_to_len ? length(x) : restrict_to_len
     len = length_noPAM(motif)
     max_dist = motif.distance
     output_type = smallestutype(unsigned(len*4 + 4))
@@ -165,79 +175,81 @@ function expand_ambiguous_paths(x::Vector{Int}, motif::Motif)
     n_pos = [len*4 + 1, len*4 + 2, len*4 + 3, len*4 + 4]
     notguide_pos = [len, len*2, len*3] # + actual guide position
 
-    y = vcat(x, repeat([len*2 + 1], len + max_dist - length(x)))
+    y = vcat(x, repeat([len*2 + 1], len + max_dist - length(x))) # add Ns in the ambigous encoding
     pam = motif.fwd[motif.pam_loci_fwd]
     if motif.extends5
         reverse!(pam)
     end
     # translate pam to our scheme of guide + not guide 1 + not guide 2 + ng3 + A C G T
-    # its not perfect what is below but we need to account an ambiguity in PAM
+    # its not perfect what is below but we need to account for an ambiguity in PAM
     combinations = []
     mask = BitVector()
     pam_translated = Vector{Int}()
-    for p in pam
-        if p == DNA_A
-            push!(pam_translated, n_pos[1])
-            push!(mask, false)
-        elseif p == DNA_C
-            push!(pam_translated, n_pos[2])
-            push!(mask, false)
-        elseif p == DNA_G
-            push!(pam_translated, n_pos[3])
-            push!(mask, false)
-        elseif p == DNA_T
-            push!(pam_translated, n_pos[4])
-            push!(mask, false)
-        elseif p == DNA_N
-            push!(pam_translated, 0) # WILL be relaced by combinations
-            push!(combinations, n_pos)
-            push!(mask, true)
-        elseif p == DNA_Gap
-            continue
-        elseif p == DNA_B
-            push!(pam_translated, 0) # WILL be relaced by combinations
-            push!(combinations, n_pos[2:4])
-            push!(mask, true)
-        elseif p == DNA_D
-            push!(pam_translated, 0) # WILL be relaced by combinations
-            push!(combinations, n_pos[[1, 3, 4]]) # A G T 
-            push!(mask, true)
-        elseif p == DNA_H
-            push!(pam_translated, 0) # WILL be relaced by combinations
-            push!(combinations, n_pos[[1, 2, 4]]) # A C T 
-            push!(mask, true)
-        elseif p == DNA_K
-            push!(pam_translated, 0) # WILL be relaced by combinations
-            push!(combinations, n_pos[[3, 4]]) # A G T 
-            push!(mask, true)
-        elseif p == DNA_M
-            push!(pam_translated, 0) # WILL be relaced by combinations
-            push!(combinations, n_pos[[1, 2]]) # A C 
-            push!(mask, true)
-        elseif p == DNA_R
-            push!(pam_translated, 0) # WILL be relaced by combinations
-            push!(combinations, n_pos[[1, 3]]) # A G 
-            push!(mask, true)
-        elseif p == DNA_S
-            push!(pam_translated, 0) # WILL be relaced by combinations
-            push!(combinations, n_pos[[2, 3]]) # C G 
-            push!(mask, true)
-        elseif p == DNA_V
-            push!(pam_translated, 0) # WILL be relaced by combinations
-            push!(combinations, n_pos[[1, 2, 3]]) # A C G 
-            push!(mask, true)
-        elseif p == DNA_W
-            push!(pam_translated, 0) # WILL be relaced by combinations
-            push!(combinations, n_pos[[1, 2, 4]]) # A T
-            push!(mask, true)
-        elseif p == DNA_Y
-            push!(pam_translated, 0) # WILL be relaced by combinations
-            push!(combinations, n_pos[[2, 4]]) # C T
-            push!(mask, true)
+    if withPAM
+        for p in pam
+            if p == DNA_A
+                push!(pam_translated, n_pos[1])
+                push!(mask, false)
+            elseif p == DNA_C
+                push!(pam_translated, n_pos[2])
+                push!(mask, false)
+            elseif p == DNA_G
+                push!(pam_translated, n_pos[3])
+                push!(mask, false)
+            elseif p == DNA_T
+                push!(pam_translated, n_pos[4])
+                push!(mask, false)
+            elseif p == DNA_N
+                push!(pam_translated, 0) # WILL be relaced by combinations
+                push!(combinations, n_pos)
+                push!(mask, true)
+            elseif p == DNA_Gap
+                continue
+            elseif p == DNA_B
+                push!(pam_translated, 0) # WILL be relaced by combinations
+                push!(combinations, n_pos[2:4])
+                push!(mask, true)
+            elseif p == DNA_D
+                push!(pam_translated, 0) # WILL be relaced by combinations
+                push!(combinations, n_pos[[1, 3, 4]]) # A G T 
+                push!(mask, true)
+            elseif p == DNA_H
+                push!(pam_translated, 0) # WILL be relaced by combinations
+                push!(combinations, n_pos[[1, 2, 4]]) # A C T 
+                push!(mask, true)
+            elseif p == DNA_K
+                push!(pam_translated, 0) # WILL be relaced by combinations
+                push!(combinations, n_pos[[3, 4]]) # A G T 
+                push!(mask, true)
+            elseif p == DNA_M
+                push!(pam_translated, 0) # WILL be relaced by combinations
+                push!(combinations, n_pos[[1, 2]]) # A C 
+                push!(mask, true)
+            elseif p == DNA_R
+                push!(pam_translated, 0) # WILL be relaced by combinations
+                push!(combinations, n_pos[[1, 3]]) # A G 
+                push!(mask, true)
+            elseif p == DNA_S
+                push!(pam_translated, 0) # WILL be relaced by combinations
+                push!(combinations, n_pos[[2, 3]]) # C G 
+                push!(mask, true)
+            elseif p == DNA_V
+                push!(pam_translated, 0) # WILL be relaced by combinations
+                push!(combinations, n_pos[[1, 2, 3]]) # A C G 
+                push!(mask, true)
+            elseif p == DNA_W
+                push!(pam_translated, 0) # WILL be relaced by combinations
+                push!(combinations, n_pos[[1, 2, 4]]) # A T
+                push!(mask, true)
+            elseif p == DNA_Y
+                push!(pam_translated, 0) # WILL be relaced by combinations
+                push!(combinations, n_pos[[2, 4]]) # C T
+                push!(mask, true)
+            end
         end
     end
 
-    for yi in y
+    for yi in y[1:restrict_to_len]
         if yi == (len * 2 + 1) # this is N
             push!(combinations, n_pos)
             push!(mask, true)
@@ -248,8 +260,12 @@ function expand_ambiguous_paths(x::Vector{Int}, motif::Motif)
             push!(mask, false)
         end
     end
-    y = vcat(pam_translated, y)
+    mask = vcat(mask, BitVector(repeat([false], length(y) - restrict_to_len)))
 
+    if withPAM
+        y = vcat(pam_translated, y)
+    end
+    
     iter = Iterators.product(combinations...)
     res = permutedims(repeat(y, 1, length(iter)))
     for (i, comb) in enumerate(iter)
@@ -261,7 +277,12 @@ end
 
 """
 ```
-build_PathTemplates(len::Int, d::Int; storagepath::String = "", mismatch_only::Bool = false)
+build_PathTemplates(
+    motif::Motif; 
+    storagepath::String = "", 
+    mismatch_only::Bool = false, 
+    restrict_to_len::Int = length_noPAM(motif),
+    withPAM::Bool = false)
 ```
 
 Builds up a PathTemplates object. Stores 
@@ -279,10 +300,23 @@ mapped on the graph of all possible alignments of sequence of length
 
 `mismatch_only` - Whether to skip insertions/deletions.
 
+`restrict_to_len` - To which length ambiguity should be expanded and after which length ambiguity should be collapsed if possible.
+    For example: ACTG and ANNN with restriction to length 2, would result in these seqeunces: ACNN AANN AGNN ATNN
+    This length does not includes PAM - it applies directly to the guide seqeunce. The default is full length of the guide and its maximal distance.
+
+`withPAM` - Whether to include PAM in the paths. Default is false.
+
 """
-function build_PathTemplates(motif::Motif; storagepath::String = "", mismatch_only::Bool = false)
+function build_PathTemplates(
+    motif::Motif; 
+    storagepath::String = "", 
+    mismatch_only::Bool = false, 
+    restrict_to_len::Int = length_noPAM(motif) + motif.distance,
+    withPAM::Bool = false)
+
     len = length_noPAM(motif)
     d = motif.distance
+    length_of_paths = (withPAM ? length(motif) : length_noPAM(motif)) + motif.distance
 
     # path is mapped to these numbers, path numbers are
     # (len + end) * (dist  + 1) and
@@ -318,12 +352,12 @@ function build_PathTemplates(motif::Motif; storagepath::String = "", mismatch_on
     # new mapping is 
     # guide + not guide 1 + not guide 2 + not guide 3
     # all N can be explanded into all possible positions
-    paths_expanded = Base.mapreduce(x -> expand_ambiguous_paths(x, motif), vcat, paths[0]; 
-        init = Matrix{UInt8}(undef, 0, length(motif) + motif.distance))
+    paths_expanded = Base.mapreduce(x -> expand_ambiguous_paths(x, motif; restrict_to_len = restrict_to_len, withPAM = withPAM), vcat, paths[0]; 
+        init = Matrix{UInt8}(undef, 0, length_of_paths))
     paths_lengths = [size(paths_expanded)[1]]
     for i in 1:d
-        paths_i = ThreadsX.mapreduce(x -> expand_ambiguous_paths(x, motif), vcat, paths[i]; 
-            init = Matrix{UInt8}(undef, 0, length(motif) + motif.distance))
+        paths_i = ThreadsX.mapreduce(x -> expand_ambiguous_paths(x, motif; restrict_to_len = restrict_to_len, withPAM = withPAM), vcat, paths[i]; 
+            init = Matrix{UInt8}(undef, 0, length_of_paths))
         push!(paths_lengths, size(paths_i)[1])
         paths_expanded = vcat(paths_expanded, paths_i)
         paths_i = nothing
@@ -335,7 +369,7 @@ function build_PathTemplates(motif::Motif; storagepath::String = "", mismatch_on
     distances = vcat([repeat([convert(UInt8, i)], paths_lengths[i + 1]) for i in 0:d]...)
     distances = distances[not_dups]
     
-    paths = PathTemplates(paths_expanded, distances, mismatch_only, motif, true)
+    paths = PathTemplates(paths_expanded, distances, mismatch_only, motif, true, restrict_to_len)
     if storagepath != ""
         save(paths, storagepath)
     end
@@ -421,6 +455,32 @@ function guide_to_template_format(guide::LongDNA{4}, is_antisense = false;
     g_[len * 4 + 4] = is_antisense ? alphabet[DNA_A] : alphabet[DNA_T]
     return g_
 end
+
+
+function guide_to_template_format_ambig(guide::LongDNA{4}, is_antisense = false)
+
+    if is_antisense
+        guide = complement(guide)
+    end
+    
+    g_ = copy(guide)
+    for (i, base) in enumerate(guide)
+        if base == DNA_A
+            not_base = DNA_B
+        elseif base == DNA_C 
+            not_base = DNA_D
+        elseif base == DNA_G
+            not_base = DNA_H
+        elseif base == DNA_T 
+            not_base = DNA_V
+        end
+        push!(g_, not_base)
+    end
+    push!(g_, DNA_N)
+    push!(g_, DNA_Gap)
+    return collect(g_)
+end
+
 
 
 """

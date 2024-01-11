@@ -133,7 +133,6 @@ function search_dictDB(
     guides_ = copy(guides)
     dist = db.mpt.motif.distance # use maximal distance as the performance is always bottlenecked by that
     # mpt = restrictDistance(db.mpt, dist)
-    mpt = removePAM(db.mpt)
 
     if any(length_noPAM(mpt.motif) .!= length.(guides_))
         throw("Guide queries are not of the correct length to use with this Motif: " * string(db.dbi.motif))

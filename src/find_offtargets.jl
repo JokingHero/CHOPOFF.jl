@@ -99,6 +99,8 @@ Guides do not contain PAM sequence here.
 
 remove_pam - whether PAM sequence should be removed
 normalzie - whether all guides should be flipped into PAMseqEXT e.g. GGn-20N-3bp
+restrict_to_len - will restrict the guides to be of specific lengths, smaller than the initial motif
+    this includes/excludes PAM based on remove_pam as remove_pam is applied before the length restriction
 "
 function pushguides!(
     output::T,
@@ -107,7 +109,8 @@ function pushguides!(
     chrom::K,
     is_antisense::Bool;
     remove_pam::Bool = true,
-    normalize::Bool = true) where {
+    normalize::Bool = true,
+    restrict_to_len::Union{Nothing, Int64}) where {
         T<:Union{
             Vector{String},
             Vector{UInt128}, 
@@ -128,7 +131,7 @@ function pushguides!(
             return guide
         end
 
-        if dbi.motif.distance > 0
+        if dbi.motif.distance > 0 & !isnothing(restrict_to_len) # no point in adding extension and then removing it
             guides = add_extension(guides, guides_pos, dbi, chrom, is_antisense)
         end
 
@@ -141,6 +144,10 @@ function pushguides!(
         if sum(idx) != 0
             append!(ambig, guides[idx])
             guides = guides[.!idx]
+        end
+
+        if !isnothing(restrict_to_len)
+            guides = ThreadsX.map(x -> getindex(x, 1:restrict_to_len), guides)
         end
 
         if as_UInt128

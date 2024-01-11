@@ -256,7 +256,6 @@ function search_hashDB(
     end
 
     dist = db.mpt.motif.distance # use maximal distance as the performance is always bottlenecked by that
-    mpt = removePAM(db.mpt)
 
     guides_uint2 = guide_to_template_format.(copy(guides_); alphabet = ALPHABET_TWOBIT)
     res = zeros(Int, length(guides_), 2)
