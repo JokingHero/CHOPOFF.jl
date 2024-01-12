@@ -164,9 +164,11 @@ end
 
 # to guide + not guide 1 + not guide 2 + not guide 3 + A C G T
 # and expand ambigous in PAM and extension Ns
-function expand_ambiguous_paths(x::Vector{Int}, motif::Motif; restrict_to_len = length_noPAM(motif) + motif.distance, withPAM::Bool = false)
+function expand_ambiguous_paths(x::Vector{Int}, motif::Motif; 
+    restrict_to_len = length_noPAM(motif) + motif.distance, 
+    withPAM::Bool = false)
 
-    restrict_to_len = length(x) > restrict_to_len ? length(x) : restrict_to_len
+    restrict_to_len =  restrict_to_len > length(x) ? length(x) : restrict_to_len
     len = length_noPAM(motif)
     max_dist = motif.distance
     output_type = smallestutype(unsigned(len*4 + 4))
@@ -369,7 +371,7 @@ function build_PathTemplates(
     distances = vcat([repeat([convert(UInt8, i)], paths_lengths[i + 1]) for i in 0:d]...)
     distances = distances[not_dups]
     
-    paths = PathTemplates(paths_expanded, distances, mismatch_only, motif, true, restrict_to_len)
+    paths = PathTemplates(paths_expanded, distances, mismatch_only, motif, withPAM, restrict_to_len)
     if storagepath != ""
         save(paths, storagepath)
     end

@@ -98,7 +98,7 @@ Guides are as is for forward strand and reverse complemented when on reverse str
 Guides do not contain PAM sequence here.
 
 remove_pam - whether PAM sequence should be removed
-normalzie - whether all guides should be flipped into PAMseqEXT e.g. GGn-20N-3bp
+normalize - whether all guides should be flipped into PAMseqEXT e.g. GGn-20N-3bp
 restrict_to_len - will restrict the guides to be of specific lengths, smaller than the initial motif
     this includes/excludes PAM based on remove_pam as remove_pam is applied before the length restriction
 "
@@ -110,7 +110,7 @@ function pushguides!(
     is_antisense::Bool;
     remove_pam::Bool = true,
     normalize::Bool = true,
-    restrict_to_len::Union{Nothing, Int64}) where {
+    restrict_to_len::Union{Nothing, Int64} = nothing) where {
         T<:Union{
             Vector{String},
             Vector{UInt128}, 

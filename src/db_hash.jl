@@ -261,12 +261,12 @@ function search_hashDB(
     res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
 
-        pat = guides_uint2[i][mpt.paths]
+        pat = guides_uint2[i][db.mpt.paths]
         pat = map(asUInt64, eachrow(pat))
         # further reduce non-unique seqeunces
         uniq = .!duplicated(pat)
         pat = pat[uniq]
-        distances = mpt.distances[uniq]
+        distances = db.mpt.distances[uniq]
 
         for di in 0:dist
             res[i, di + 1] = Base.mapreduce(x -> get_count_idx(db.bins, x, right), +, pat[distances .== di]; init = 0)

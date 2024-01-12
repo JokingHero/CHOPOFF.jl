@@ -6,7 +6,7 @@ using CSV
 using DataFrames
 
 ## SET WD when debugging
-# cd("test")
+cd("test")
 
 ## CRISPRitz compare functions - we test with up to 4 distance
 function asguide(x::String)
@@ -302,7 +302,7 @@ end
 
         # finally, make results!
         res_path = joinpath(res_dir, "results.csv")
-        search_binaryFuseFilterDB(bff_dir, fmi_dir, guides, res_path; distance = 2)
+        search_binaryFuseFilterDB(bff_dir, fmi_dir, genome, guides, res_path; distance = 2)
         
         res_bffDB = DataFrame(CSV.File(res_path))
         res_bffDB = filter_overlapping(res_bffDB, 23)

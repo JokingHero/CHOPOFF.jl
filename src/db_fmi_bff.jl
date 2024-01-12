@@ -84,7 +84,8 @@ function build_binaryFuseFilterDB(
 
     dbi = DBInfo(genomepath, name, motif)
     @info "Building Motif templates..."
-    mpt = build_PathTemplates(motif; restrict_to_len = restrict_to_len)
+    # PAM here adds too many sequences to verify...
+    mpt = build_PathTemplates(motif; restrict_to_len = restrict_to_len, withPAM = false)
 
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
@@ -124,19 +125,6 @@ function build_binaryFuseFilterDB(
 end
 
 
-function not_duplicated_and_in_db(x::Vector{UInt64}, bff::BinaryFuseFilter)
-    s = Set(Vector{UInt64}())
-    b = BitVector(zeros(length(x)))
-    for (i, xi) in enumerate(x)
-        if !(xi in s)
-            push!(s, xi)
-            b[i] = xi in bff
-        end
-    end
-    return b
-end
-
-
 function search_chrom2(
     chrom_name::String,
     detail::String, 
@@ -148,7 +136,7 @@ function search_chrom2(
 
     ref = open(genomepath, "r")
     reader = bffDB.dbi.gi.is_fa ? FASTA.Reader(ref, index=genomepath * ".fai") : TwoBit.Reader(ref)
-    chrom = reader[ch]
+    chrom = reader[chrom_name]
 
     guides_uint64 = guide_to_template_format.(copy(guides); alphabet = ALPHABET_TWOBIT)
     guides_uint64_rc = guide_to_template_format.(copy(guides); alphabet = ALPHABET_TWOBIT) 
@@ -157,9 +145,6 @@ function search_chrom2(
     guides_ambig = guide_to_template_format_ambig.(copy(guides))
     guides_ambig_rc = guide_to_template_format_ambig.(copy(guides))
 
-    #ref = open(genomepath, "r")
-    #reader = gi.is_fa ? FASTA.Reader(ref, index=genomepath * ".fai") : TwoBit.Reader(ref)
-    #seq = getchromseq(gi.is_fa, reader[chrom_name])
     fmi = load(joinpath(fmidbdir, chrom_name * ".bin"))
     bff = load(joinpath(bffddbir, "BinaryFuseFilterDB_" * chrom_name * ".bin"))
     restrict_to_len = bff.restrict_to_len
@@ -167,6 +152,10 @@ function search_chrom2(
     detail_file = open(detail_path, "w")
 
     # wroking on this guide and his all possible off-targets
+    pam = bffDB.mpt.motif.fwd[bffDB.mpt.motif.pam_loci_fwd]
+    pam_rc = bffDB.mpt.motif.rve[bffDB.mpt.motif.pam_loci_rve]
+    pam_len = length(pam)
+    tail_len = size(bffDB.mpt.paths)[2] - restrict_to_len # no PAM assumptions
     for (i, g) in enumerate(guides)
         if bffDB.mpt.motif.extends5
             guide_stranded = reverse(g)
@@ -175,56 +164,90 @@ function search_chrom2(
         end
 
         # STEP 1. Check in hash whether this OT is there or not
-        ot_uint64 = guides_uint64[i][bffDB.mpt.paths[:, 1:restrict_to_len]] # without PAM PAMseqEXT
-        ot_uint64 = map(asUInt64, eachrow(ot_uint64))
-        ot_uint64_rc = guides_uint64_rc[i][bffDB.mpt.paths[:, 1:restrict_to_len]] # without PAMseqEXT - normalized always
-        ot_uint64_rc = map(asUInt64, eachrow(ot_uint64_rc))
+        ot_uint64 = guides_uint64[i][bffDB.mpt.paths[:, 1:restrict_to_len]] # PAMseqEXT
+        ot_uint64 = map(ARTEMIS.asUInt64, eachrow(ot_uint64))
+        ot_uint64_rc = guides_uint64_rc[i][bffDB.mpt.paths[:, 1:restrict_to_len]] # PAMseqEXT - normalized always
+        ot_uint64_rc = map(ARTEMIS.asUInt64, eachrow(ot_uint64_rc))
         # further reduce non-unique seqeunces
-        ot_uint64 = not_duplicated_and_in_db(ot_uint64, bff.bff_fwd) # these are both unique and in HashDB
-        ot_uint64_rc = not_duplicated_and_in_db(ot_uint64_rc, bff.bff_rve) # BitVector relative to our paths vector
+        ot_uint64 = in.(ot_uint64, Ref(bff.bff_fwd))
+        ot_uint64_rc = in.(ot_uint64_rc, Ref(bff.bff_rve))
 
         # STEP 2. actually find the location of the OTs in the genome
         ot = guides_fmi[i][bffDB.mpt.paths[ot_uint64, 1:restrict_to_len]] # GGN + 20N + extension
         ot_rc = guides_fmi_rc[i][bffDB.mpt.paths[ot_uint64_rc, 1:restrict_to_len]] # CCN + 20N + extension
+        ot_tail = guides_ambig[i][bffDB.mpt.paths[ot_uint64, restrict_to_len + 1:end]] # GGN + 20N + extension
+        ot_rc_tail = guides_ambig_rc[i][bffDB.mpt.paths[ot_uint64_rc, restrict_to_len + 1:end]] # CCN + 20N + extension
+
         distances = bffDB.mpt.distances[ot_uint64]
         distances_rc = bffDB.mpt.distances[ot_uint64_rc]
         if bffDB.mpt.motif.extends5
             reverse!(ot; dims = 2) # extension + 20N + NGG
+            reverse!(ot_tail; dims = 2)
         else # Cpf1
             reverse!(ot_rc; dims = 2) # extension + 20N + NAAA
+            reverse!(ot_rc_tail; dims = 2)
         end
         
-        ot_len = size(ot)[2]
-        for i in 1:size(ot)[1] # for each potential OT in fwd
-            ot_i = @view ot[i, :]
+        for j in 1:size(ot)[1]
+            ot_j = @view ot[j, :]
 
-            fwd_iter = locate(ot_i, fmi)
-            if bffDB.mpt.motif.extends5 
-                fwd_iter = fwd_iter .+ ot_len .- 1
-            end
-
+            fwd_iter = ARTEMIS.locate(ot_j, fmi)
             for pos in fwd_iter
-                # TODO extract seq and check PAM + compare to the tail...
-                line = string(guide_stranded) * "," * "no_alignment" * "," * 
-                    string(LongDNA{4}(reinterpret(DNA, ot_i))) * "," * string(distances[i]) * "," *
-                    chrom * "," * string(pos) * "," * "+" * "\n"
-                write(detail_file, line)
+                if bffDB.mpt.motif.extends5
+                    pass = all(ARTEMIS.iscompatible.(
+                        pam, chrom[(pos + restrict_to_len):(pos + restrict_to_len + pam_len - 1)])) && 
+                        all(ARTEMIS.iscompatible.(ot_tail[j, :], chrom[(pos - tail_len):(pos - 1)]))
+                else
+                    pass = all(ARTEMIS.iscompatible.(
+                        pam, chrom[(pos - pam_len):(pos - 1)])) && all(ARTEMIS.iscompatible.(
+                        ot_tail[j, :], chrom[(pos + restrict_to_len):(pos + restrict_to_len + tail_len - 1)]))
+                end
+
+                if pass
+                    # TODO remove trailing Ns?!
+                    if bffDB.mpt.motif.extends5
+                        aln_ref = chrom[(pos - tail_len):pos + restrict_to_len - 1]
+                        pos = pos + restrict_to_len + tail_len - 1
+                    else
+                        aln_ref = chrom[pos:pos + restrict_to_len + tail_len - 1]
+                    end
+    
+                    line = string(guide_stranded) * "," * "no_alignment" * "," * 
+                        string(aln_ref) * "," * string(distances[j]) * "," *
+                        chrom_name * "," * string(pos) * "," * "+" * "\n"
+                    write(detail_file, line)
+                end
             end
         end
 
-        for i in 1:size(ot_rc)[1] # for each potential OT in rve
-            ot_rc_i = @view ot_rc[i, :]
+        for j in 1:size(ot_rc)[1]
+            ot_rc_j = @view ot_rc[j, :]
                 
-            rve_iter = locate(ot_rc_i, fmi)
-            if !bffDB.mpt.motif.extends5
-                rve_iter = rve_iter .+ ot_len .- 1
-            end
-
+            rve_iter = ARTEMIS.locate(ot_rc_j, fmi)
             for pos in rve_iter
-                line = string(guide_stranded) * "," * "no_alignment" * "," * 
-                    string(LongDNA{4}(reinterpret(DNA, ot_rc_i))) * "," * string(distances_rc[i]) * "," *
-                    chrom * "," * string(pos) * "," * "-" * "\n"
-                write(detail_file, line)
+                if bffDB.mpt.motif.extends5
+                    pass = all(ARTEMIS.iscompatible.(
+                        pam_rc, chrom[(pos - pam_len):(pos - 1)])) && all(ARTEMIS.iscompatible.(
+                        ot_rc_tail[j, :], chrom[(pos + restrict_to_len):(pos + restrict_to_len + tail_len - 1)]))
+                else
+                    pass = all(ARTEMIS.iscompatible.(
+                        pam, chrom[(pos + restrict_to_len):(pos + restrict_to_len + pam_len - 1)])) && 
+                        all(ARTEMIS.iscompatible.(ot_tail[j, :], chrom[(pos - tail_len):(pos - 1)]))
+                end
+
+                if pass
+                    if bffDB.mpt.motif.extends5
+                        aln_ref = chrom[pos:pos + restrict_to_len + tail_len - 1]
+                    else
+                        aln_ref = chrom[(pos - tail_len):pos + restrict_to_len - 1]
+                        pos = pos + restrict_to_len + tail_len - 1
+                    end
+
+                    line = string(guide_stranded) * "," * "no_alignment" * "," * 
+                        string(aln_ref) * "," * string(distances_rc[j]) * "," *
+                        chrom_name * "," * string(pos) * "," * "-" * "\n"
+                    write(detail_file, line)
+                end
             end
         end
     end

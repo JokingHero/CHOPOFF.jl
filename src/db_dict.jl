@@ -134,11 +134,11 @@ function search_dictDB(
     dist = db.mpt.motif.distance # use maximal distance as the performance is always bottlenecked by that
     # mpt = restrictDistance(db.mpt, dist)
 
-    if any(length_noPAM(mpt.motif) .!= length.(guides_))
+    if any(length_noPAM(db.mpt.motif) .!= length.(guides_))
         throw("Guide queries are not of the correct length to use with this Motif: " * string(db.dbi.motif))
     end
     # reverse guides so that PAM is always on the left
-    if mpt.motif.extends5
+    if db.mpt.motif.extends5
         guides_ = reverse.(guides_)
     end
 
@@ -146,12 +146,12 @@ function search_dictDB(
     res = zeros(Int, length(guides_), dist + 1)
     for (i, s) in enumerate(guides_)
 
-        pat = guides_uint2[i][mpt.paths]
+        pat = guides_uint2[i][db.mpt.paths]
         pat = map(asUInt64, eachrow(pat))
         # further reduce non-unique seqeunces
         uniq = .!duplicated(pat)
         pat = pat[uniq]
-        distances = mpt.distances[uniq]
+        distances = db.mpt.distances[uniq]
 
         for di in 0:dist
             res[i, di + 1] = Base.mapreduce(x -> get(db.dict, x, 0), +, pat[distances .== di]; init = 0)
