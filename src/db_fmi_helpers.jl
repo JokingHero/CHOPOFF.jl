@@ -139,7 +139,7 @@ function build_fmiDB(
     gi = GenomeInfo(genomepath)
     ref = open(gi.filepath, "r")
     reader = gi.is_fa ? FASTA.Reader(ref, index = gi.filepath * ".fai") : TwoBit.Reader(ref)
-    @showprogress 60 for chrom in gi.chrom # no need for parallelization as this is super fast
+    @showprogress dt=60 for chrom in gi.chrom # no need for parallelization as this is super fast
         fmi = FMIndex(getchromseq(gi.is_fa, reader[chrom]), 16, r = 32)
         p = joinpath(storage_dir, chrom * ".bin")
         save(fmi, p)

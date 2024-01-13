@@ -22,7 +22,7 @@ using Combinatorics
         @test_throws String ARTEMIS.restrictDistance(template, -1)
         @test_throws String ARTEMIS.restrictDistance(template, 4)
         @test maximum(template_minus1.distances) == (dist - 1)
-        @test size(template_minus1.paths)[2] == dist + length(motif)
+        @test size(template_minus1.paths)[2] == dist + length_noPAM(motif)
 
         # all possible combinations for guide + extension (dist = 1) with 3 letters
         all_comb = [join(x) for x in multiset_permutations(repeat(['A', 'C', 'T', 'G'], g_len + dist), g_len + dist)]
@@ -50,8 +50,7 @@ using Combinatorics
         for i in 1:iter
             guide = ARTEMIS.getseq(g_len)
             guide_uint8 = ARTEMIS.guide_to_template_format(guide; alphabet = ARTEMIS.ALPHABET_UINT8)
-            all_potential_ot_with_PAM = guide_uint8[template.paths]
-            all_potential_ot_no_PAM = all_potential_ot_with_PAM[:, length(motif.pam_loci_fwd) + 1:end]
+            all_potential_ot_no_PAM = guide_uint8[template.paths]
             all_potential_ot_no_PAM = reinterpret(DNA, all_potential_ot_no_PAM) # back to DNA
             all_potential_ot_no_PAM = map(LongDNA{4}, eachrow(all_potential_ot_no_PAM))
             

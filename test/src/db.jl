@@ -6,7 +6,7 @@ using CSV
 using DataFrames
 
 ## SET WD when debugging
-cd("test")
+# cd("test")
 
 ## CRISPRitz compare functions - we test with up to 4 distance
 function asguide(x::String)
@@ -250,7 +250,7 @@ end
         pamDB = build_pamDB(fmi_dir, motif)
 
         # prepare PathTemplates
-        mpt = build_PathTemplates(motif)
+        mpt = build_PathTemplates(motif; withPAM = true)
 
         # prepare output folder
         res_dir = joinpath(tdir, "results")

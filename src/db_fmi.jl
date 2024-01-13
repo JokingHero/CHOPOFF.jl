@@ -134,7 +134,7 @@ genome = joinpath(vcat(artemis_path,
 # build FM-index
 build_fmiDB(genome, fmi_dir)
 motif = Motif("Cas9"; distance = 1)
-mpt = build_PathTemplates(motif)
+mpt = build_PathTemplates(motif; withPAM = true) # its important to add PAM here!
 
 # prepare output folder
 res_dir = joinpath(tdir, "results")

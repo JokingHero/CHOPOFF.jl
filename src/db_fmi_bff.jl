@@ -136,18 +136,18 @@ function search_chrom2(
 
     ref = open(genomepath, "r")
     reader = bffDB.dbi.gi.is_fa ? FASTA.Reader(ref, index=genomepath * ".fai") : TwoBit.Reader(ref)
-    chrom = reader[chrom_name]
+    chrom = getchromseq(bffDB.dbi.gi.is_fa, reader[chrom_name])
 
     guides_uint64 = guide_to_template_format.(copy(guides); alphabet = ALPHABET_TWOBIT)
     guides_uint64_rc = guide_to_template_format.(copy(guides); alphabet = ALPHABET_TWOBIT) 
     guides_fmi = guide_to_template_format.(copy(guides); alphabet = ALPHABET_UINT8)
     guides_fmi_rc = guide_to_template_format.(copy(guides), true; alphabet = ALPHABET_UINT8) # complements guide GGN -> CCN, TTTN -> AAAN
     guides_ambig = guide_to_template_format_ambig.(copy(guides))
-    guides_ambig_rc = guide_to_template_format_ambig.(copy(guides))
+    guides_ambig_rc = guide_to_template_format_ambig.(copy(guides), true)
 
     fmi = load(joinpath(fmidbdir, chrom_name * ".bin"))
     bff = load(joinpath(bffddbir, "BinaryFuseFilterDB_" * chrom_name * ".bin"))
-    restrict_to_len = bff.restrict_to_len
+    restrict_to_len = bffDB.mpt.restrict_to_len
     detail_path = joinpath(detail, "detail_" * chrom_name * ".csv")
     detail_file = open(detail_path, "w")
 
@@ -207,9 +207,10 @@ function search_chrom2(
                     # TODO remove trailing Ns?!
                     if bffDB.mpt.motif.extends5
                         aln_ref = chrom[(pos - tail_len):pos + restrict_to_len - 1]
-                        pos = pos + restrict_to_len + tail_len - 1
+                        pos = pos + restrict_to_len + tail_len - 1 - 1
                     else
                         aln_ref = chrom[pos:pos + restrict_to_len + tail_len - 1]
+                        pos = pos - pam_len
                     end
     
                     line = string(guide_stranded) * "," * "no_alignment" * "," * 
@@ -231,13 +232,14 @@ function search_chrom2(
                         ot_rc_tail[j, :], chrom[(pos + restrict_to_len):(pos + restrict_to_len + tail_len - 1)]))
                 else
                     pass = all(ARTEMIS.iscompatible.(
-                        pam, chrom[(pos + restrict_to_len):(pos + restrict_to_len + pam_len - 1)])) && 
-                        all(ARTEMIS.iscompatible.(ot_tail[j, :], chrom[(pos - tail_len):(pos - 1)]))
+                        pam_rc, chrom[(pos + restrict_to_len):(pos + restrict_to_len + pam_len - 1)])) && 
+                        all(ARTEMIS.iscompatible.(ot_rc_tail[j, :], chrom[(pos - tail_len):(pos - 1)]))
                 end
 
                 if pass
                     if bffDB.mpt.motif.extends5
                         aln_ref = chrom[pos:pos + restrict_to_len + tail_len - 1]
+                        pos = pos - pam_len
                     else
                         aln_ref = chrom[(pos - tail_len):pos + restrict_to_len - 1]
                         pos = pos + restrict_to_len + tail_len - 1

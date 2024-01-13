@@ -171,7 +171,7 @@ function build_motifDB(
     # Iterate over all prefixes and merge different chromosomes
     kmers = all_kmers(skipmer_size)
     kmers = Dict(zip(kmers, 1:length(kmers)))
-    @showprogress 60 for prefix in prefixes # can be parallelized here ?! memory?!
+    @showprogress dt=60 for prefix in prefixes # can be parallelized here ?! memory?!
         guides = Vector{LongDNA{4}}()
         loci = Vector{Loc}()
         for chrom in dbi.gi.chrom

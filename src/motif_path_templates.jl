@@ -55,13 +55,12 @@ function restrictDistance(mpt::PathTemplates, distance::Int)
         throw("Distance can't be below 0.")
     end
 
-    trim = length_noPAM(mpt.motif) + mpt.motif.distance - mpt.restrict_to_len
     paths_expanded = mpt.paths
-    paths_expanded = paths_expanded[:, 1:(end - trim)]
+    paths_expanded = paths_expanded[:, 1:(end - (mpt.motif.distance - distance))]
     not_dups = map(!, BitVector(nonunique(DataFrame(paths_expanded, :auto)))) # how can there be no duplicated function?!
     not_over_dist = BitVector(mpt.distances .<= distance)
-    not = not_dups .& not_over_dist 
-    return PathTemplates(mpt.paths[not, :], mpt.distances[not], mpt.mismatch_only, mpt.motif, mpt.withPAM)
+    not = not_dups .& not_over_dist
+    return PathTemplates(mpt.paths[not, :], mpt.distances[not], mpt.mismatch_only, setdist(mpt.motif, distance), mpt.withPAM, mpt.restrict_to_len)
 end
 
 
@@ -165,10 +164,9 @@ end
 # to guide + not guide 1 + not guide 2 + not guide 3 + A C G T
 # and expand ambigous in PAM and extension Ns
 function expand_ambiguous_paths(x::Vector{Int}, motif::Motif; 
-    restrict_to_len = length_noPAM(motif) + motif.distance, 
+    restrict_to_len::Int = (length_noPAM(motif) + motif.distance), 
     withPAM::Bool = false)
 
-    restrict_to_len =  restrict_to_len > length(x) ? length(x) : restrict_to_len
     len = length_noPAM(motif)
     max_dist = motif.distance
     output_type = smallestutype(unsigned(len*4 + 4))
@@ -178,6 +176,7 @@ function expand_ambiguous_paths(x::Vector{Int}, motif::Motif;
     notguide_pos = [len, len*2, len*3] # + actual guide position
 
     y = vcat(x, repeat([len*2 + 1], len + max_dist - length(x))) # add Ns in the ambigous encoding
+    restrict_to_len = (restrict_to_len > length(y)) ? length(y) : restrict_to_len
     pam = motif.fwd[motif.pam_loci_fwd]
     if motif.extends5
         reverse!(pam)
@@ -313,7 +312,7 @@ function build_PathTemplates(
     motif::Motif; 
     storagepath::String = "", 
     mismatch_only::Bool = false, 
-    restrict_to_len::Int = length_noPAM(motif) + motif.distance,
+    restrict_to_len::Int = (length_noPAM(motif) + motif.distance),
     withPAM::Bool = false)
 
     len = length_noPAM(motif)
@@ -327,7 +326,7 @@ function build_PathTemplates(
     # guide + not guide + N + Gap + remove last index as it is ending node
     # 1:20    21:40       41  42
     # 1:len   len+1:len*2 len*2 + 1, len*2 + 2, len*2 + 3
-    adj = adj_matrix_of_guide(len, d; mismatch_only = mismatch_only)
+    adj = ARTEMIS.adj_matrix_of_guide(len, d; mismatch_only = mismatch_only)
     ngp = repeat([len * 2 + 1, len * 2 + 2, len * 2 + 3], len * d)
     # replace noParents (mismatches - not guide) with proper links to noParents
     for di in 1:d
@@ -344,8 +343,8 @@ function build_PathTemplates(
         pd = path_enumeration(1, (len + 1) * di, adj)
         pd = map(x -> adj_map_to_guide[x.path[1:end-1]], pd)
         # this is to remove 1bp before insertion/mm/gap
-        map(x -> remove_1_before_non_horizontal!(x, is_seq_idx), pd)
-        map(x -> remove_gap!(x, gap_idx), pd)
+        map(x -> ARTEMIS.remove_1_before_non_horizontal!(x, is_seq_idx), pd)
+        map(x -> ARTEMIS.remove_gap!(x, gap_idx), pd)
         paths[di - 1] = pd
     end
 
