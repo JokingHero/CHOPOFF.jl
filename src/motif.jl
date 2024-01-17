@@ -59,10 +59,16 @@ Alignments will be performed from opposite to the extension direction (which is 
 # Examples
 ```jldoctest
 julia> Motif("Cas9")
-Motif("Cas9", NNNNNNNNNNNNNNNNNNNNNGG, CCNNNNNNNNNNNNNNNNNNNNN, 21:23, 1:3, 3, true, 0)
+Alias: Cas9
+Maximum search distance: 3
+Number of allowed ambigous bp: 0
+20N-NGG
 
 julia> Motif("test name", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 3, true, 5)
-Motif("test name", NNNNNNNNNNNNNNNNNNNNNGG, CCNNNNNNNNNNNNNNNNNNNNN, 21:23, 1:3, 3, true, 5)
+Alias: test name
+Maximum search distance: 3
+Number of allowed ambigous bp: 5
+20N-NGG
 ```
 """
 struct Motif
@@ -189,7 +195,10 @@ Set the ambiguity (how many ambiguous bases are allowed, not counting PAM, not c
 # Examples
 ```jldoctest
 julia> setambig(Motif("Cas9"), 15)
-Motif("Cas9", NNNNNNNNNNNNNNNNNNNNNGG, CCNNNNNNNNNNNNNNNNNNNNN, 21:23, 1:3, 3, true, 15)
+Alias: Cas9
+Maximum search distance: 3
+Number of allowed ambigous bp: 15
+20N-NGG
 ```
 """
 function setambig(motif::Motif, ambig::Int)
@@ -208,7 +217,10 @@ that are allowed during alignment.
 # Examples
 ```jldoctest
 julia> setdist(Motif("Cas9"), 15)
-Motif("Cas9", NNNNNNNNNNNNNNNNNNNNNGG, CCNNNNNNNNNNNNNNNNNNNNN, 21:23, 1:3, 15, true, 0)
+Alias: Cas9
+Maximum search distance: 15
+Number of allowed ambigous bp: 0
+20N-NGG
 ```
 """
 function setdist(motif::Motif, distance::Int)
