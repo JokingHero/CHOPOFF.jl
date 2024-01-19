@@ -189,21 +189,11 @@ function search_chrom2(
         end
         
 
-        fwd_pos_filter = Set{Int64}([])
-        rve_pos_filter = Set{Int64}([])
-        curr_dist = 0
         for j in 1:size(ot)[1]
             ot_j = @view ot[j, :]
-            if distances[j] > curr_dist
-                fwd_pos_filter = union(fwd_pos_filter, fwd_pos_filter .+ 1, fwd_pos_filter .-1)
-                curr_dist = distances[j]
-            end
 
             fwd_iter = ARTEMIS.locate(ot_j, fmi)
             for pos in fwd_iter
-                if pos in fwd_pos_filter 
-                    continue
-                end
 
                 if bffDB.mpt.motif.extends5
                     pass = all(ARTEMIS.iscompatible.(
@@ -225,7 +215,6 @@ function search_chrom2(
                         pos = pos - pam_len
                     end
 
-                    push!(fwd_pos_filter, pos)
                     line = string(guide_stranded) * "," * "no_alignment" * "," * 
                         string(aln_ref) * "," * string(distances[j]) * "," *
                         chrom_name * "," * string(pos) * "," * "+" * "\n"
@@ -234,19 +223,11 @@ function search_chrom2(
             end
         end
 
-        curr_dist = 0
         for j in 1:size(ot_rc)[1]
             ot_rc_j = @view ot_rc[j, :]
-            if distances_rc[j] > curr_dist
-                rve_pos_filter = union(rve_pos_filter, rve_pos_filter .+ 1, rve_pos_filter .-1)
-                curr_dist = distances_rc[j]
-            end
                 
             rve_iter = ARTEMIS.locate(ot_rc_j, fmi)
             for pos in rve_iter
-                if pos in rve_pos_filter 
-                    continue
-                end
 
                 if bffDB.mpt.motif.extends5
                     pass = all(ARTEMIS.iscompatible.(
@@ -267,7 +248,6 @@ function search_chrom2(
                         pos = pos + restrict_to_len + tail_len - 1
                     end
                     
-                    push!(rve_pos_filter, pos)
                     line = string(guide_stranded) * "," * "no_alignment" * "," * 
                         string(aln_ref) * "," * string(distances_rc[j]) * "," *
                         chrom_name * "," * string(pos) * "," * "-" * "\n"
