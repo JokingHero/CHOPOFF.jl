@@ -13,4 +13,4 @@ if [[ $noprecompile == 0 ]]
 then
     julia --project=. --startup-file=no --trace-compile=./precompile/app_precompile.jl ./precompile/precompile.jl
 fi
-julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); using PackageCompiler; create_app(".", "./build/"; precompile_statements_file = "./precompile/app_precompile.jl", force = true, include_lazy_artifacts = true, );'
+julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler"); using PackageCompiler; create_app(".", "./build/"; precompile_statements_file = "./precompile/app_precompile.jl", force = true, include_lazy_artifacts = true, incremental = false, filter_stdlibs=true,);'
