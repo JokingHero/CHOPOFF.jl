@@ -262,6 +262,10 @@ function parse_commandline(args::Array{String})
                 x == "UInt16" ||
                 x == "UInt32")
             default = "UInt16"
+        "--restrict_to_len" 
+            help = "To which length should the seed be restricted to. Default 0 means the restriction will become length_noPAM(motif) - distance"
+            arg_type = Int
+            default = 0
     end
 
     @add_arg_table! s["build"]["dictDB"] begin
@@ -487,8 +491,12 @@ function main(args::Array{String})
             elseif args["bffDB"]["precision"] == "UInt16"
                 prec = UInt16
             end
+            if restrict_to_len == 0
+                restrict_to_len = length_noPAM(motif) - motif.distance
+            end
             build_binaryFuseFilterDB(args["name"], args["genome"], motif, args["output"];
-                seed = args["bffDB"]["seed"], max_iterations = args["bffDB"]["max_iterations"], precision = prec)
+                seed = args["bffDB"]["seed"], max_iterations = args["bffDB"]["max_iterations"], precision = prec,
+                restrict_to_len = restrict_to_len)
         else
             throw("Unsupported database type.")
         end
