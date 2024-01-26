@@ -339,4 +339,22 @@ end
         # because of the Thread break there it is highly non-deterministic how many offtargets we will get
         @test nrow(ldbes) >= 2
     end
+
+
+    @testset "linearDB vs linearHashDB" begin
+        lhdb_path = joinpath(tdir, "linearHashDB")
+        mkpath(lhdb_path)
+        build_linearHashDB("samirandom", genome, Motif("Cas9"), lhdb_path, 7)
+        detail_path = joinpath(lhdb_path, "detail.csv")
+        
+        for d in 1:3
+            search_linearHashDB(lhdb_path, guides, detail_path; distance = d)
+            lhdb = DataFrame(CSV.File(detail_path))
+
+            search_linearDB(ldb_path, guides, detail_path; distance = d)
+            ldb = DataFrame(CSV.File(detail_path))
+            failed = antijoin(ldb, lhdb, on = [:guide, :distance, :chromosome, :start, :strand])
+            @test nrow(failed) == 0
+        end
+    end
 end

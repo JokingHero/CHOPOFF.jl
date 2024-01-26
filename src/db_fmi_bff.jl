@@ -29,7 +29,7 @@ build_binaryFuseFilterDB(
     storage_dir::String;
     seed::UInt64 = UInt64(0x726b2b9d438b9d4d),
     max_iterations::Int = 10,
-    precision::DataType = UInt16)
+    precision::DataType = UInt32)
 ```
 
 Prepare hashDB index for future searches using `search_hashDB`.
@@ -87,6 +87,7 @@ function build_binaryFuseFilterDB(
     # PAM here adds too many sequences to verify...
     mpt = build_PathTemplates(motif; restrict_to_len = restrict_to_len, withPAM = false)
 
+    mkpath(storage_path)
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
     ambig = Vector{LongDNA{4}}() # TODO

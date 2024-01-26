@@ -50,6 +50,7 @@ include("db_helpers.jl")
 include("db_dict.jl")
 include("db_motif.jl")
 include("db_linear.jl")
+include("db_linear_hash.jl")
 include("db_tree.jl")
 include("db_hash.jl")
 include("db_vcf.jl")
@@ -82,6 +83,7 @@ export build_fmiDB, search_fmiDB
 export build_pamDB, search_fmiDB_seed
 export search_fmiDB_hash
 export build_binaryFuseFilterDB, search_binaryFuseFilterDB
+export build_linearHashDB, search_linearHashDB
 
 ## Standalone binary generation
 function parse_commandline(args::Array{String})
@@ -117,6 +119,9 @@ function parse_commandline(args::Array{String})
         "linearDB"
             action = :command
             help = "linearDB utilizes prefixes to decrease search time, but no other optimizations."
+        "linearHashDB"
+            action = :command
+            help = "linearHashDB utilizes prefixes to decrease search time, and on top of that uses hashes."
         "motifDB"
             action = :command
             help = "motifDB utilizes prefixes together with q-gram filtering."
@@ -205,6 +210,20 @@ function parse_commandline(args::Array{String})
             arg_type = Int
             default = 7
     end
+
+    @add_arg_table! s["build"]["linearHashDB"] begin
+        "--prefix_length"
+            help = "Defines length of the prefix. " * 
+                "For each possible prefix there will be " *
+                "one linearDB instance."
+            arg_type = Int
+            default = 7
+        "--hash_length"
+            help = "Defines length of the hash. "
+            arg_type = Int
+            required = false
+    end
+
 
     @add_arg_table! s["build"]["motifDB"] begin
         "--prefix_length"
@@ -298,6 +317,9 @@ function parse_commandline(args::Array{String})
         "linearDB"
             action = :command
             help = "linearDB utilizes prefixes to decrease search time, but no other optimizations."
+        "linearHashDB"
+            action = :command
+            help = "linearHashDB utilizes prefixes to decrease search time, and on top of that uses hash."
         "motifDB"
             action = :command
             help = "motifDB utilizes prefixes together with q-gram filtering."
@@ -457,6 +479,13 @@ function main(args::Array{String})
         elseif args["%COMMAND%"] == "linearDB"
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
                 args["linearDB"]["prefix_length"])
+        elseif args["%COMMAND%"] == "linearHashDB"
+            hash_len = args["linearHashDB"]["hash_length"]
+            if hash_len === nothing
+                hash_len = (length_noPAM(motif) - (motif.distance))
+            end
+            build_linearHashDB(args["name"], args["genome"], motif, args["output"], 
+                args["linearDB"]["prefix_length"], hash_len)
         elseif args["%COMMAND%"] == "motifDB"
             skipmer = args["motifDB"]["skipmer_size"]
             if skipmer === nothing
@@ -513,6 +542,9 @@ function main(args::Array{String})
                 res = search_linearDB(args["database"], guides, args["output"]; 
                     distance = args["distance"])
             end
+        elseif args["%COMMAND%"] == "linearHashDB"
+            search_linearHashDB(args["database"], guides, args["output"]; 
+                distance = args["distance"])
         elseif args["%COMMAND%"] == "motifDB"
             search_motifDB(
                 args["database"], guides, args["output"]; 

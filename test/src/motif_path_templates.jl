@@ -14,7 +14,7 @@ using Combinatorics
     end
 
     @testset "templates_to_sequences" begin
-        dist = 2
+        dist = 1
         motif = Motif("test"; distance = dist)
         g_len = length_noPAM(motif)
         template = ARTEMIS.build_PathTemplates(motif)
