@@ -485,7 +485,7 @@ function main(args::Array{String})
                 hash_len = (length_noPAM(motif) - (motif.distance))
             end
             build_linearHashDB(args["name"], args["genome"], motif, args["output"], 
-                args["linearDB"]["prefix_length"], hash_len)
+                args["linearHashDB"]["prefix_length"], hash_len)
         elseif args["%COMMAND%"] == "motifDB"
             skipmer = args["motifDB"]["skipmer_size"]
             if skipmer === nothing
