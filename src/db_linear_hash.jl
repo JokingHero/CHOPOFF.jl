@@ -8,7 +8,7 @@ struct SuffixHashDB
     suffix::Vector{LongDNA{4}}
     suffix_loci_idx::Vector{LociRange}
     loci::Vector{Loc}
-    hash::Vector{UInt64}
+    hash::Vector{UInt32}
 end
 
 
@@ -55,7 +55,7 @@ if interested with searches within distance 4, preferably use prefix length of
 
 `prefix_len`  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,
                 however it will also result in large number of files.
-`hash_len` - Length of the hash in bp. Should be below 20bp - maximum alignment distance.
+`hash_len` - Length of the hash in bp. At maximum 16.
 
 # Examples
 ```julia-repl
@@ -68,14 +68,14 @@ function build_linearHashDB(
     motif::Motif,
     storage_dir::String,
     prefix_len::Int = 7,
-    hash_len::Int = (length_noPAM(motif) - motif.distance))
+    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16))
 
     if prefix_len <= motif.distance
         throw("prefix_len $prefix_len is <= " * string(motif.distance))
     end
 
-    if hash_len > (length_noPAM(motif) - motif.distance)
-        throw("prefix_len $hash_len is > " * string((length_noPAM(motif) - motif.distance)))
+    if hash_len > 16
+        throw("hash_len $hash_len is more than 16")
     end
 
     dbi = DBInfo(genomepath, name, motif)
@@ -113,7 +113,7 @@ function build_linearHashDB(
         (guides, loci_range, loci) = unique_guides(guides, loci)
         # hash part guides = prefix + guides
         hashes = ThreadsX.map(guides) do guide
-            convert(UInt64, (prefix * guide)[1:hash_len])
+            convert(UInt32, (prefix * guide)[1:hash_len])
         end
         sdb = SuffixHashDB(prefix, guides, loci_range, loci, hashes)
         save(sdb, joinpath(storage_dir, string(prefix) * ".bin"))
@@ -132,7 +132,7 @@ end
 
 function search_prefix_hash(
     prefix::LongDNA{4},
-    paths_set::Vector{Set{UInt64}},
+    paths_set::Vector{Set{UInt32}},
     dist::Int,
     dbi::DBInfo,
     detail::String,
@@ -245,11 +245,11 @@ function search_linearHashDB(
     
     paths = ldb.paths[ldb.paths_distances .<= distance, :]
     paths_set = ThreadsX.map(copy(guides_)) do g
-        guides_uint64 = guide_to_template_format(g; alphabet = ALPHABET_TWOBIT)
-        ot_uint64 = guides_uint64[paths]
-        ot_uint64 = map(ARTEMIS.asUInt64, eachrow(ot_uint64))
+        guides_formated = guide_to_template_format(g; alphabet = ALPHABET_TWOBIT)
+        ot_uint32 = guides_formated[paths]
+        ot_uint32 = map(ARTEMIS.asUInt32, eachrow(ot_uint32))
         # BinaryFuseFilter{UInt32}(unique(ot_uint64)) # very space efficient!!!
-        return Set(ot_uint64)
+        return Set(ot_uint32)
     end
 
     mkpath(dirname(output_file))

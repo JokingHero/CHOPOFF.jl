@@ -162,6 +162,28 @@ function Base.convert(::Type{UInt64}, x::LongDNA{4})
 end
 
 
+function Base.convert(::Type{UInt32}, x::LongDNA{4})
+    x = LongDNA{2}(x)
+    if (length(x) > 16) 
+        throw("Sequence too long to save as UInt32.")
+    end
+
+    y = zero(UInt32)
+    for c in x
+        nt = convert(DNA, c)
+        if isambiguous(nt)
+            throw(ArgumentError("cannot create a mer with ambiguous nucleotides"))
+        elseif isgap(nt)
+            throw(ArgumentError("cannot create a mer with gaps"))
+        end
+        y = (y << 2) | UInt32(BioSequences.twobitnucs[reinterpret(UInt8, nt) + 0x01])
+    end
+
+    mask = (one(UInt32) << (2 * length(x))) - one(UInt32)
+    return reinterpret(UInt32, y & mask) # encoded_data
+end
+
+
 # this is needed inside saca.jl
 # TODO make sure the queried sequences are from the same type
 # or conform to the same encoding as the reference
@@ -181,7 +203,7 @@ end
 end
 
 
-@inline function BioSequences.LongDNA{4}(x::UInt64, len::Int)
+@inline function BioSequences.LongDNA{4}(x::Union{UInt64, UInt32}, len::Int)
     y = []
     for i in 1:len
         push!(y, reinterpret(DNA, 0x01 << ((x >> 2(len - i)) & 0b11)))

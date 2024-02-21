@@ -73,6 +73,21 @@ using Combinatorics
         @test isempty(findall(dna"AAANN", dna"ACTGAAANACTG"; ambig_max = 0))
     end
 
+
+    @testset "UInt32 conversion" begin
+        x = dna"AAAAAATGCTACTGCG"
+        @test LongDNA{4}(convert(UInt32, x), length(x)) == x
+        @test_throws BioSequences.EncodeError convert(UInt32, dna"A-A")
+        @test_throws String convert(UInt32, dna"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+
+        for i in 1:10000
+            for j in 1:16
+                x = getseq(ceil(Int, rand()*j), ['A', 'C', 'G', 'T'])
+                @test String(LongDNA{4}(convert(UInt32, x), length(x))) == String(copy(x))
+            end
+        end
+    end
+
     @testset "UInt64 conversion" begin
         x = dna"AAAAAATGCTACTG"
         @test LongDNA{4}(convert(UInt64, x), length(x)) == x

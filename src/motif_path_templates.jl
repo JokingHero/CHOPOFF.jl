@@ -506,6 +506,27 @@ end
 
 """
 ```
+asUInt32(x::AbstractVecOrMat)
+```
+
+Helper that allows you to create one UInt32 for DNA strings smaller 16bp.
+There is no checking for the size of the vector therefore make sure it is <= 16bp.
+
+    matp = guide_in_template_format[pathTemplate]
+    map(asUInt32, eachrow(matp))
+"""
+function asUInt32(x::AbstractVecOrMat)
+    y = zero(UInt32)
+    for c in x
+        y = (y << 2) | UInt32(c)
+    end
+    mask = (one(UInt32) << (2 * length(x))) - UInt32(1)
+    return reinterpret(UInt32, y & mask)
+end
+
+
+"""
+```
 duplicated(x::Vector{UInt64})
 ```
 
