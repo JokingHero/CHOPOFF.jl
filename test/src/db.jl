@@ -6,7 +6,7 @@ using CSV
 using DataFrames
 
 ## SET WD when debugging
-# cd("test")
+cd("test")
 
 ## CRISPRitz compare functions - we test with up to 4 distance
 function asguide(x::String)
@@ -356,5 +356,30 @@ end
             failed = antijoin(ldb, lhdb, on = [:guide, :distance, :chromosome, :start, :strand])
             @test nrow(failed) == 0
         end
+    end
+
+
+    @testset "linearDB vs linearHahsDB early stopped" begin
+        ldb_filt = DataFrame(CSV.File(detail_path))
+        ldb_filt = filter_overlapping(ldb_filt, 3*2 + 1)
+        ldb_res_filt = summarize_offtargets(ldb_filt, 3)
+
+        lhdb_path = joinpath(tdir, "linearHashDB")
+        mkpath(lhdb_path)
+        build_linearHashDB("samirandom", genome, Motif("Cas9"), lhdb_path, 7)
+        detail_path_es = joinpath(lhdb_path, "detail_es.csv")
+
+        # find all offtargets with overlap filtering on the go
+        search_linearHashDB_with_es(lhdb_path, guides, detail_path_es; distance = 3, early_stopping = [50, 50, 50, 50])
+        ldbes = DataFrame(CSV.File(detail_path_es))
+        ldbes_res = summarize_offtargets(ldbes, 3)
+        @test compare_result(ldb_res_filt, ldbes_res; less_or_equal = true)
+
+        # find all offtargets with es with overlap filtering
+        search_linearHashDB_with_es(ldb_path, [dna"NNNNNNNNNNNNNNNNNNNN"], 
+            detail_path_es; distance = 3, early_stopping = repeat([2], 4))
+        ldbes = DataFrame(CSV.File(detail_path_es))
+        # because of the Thread break there it is highly non-deterministic how many offtargets we will get
+        @test nrow(ldbes) >= 2
     end
 end

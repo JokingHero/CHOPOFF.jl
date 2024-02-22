@@ -83,7 +83,7 @@ export build_fmiDB, search_fmiDB
 export build_pamDB, search_fmiDB_seed
 export search_fmiDB_hash
 export build_binaryFuseFilterDB, search_binaryFuseFilterDB
-export build_linearHashDB, search_linearHashDB
+export build_linearHashDB, search_linearHashDB, search_linearHashDB_with_es
 
 ## Standalone binary generation
 function parse_commandline(args::Array{String})

@@ -196,7 +196,7 @@ search_linearHashDB(
     distance::Int = 3)
 ```
 
-Find all off-targets for `guides` within distance of `dist` using linearDB located at `storage_dir`.
+Find all off-targets for `guides` within distance of `dist` using linearHashDB located at `storage_dir`.
 
 Assumes your guides do not contain PAM, and are all in the same direction as 
 you would order from the lab e.g.:
@@ -255,6 +255,143 @@ function search_linearHashDB(
     mkpath(dirname(output_file))
     ThreadsX.map(p -> search_prefix_hash(p, paths_set, distance, ldb.dbi, dirname(output_file), guides_, storage_dir), prefixes)
     
+    cleanup_detail(output_file)
+    return
+end
+
+
+"""
+```
+search_linearHashDB_with_es(
+    storage_dir::String, 
+    guides::Vector{LongDNA{4}}, 
+    output_file::String;
+    distance::Int = 3,
+    early_stopping::Vector{Int} = Int.(floor.(exp.(0:distance))))
+```
+
+Find all off-targets for `guides` within distance of `dist` using linearHashDB located at `storage_dir`.
+Uses early stopping to stop searching when a guide passes a limit on number of off-targets.
+
+Assumes your guides do not contain PAM, and are all in the same direction as 
+you would order from the lab e.g.:
+
+```
+5' - ...ACGTCATCG NGG - 3'  -> will be input: ...ACGTCATCG
+     guide        PAM
+    
+3' - CCN GGGCATGCT... - 5'  -> will be input: ...AGCATGCCC
+     PAM guide
+```
+
+# Arguments
+
+`output_file` - Path and name for the output file, this will be comma separated table, therefore `.csv` extension is preferred. 
+This search will create intermediate files which will have same name as `output_file`, but with a sequence prefix. Final file
+will contain all those intermediate files.
+
+`distance` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
+which off-targets are considered.
+
+`early_stopping` - Integer vector. Early stopping condition. For example for distance 2, we need vector with 3 values e.g. [1, 1, 5].
+Which means we will search with "up to 1 offtargets within distance 0", "up to 1 offtargets within distance 1"...
+
+# Examples
+```julia-repl
+$(make_example_doc())
+```
+"""
+function search_linearHashDB_with_es(
+    storage_dir::String, 
+    guides::Vector{LongDNA{4}}, 
+    output_file::String;
+    distance::Int = 3,
+    early_stopping::Vector{Int} = Int.(floor.(exp.(0:distance))))
+
+    if length(early_stopping) != (distance + 1)
+        error("Specify one early stopping condition for a each distance, starting from distance 0.")
+    end
+
+    ldb = load(joinpath(storage_dir, "linearHashDB.bin"))
+    prefixes = collect(ldb.prefixes)
+    if distance > length(first(prefixes)) || distance > ldb.dbi.motif.distance
+        error("For this database maximum distance is " * 
+              string(min(ldb.dbi.motif.distance, length(first(prefixes)))))
+    end
+
+    guides_ = copy(guides)
+    # reverse guides so that PAM is always on the left
+    if ldb.dbi.motif.extends5
+        guides_ = reverse.(guides_)
+    end
+
+    paths = ldb.paths[ldb.paths_distances .<= distance, :]
+    paths_set = ThreadsX.map(copy(guides_)) do g
+        guides_formated = guide_to_template_format(g; alphabet = ALPHABET_TWOBIT)
+        ot_uint32 = guides_formated[paths]
+        ot_uint32 = map(ARTEMIS.asUInt32, eachrow(ot_uint32))
+        return Set(ot_uint32)
+    end
+
+    mkpath(dirname(output_file))
+    is_es = falses(length(guides_)) # which guides are early stopped already
+    es_accumulator = zeros(Int64, length(guides_), length(early_stopping))
+    all_offt_lock = ReentrantLock()
+
+    # align first all the guides against all the prefixes
+    suffix_len = length_noPAM(ldb.dbi.motif) + ldb.dbi.motif.distance - length(prefix)
+    prefix_aln = ThreadsX.map(prefix -> Base.map(g -> prefix_align(g, prefix, suffix_len, distance), guides_), prefixes)
+    not_final = ThreadsX.map(x -> !all(Base.map(y -> y.isfinal, x)), prefix_aln)
+    vmin = ThreadsX.map(x -> sum(Base.map(y -> y.v_min_col, x)), prefix_aln)
+    vmin = sortperm(vmin)
+    prefixes = prefixes[vmin][not_final]
+    prefix_aln = prefix_aln[vmin][not_final]
+
+    # ThreadsX.map(p -> search_prefix_hash(p, paths_set, distance, ldb.dbi, dirname(output_file), guides_, storage_dir), prefixes)
+    Threads.@threads for p in 1:length(prefixes) # iterate over ordered prefixes that are not filtered out
+
+        detail_path = joinpath(dirname(output_file), "detail_" * string(prefixes[p]) * ".csv")
+        detail_file = open(detail_path, "w")
+
+        # if any of the guides requires further alignment 
+        # load the SuffixDB and iterate
+        sdb = load(joinpath(storage_dir, string(prefixes[p]) * ".bin"))
+        for i in 1:length(guides_)
+            if !isfinal[i] & !is_es[i]
+                for (j, suffix) in enumerate(sdb.suffix)
+                    if sdb.hash[j] in paths_set[i]
+                        suffix_aln = suffix_align(suffix, prefix_aln[p][i])
+                        if suffix_aln.dist <= distance
+                            sl_idx = sdb.suffix_loci_idx[j]
+                            offtargets = sdb.loci[sl_idx.start:sl_idx.stop]
+                            if ldb.dbi.motif.extends5
+                                guide_stranded = reverse(prefix_aln[p][i].guide)
+                                aln_guide = reverse(suffix_aln.guide)
+                                aln_ref = reverse(suffix_aln.ref)
+                            else
+                                guide_stranded = prefix_aln[p][i].guide
+                                aln_guide = suffix_aln.guide
+                                aln_ref = suffix_aln.ref
+                            end
+                            noloc = string(guide_stranded) * "," * aln_guide * "," * 
+                                    aln_ref * "," * string(suffix_aln.dist) * ","
+                            lock(all_offt_lock) do
+                                es_accumulator[i, suffix_aln.dist] += length(offtargets)
+                                if es_accumulator[i, suffix_aln.dist] >= early_stopping[suffix_aln.dist]
+                                    is_es[i] = true
+                                end
+                            end
+                            for offt in offtargets
+                                write(detail_file, noloc * decode(offt, ldb.dbi) * "\n")
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        close(detail_file)
+    end
     cleanup_detail(output_file)
     return
 end
