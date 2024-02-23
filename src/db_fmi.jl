@@ -157,7 +157,7 @@ res = DataFrame(CSV.File(res_path))
 res = filter_overlapping(res, 23)
 
 # summarize results into a table of counts by distance
-summary = summarize_offtargets(res, 1)
+summary = summarize_offtargets(res; distance = 1)
 ```
 """
 function search_fmiDB(

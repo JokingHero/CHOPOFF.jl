@@ -67,7 +67,7 @@ end
     detail_path = joinpath(ldb_path, "detail.csv")
     search_linearDB(ldb_path, guides, detail_path; distance = 3)
     ldb = DataFrame(CSV.File(detail_path))
-    ldb_res = summarize_offtargets(ldb, 3)
+    ldb_res = summarize_offtargets(ldb; distance = 3)
 
     # make and run default dictDB
     dictDB = build_dictDB(
@@ -116,7 +116,7 @@ end
         for d in 1:3
             search_treeDB(tdb_path, guides, detail_path; distance = d)
             tdb = DataFrame(CSV.File(detail_path))
-            tdb_res = summarize_offtargets(tdb, d)
+            tdb_res = summarize_offtargets(tdb; distance = d)
             @test compare_result(ldb_res, tdb_res)
         end
 

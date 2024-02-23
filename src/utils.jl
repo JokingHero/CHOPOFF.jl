@@ -484,23 +484,25 @@ end
 
 """
 ```
-filter_overlapping(res::DataFrame, distance::Int)
+summarize_offtargets(res::DataFrame; distance::Int = maximum(res.distance))
 ```
 
-Filter overlapping off-targets. Remember that off-targets have their start relative to the PAM location.
+Summarize all off-targets into count table from the detail file. This does not automatically filters overlaps.
+You can specify distance to filter out some of the higher distances.
 
 # Arguments
 `res` - DataFrame created by one of the off-target finding methods, it contains columns 
     such as `:guide,  :chromosome, :strand, :distance, :start`. 
 
-`distance` - To what distance from the `:start` do we consider the off-target to be overlapping?
+`distance` - What is the maximum distance to assume in the data frame, 
+    its possible to specify smaller distance than contained in the `res` DataFrame and autofilter lower distances.
 
 # Examples
 ```julia-repl
 $(make_example_doc())
 ```
 """
-function summarize_offtargets(res::DataFrame, distance::Int)
+function summarize_offtargets(res::DataFrame; distance::Int = maximum(res.distance))
     df = groupby(res, :guide)
     df = combine(df,  :distance => (x -> counts_by_dist(x, distance)) => AsTable)
     sort!(df, vcat([Symbol("D$i") for i in 0:distance], :guide))

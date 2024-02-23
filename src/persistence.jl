@@ -42,13 +42,15 @@ This assumes there are no other files in the folder that start with "detail_".
 After the merge files that start with "detail_" will be deleted!
 """
 function cleanup_detail(detail::String)
-    open(detail, "w") do detail_file
-        write(detail_file, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
-        for ch in filter(x -> occursin("detail_", x), readdir(dirname(detail)))
+    detail_files = filter(x -> occursin("detail_", x), readdir(dirname(detail)))
+    detail_files = filter(x -> joinpath(dirname(detail), x) != detail, detail_files)
+    open(detail, "w") do io
+        write(io, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
+        for ch in detail_files
             ch = joinpath(dirname(detail), ch)
             open(ch, "r") do ch_file
                 for ln in eachline(ch_file)
-                    write(detail_file, ln * "\n")
+                    write(io, ln * "\n")
                 end
             end
             rm(ch)

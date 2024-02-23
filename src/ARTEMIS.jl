@@ -590,7 +590,7 @@ function main(args::Array{String})
     elseif args["%COMMAND%"] == "summarize"
         args = args["summarize"]
         res = DataFrame(CSV.File(args["detail_file"]))
-        res = summarize_offtargets(res, maximum(res.distance))
+        res = summarize_offtargets(res)
         CSV.write(args["output"], res)
     end
 end

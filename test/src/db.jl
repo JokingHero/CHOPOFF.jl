@@ -6,7 +6,7 @@ using CSV
 using DataFrames
 
 ## SET WD when debugging
-cd("test")
+# cd("test")
 
 ## CRISPRitz compare functions - we test with up to 4 distance
 function asguide(x::String)
@@ -108,7 +108,7 @@ end
     detail_path = joinpath(ldb_path, "detail.csv")
     search_linearDB(ldb_path, guides, detail_path; distance = 3)
     ldb = DataFrame(CSV.File(detail_path))
-    ldb_res = summarize_offtargets(ldb, 3)
+    ldb_res = summarize_offtargets(ldb; distance = 3)
 
     # make and run default dictDB
     dictDB = build_dictDB(
@@ -211,7 +211,7 @@ end
         for d in 1:3
             search_treeDB(tdb_path, guides, detail_path; distance = d)
             tdb = DataFrame(CSV.File(detail_path))
-            tdb_res = summarize_offtargets(tdb, d)
+            tdb_res = summarize_offtargets(tdb; distance = d)
             @test compare_result(ldb_res, tdb_res)
         end
 
@@ -322,14 +322,14 @@ end
     @testset "linearDB vs linearDB early stopped" begin
         ldb_filt = DataFrame(CSV.File(detail_path))
         ldb_filt = filter_overlapping(ldb_filt, 3*2 + 1)
-        ldb_res_filt = summarize_offtargets(ldb_filt, 3)
+        ldb_res_filt = summarize_offtargets(ldb_filt; distance = 3)
 
         
         detail_path_es = joinpath(ldb_path, "detail_es.csv")
         # find all offtargets with overlap filtering on the go
         search_linearDB_with_es(ldb_path, guides, detail_path_es; distance = 3, early_stopping = [50, 50, 50, 50])
         ldbes = DataFrame(CSV.File(detail_path_es))
-        ldbes_res = summarize_offtargets(ldbes, 3)
+        ldbes_res = summarize_offtargets(ldbes; distance = 3)
         @test compare_result(ldb_res_filt, ldbes_res; less_or_equal = true)
 
         # find all offtargets with es with overlap filtering
@@ -360,26 +360,29 @@ end
 
 
     @testset "linearDB vs linearHahsDB early stopped" begin
-        ldb_filt = DataFrame(CSV.File(detail_path))
-        ldb_filt = filter_overlapping(ldb_filt, 3*2 + 1)
-        ldb_res_filt = summarize_offtargets(ldb_filt, 3)
+        # remember that this early stopping can find overlaps
+        search_linearDB(ldb_path, guides, detail_path; distance = 3)
+        ldb = DataFrame(CSV.File(detail_path))
 
-        lhdb_path = joinpath(tdir, "linearHashDB")
+        lhdb_path = joinpath(tdir, "linearHashDBes")
         mkpath(lhdb_path)
         build_linearHashDB("samirandom", genome, Motif("Cas9"), lhdb_path, 7)
         detail_path_es = joinpath(lhdb_path, "detail_es.csv")
 
         # find all offtargets with overlap filtering on the go
-        search_linearHashDB_with_es(lhdb_path, guides, detail_path_es; distance = 3, early_stopping = [50, 50, 50, 50])
-        ldbes = DataFrame(CSV.File(detail_path_es))
-        ldbes_res = summarize_offtargets(ldbes, 3)
-        @test compare_result(ldb_res_filt, ldbes_res; less_or_equal = true)
+        # search_linearHashDB(lhdb_path, guides, detail_path_es; distance = 3)
+        # lhdb = DataFrame(CSV.File(detail_path))
 
-        # find all offtargets with es with overlap filtering
-        search_linearHashDB_with_es(ldb_path, [dna"NNNNNNNNNNNNNNNNNNNN"], 
-            detail_path_es; distance = 3, early_stopping = repeat([2], 4))
+        search_linearHashDB_with_es(lhdb_path, guides, detail_path_es; distance = 3, early_stopping = [300, 300, 300, 300])
         ldbes = DataFrame(CSV.File(detail_path_es))
-        # because of the Thread break there it is highly non-deterministic how many offtargets we will get
-        @test nrow(ldbes) >= 2
+        failed = antijoin(ldb, ldbes, on = [:guide, :distance, :chromosome, :start, :strand])
+        @test nrow(failed) == 0
+        
+        # find all offtargets with es with overlap filtering - we dont support ambigous guides anymore
+        search_linearHashDB_with_es(lhdb_path, guides, 
+            detail_path_es; distance = 3, early_stopping = repeat([0], 4))
+        ldbes = DataFrame(CSV.File(detail_path_es))
+        ldbes_res = summarize_offtargets(ldbes)
+        @test nrow(ldbes) == 36 # I checked these results
     end
 end

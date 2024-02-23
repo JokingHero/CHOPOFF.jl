@@ -271,7 +271,9 @@ search_linearHashDB_with_es(
 ```
 
 Find all off-targets for `guides` within distance of `dist` using linearHashDB located at `storage_dir`.
-Uses early stopping to stop searching when a guide passes a limit on number of off-targets.
+Uses early stopping to stop searching when a guide passes a limit on number of off-targets. This method does not 
+keep track of the off-target locations and does not filter overlapping off-targets, therefore it might hit the 
+early stopping condition a little earlier than intended.
 
 Assumes your guides do not contain PAM, and are all in the same direction as 
 you would order from the lab e.g.:
@@ -327,7 +329,7 @@ function search_linearHashDB_with_es(
 
     paths = ldb.paths[ldb.paths_distances .<= distance, :]
     paths_set = ThreadsX.map(copy(guides_)) do g
-        guides_formated = guide_to_template_format(g; alphabet = ALPHABET_TWOBIT)
+        guides_formated = ARTEMIS.guide_to_template_format(g; alphabet = ARTEMIS.ALPHABET_TWOBIT)
         ot_uint32 = guides_formated[paths]
         ot_uint32 = map(ARTEMIS.asUInt32, eachrow(ot_uint32))
         return Set(ot_uint32)
@@ -339,13 +341,14 @@ function search_linearHashDB_with_es(
     all_offt_lock = ReentrantLock()
 
     # align first all the guides against all the prefixes
-    suffix_len = length_noPAM(ldb.dbi.motif) + ldb.dbi.motif.distance - length(prefix)
-    prefix_aln = ThreadsX.map(prefix -> Base.map(g -> prefix_align(g, prefix, suffix_len, distance), guides_), prefixes)
-    not_final = ThreadsX.map(x -> !all(Base.map(y -> y.isfinal, x)), prefix_aln)
-    vmin = ThreadsX.map(x -> sum(Base.map(y -> y.v_min_col, x)), prefix_aln)
-    vmin = sortperm(vmin)
-    prefixes = prefixes[vmin][not_final]
-    prefix_aln = prefix_aln[vmin][not_final]
+    suffix_len = length_noPAM(ldb.dbi.motif) + ldb.dbi.motif.distance - length(prefixes[1])
+    prefix_aln = ThreadsX.map(prefix -> Base.map(g -> ARTEMIS.prefix_align(g, prefix, suffix_len, distance), guides_), prefixes)
+    prefix_filter = ThreadsX.map(x -> !all(Base.map(y -> y.isfinal, x)), prefix_aln)
+    prefixes = prefixes[prefix_filter]
+    prefix_aln = prefix_aln[prefix_filter]
+    prefixes_order = sortperm(ThreadsX.map(x -> sum(Base.map(y -> y.isfinal, x)), prefix_aln))
+    prefixes = prefixes[prefixes_order]
+    prefix_aln = prefix_aln[prefixes_order]
 
     # ThreadsX.map(p -> search_prefix_hash(p, paths_set, distance, ldb.dbi, dirname(output_file), guides_, storage_dir), prefixes)
     Threads.@threads for p in 1:length(prefixes) # iterate over ordered prefixes that are not filtered out
@@ -357,7 +360,7 @@ function search_linearHashDB_with_es(
         # load the SuffixDB and iterate
         sdb = load(joinpath(storage_dir, string(prefixes[p]) * ".bin"))
         for i in 1:length(guides_)
-            if !isfinal[i] & !is_es[i]
+            if !prefix_aln[p][i].isfinal & !is_es[i]
                 for (j, suffix) in enumerate(sdb.suffix)
                     if sdb.hash[j] in paths_set[i]
                         suffix_aln = suffix_align(suffix, prefix_aln[p][i])
@@ -376,8 +379,8 @@ function search_linearHashDB_with_es(
                             noloc = string(guide_stranded) * "," * aln_guide * "," * 
                                     aln_ref * "," * string(suffix_aln.dist) * ","
                             lock(all_offt_lock) do
-                                es_accumulator[i, suffix_aln.dist] += length(offtargets)
-                                if es_accumulator[i, suffix_aln.dist] >= early_stopping[suffix_aln.dist]
+                                es_accumulator[i, suffix_aln.dist + 1] += length(offtargets)
+                                if es_accumulator[i, suffix_aln.dist + 1] >= early_stopping[suffix_aln.dist + 1]
                                     is_es[i] = true
                                 end
                             end
@@ -392,6 +395,7 @@ function search_linearHashDB_with_es(
 
         close(detail_file)
     end
+    
     cleanup_detail(output_file)
     return
 end
