@@ -23,25 +23,19 @@ end
 
 """
 ```
-build_linearHashDB(
-    name::String,
+name::String,
     genomepath::String,
     motif::Motif,
     storage_dir::String,
-    prefix_len::Int = 7)
+    prefix_len::Int = 7,
+    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16))
 ```
 
 Prepare linearHashDB index for future searches using `search_linearHashDB`.
 
 Will return a path to the database location, same as `storage_dir`.
-When this database is used for the guide off-target scan it is similar 
-to linear in performance, hence the name. There is an optimization that 
-if the alignment becomes impossible against
-the prefix we don't search the off-targets grouped inside the prefix.
-Therefore, it is advantageous to select much larger prefix than maximum 
-search distance, however in that case number of files also grows. For example,
-if interested with searches within distance 4, preferably use prefix length of 
-7 or 8.
+If interested with searches within distance 4, preferably use `prefix_len` of 8 or 9.
+You can also play with `hash_len` parameter, but keeping it at 16 should be close to optimal.
 
 # Arguments
 `name` - Your preferred name for this index for easier identification.
@@ -55,11 +49,12 @@ if interested with searches within distance 4, preferably use prefix length of
 
 `prefix_len`  - Size of the prefix by which off-targets are indexed. Prefix of 8 or larger will be the fastest,
                 however it will also result in large number of files.
+
 `hash_len` - Length of the hash in bp. At maximum 16.
 
 # Examples
 ```julia-repl
-$(make_example_doc())
+$(make_example_doc("linearHashDB"))
 ```
 """
 function build_linearHashDB(
@@ -220,7 +215,7 @@ which off-targets are considered.
 
 # Examples
 ```julia-repl
-$(make_example_doc())
+$(make_example_doc("linearHashDB"))
 ```
 """
 function search_linearHashDB(
@@ -300,7 +295,7 @@ Which means we will search with "up to 1 offtargets within distance 0", "up to 1
 
 # Examples
 ```julia-repl
-$(make_example_doc())
+$(make_example_doc("linearHashDB"; search = "linearHashDB_with_es"))
 ```
 """
 function search_linearHashDB_with_es(

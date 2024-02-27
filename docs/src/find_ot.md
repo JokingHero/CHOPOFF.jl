@@ -3,6 +3,10 @@
 ## Prefix-Suffix partial alignment
 
 ```@docs
+build_linearHashDB
+search_linearHashDB
+search_linearHashDB_with_es
+
 build_linearDB
 search_linearDB
 
@@ -27,6 +31,9 @@ search_fmiDB
 
 build_pamDB
 search_fmiDB_seed
+
+build_binaryFuseFilterDB
+search_binaryFuseFilterDB
 ```
 
 ## VCF

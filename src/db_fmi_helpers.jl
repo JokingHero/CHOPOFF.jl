@@ -16,7 +16,7 @@ build_pamDB(
 
 Find locations of all the PAM for a given motif in the genome.
 
-Example of what position we store for traditional Cas9 (NGG, CCN) and Cpf1 (TTTN, NAAA):
+Example of what position we store for traditional Cas9 (NGG, CCN) and Cas12a (TTTV, BAAA):
 ```
 NGG  CCN TTTN  NAAA
 ^      ^    ^  ^

@@ -1,4 +1,4 @@
-function make_example_doc(method::String = "linearDB")
+function make_example_doc(method::String = "linearDB"; search::String = method)
     return """
 using ARTEMIS, BioSequences
 
@@ -24,8 +24,8 @@ guides_s = Set(readlines(joinpath(vcat(artemis_path,
 guides = LongDNA{4}.(guides_s)
     
 # finally, make results!
-res_path = joinpath(tdir, "$method", "results.csv")
-search_$method(db_path, guides, res_path; distance = 3)
+res_path = joinpath(tdir, "$search", "results.csv")
+search_$search(db_path, guides, res_path; distance = 3)
 
 # load results
 using DataFrames, CSV

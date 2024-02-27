@@ -2,13 +2,13 @@ using Test
 
 using ARTEMIS: DBInfo, Loc, decode, 
     Motif, length_noPAM, removepam, combinestrings, notX,
-    AmbigIdx, findbits, setdist, Offtarget, insert_offtarget!
+    AmbigIdx, findbits, setdist, Offtarget, insert_offtarget!, display_motif
 using BioSequences
 
 @testset "structures" begin
 
     cas9 = Motif("Cas9")
-    cpf1 = Motif("Cpf1")
+    cpf1 = Motif("Cas12a")
     cas9_d1 = setdist(cas9, 1)
     cpf1_d1 = setdist(cpf1, 1)
 
@@ -16,18 +16,23 @@ using BioSequences
 
     @testset "Motif" begin
         @test length_noPAM(cas9) == 20
-        @test length_noPAM(cpf1) == 20
+        @test length_noPAM(cpf1) == 21
         @test removepam(dna"ACTNN", 1:3) == dna"NN"
         @test combinestrings("XXXACT", "ACTXXX") == "ACTACT"
         @test length(cas9) == 23
-        @test length(cpf1) == 24
+        @test length(cpf1) == 25
         @test length(cas9_d1) == 23
-        @test length(cpf1_d1) == 24
+        @test length(cpf1_d1) == 25
         @test isequal(cas9_d1, cas9_2)
+
+        @test isnothing(Base.show(cas9))
+        @test isnothing(Base.print(cas9))
+        @test display_motif(cas9) == "Alias: Cas9\nMaximum search distance: 3\nNumber of allowed ambigous bp: 0\n20N-NGG"
     end
 
 
     @testset "DBInfo & Loc" begin
+        cas9 = Motif("Cas9")
         dbi = DBInfo("./sample_data/genome/semirandom.fa", "test", cas9)
         @test dbi.gi.is_fa == true
         @test length(dbi.gi.chrom) == 8

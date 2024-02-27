@@ -184,7 +184,7 @@ function search_chrom2(
         if bffDB.mpt.motif.extends5
             reverse!(ot; dims = 2) # extension + 20N + NGG
             reverse!(ot_tail; dims = 2)
-        else # Cpf1
+        else # Cas12a
             reverse!(ot_rc; dims = 2) # extension + 20N + NAAA
             reverse!(ot_rc_tail; dims = 2)
         end
@@ -318,7 +318,7 @@ function search_binaryFuseFilterDB(
     output_file::String;
     distance::Int = 0)
 
-    if any(isambig.(guides)) # TODO?
+    if any(isambig.(guides))
         throw("Ambiguous bases are not allowed in guide queries.")
     end
 

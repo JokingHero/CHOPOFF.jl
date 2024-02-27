@@ -186,6 +186,7 @@ function expand_ambiguous_paths(x::Vector{Int}, motif::Motif;
     combinations = []
     mask = BitVector()
     pam_translated = Vector{Int}()
+    # COV_EXCL_START
     if withPAM
         for p in pam
             if p == DNA_A
@@ -249,6 +250,7 @@ function expand_ambiguous_paths(x::Vector{Int}, motif::Motif;
             end
         end
     end
+    # COV_EXCL_STOP
 
     for yi in y[1:restrict_to_len]
         if yi == (len * 2 + 1) # this is N
@@ -545,165 +547,3 @@ function duplicated(x::Vector{UInt64})
     end
     return b
 end
-
-
-#= all of this is about to be removed I think
-"""
-```
-templates_to_sequences_extended(
-    guide::LongDNA{4}, 
-    template::PathTemplates;
-    dist::Int = template.distance)
-```
-
-Uses PathTemplates object - `template` to map
-all possible alignments for given `guide` within distance `dist`.
-This method expands sequence to the maximal alignment length:
-length of the guide + length of the distance. All returned sequences
-will be of the same length. The advantage of that is that outputs are unique.
-
-# Arguments
-`guide` - guide sequence, without PAM.
-
-`template` - PathTemplates object build for your specific guide queries.
-
-`dist` - Maximal distance on which to return the possible alignments.
-
-# Return
-
-Returns a Vector{Set{LongDNA{4}}} where distance 0 is located at index 1,
-distance 1 all possible alignments are located at distance 2 and so on...
-
-"""
-function templates_to_sequences_extended( # TODO make this much faster?!
-    guide::LongDNA{4}, 
-    template::PathTemplates;
-    dist::Int = template.distance)
-    len = template.len + template.distance
-
-    if length(guide) != template.len
-        throw("Wrong guide length.")
-    end
-
-    g_ = guide_to_template_format(guide)
-
-    ps = Vector{Set{LongDNA{4}}}()
-    for di in 0:dist
-        push!(ps, Set(ThreadsX.mapreduce(
-            x -> expand_ambiguous(
-                LongDNA{4}(g_[x]) * repeat(dna"N", len - length(x))), 
-            vcat,
-            template.paths[di]; init = Vector{LongDNA{4}}())))
-    end
-    # if a sequence can exist in lower distance it belongs there rather than higher distance
-    # dist 0 is at position 1 in ps, d1 at 2
-    for di in 1:dist
-        ps[di + 1] = setdiff(ps[di + 1], union(ps[1:di]...))
-    end
-    return ps
-end
-
-
-"""
-```
-templates_to_sequences(
-    guide::LongDNA{4}, 
-    template::PathTemplates;
-    dist::Int = template.distance)
-```
-
-Uses PathTemplates object - `template` to map
-all possible alignments for given `guide` within distance `dist`.
-This method does not expand sequences to the maximal alignment length
-as opposed to `templates_to_sequences_extended`. This means some sequences might 
-seem redundant, for example:
-```
-For guide "AAA" and Motif("test"), distance 2:
-
-sequence distance 
-AAA      0 
-AA       1
-AAAA     1
-     ...
-```
-
-# Arguments
-`guide` - guide sequence, without PAM.
-
-`template` - PathTemplates object build for your specific guide queries.
-
-`dist` - Maximal distance on which to return the possible alignments.
-
-# Return
-
-Returns a Vector{Path} sorted by the distance, from 0 to `dist`.
-
-"""
-function templates_to_sequences(
-    guide::LongDNA{4}, 
-    template::PathTemplates;
-    dist::Int = template.distance)
-
-    if length(guide) != template.len
-        throw("Wrong guide length.")
-    end
-
-    g_ = guide_to_template_format(guide)
-
-    ps = Vector{Path}()
-    for di in 0:dist
-        seq = ThreadsX.mapreduce(
-            x -> expand_ambiguous(LongDNA{4}(g_[x])), 
-            vcat,
-            template.paths[di]; init = Vector{LongDNA{4}}())
-        seq = ThreadsX.collect(Set(seq))
-        append!(ps, ThreadsX.map(x -> Path(x, di), seq))
-    end
-
-    # this will return simply seqeuences which can be repeats, D0 in front
-    return ThreadsX.sort!(ps, by = p -> (p.dist, p.seq))
-end
-
-
-# this one appends the PAM in forward fashion
-function templates_to_sequences(
-    guide::LongDNA{4}, 
-    template::PathTemplates,
-    motif::Motif;
-    dist::Int = template.distance)
-
-    if length_noPAM(motif) != template.len
-        throw("Length of the motif is not the same as the template!")
-    end
-
-    if length(guide) != template.len
-        throw("Wrong guide length.")
-    end
-
-    g_ = guide_to_template_format(guide)
-
-    ps = Vector{Path}()
-    for di in 0:dist
-        seq = ThreadsX.mapreduce(
-            x -> expand_ambiguous(
-                appendPAM_forward(LongDNA{4}(g_[x]), motif)), 
-            vcat,
-            template.paths[di]; init = Vector{LongDNA{4}}())
-        seq = ThreadsX.collect(Set(seq))
-        append!(ps, ThreadsX.map(x -> Path(x, di), seq))
-    end
-
-    # this will return simply sequences which can be repeats, D0 in front
-    return ThreadsX.sort!(ps, by = p -> (p.dist, p.seq))
-end
-=#
-
-
-
-
-
-
-
-
-
-

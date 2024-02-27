@@ -188,7 +188,7 @@ function parse_commandline(args::Array{String})
             arg_type = Int
             default = 0
         "--motif"
-            help = """Will try to get the Motif template based on the standard name e.g. Cas9 or Cpf1"""
+            help = """Will try to get the Motif template based on the standard name e.g. Cas9 or Cas12a"""
             arg_type = String
             default = ""
     end
@@ -363,7 +363,15 @@ function parse_commandline(args::Array{String})
 
     @add_arg_table! s["search"]["linearDB"] begin
         "--early_stopping"
-            help = "Adjust parameter for motifDB."
+            help = "Input a vector of length of distance + 1 with early stopping conditions."
+            arg_type = Int
+            nargs = '*'
+            required = false
+    end
+
+    @add_arg_table! s["search"]["linearHashDB"] begin
+        "--early_stopping"
+            help = "Input a vector of length of distance + 1 with early stopping conditions."
             arg_type = Int
             nargs = '*'
             required = false
@@ -535,16 +543,22 @@ function main(args::Array{String})
                 distance = args["distance"])
         elseif args["%COMMAND%"] == "linearDB"
             if length(args["linearDB"]["early_stopping"]) != 0
-                res = search_linearDB_with_es(args["database"], guides, args["output"]; 
+                search_linearDB_with_es(args["database"], guides, args["output"]; 
                     distance = args["distance"], 
                     early_stopping = args["linearDB"]["early_stopping"])
             else
-                res = search_linearDB(args["database"], guides, args["output"]; 
+                search_linearDB(args["database"], guides, args["output"]; 
                     distance = args["distance"])
             end
         elseif args["%COMMAND%"] == "linearHashDB"
-            search_linearHashDB(args["database"], guides, args["output"]; 
-                distance = args["distance"])
+            if length(args["linearDB"]["early_stopping"]) != 0
+                res = search_linearHashDB_with_es(args["database"], guides, args["output"]; 
+                    distance = args["distance"], 
+                    early_stopping = args["linearDB"]["early_stopping"])
+            else
+                search_linearHashDB(args["database"], guides, args["output"]; 
+                    distance = args["distance"])
+            end
         elseif args["%COMMAND%"] == "motifDB"
             search_motifDB(
                 args["database"], guides, args["output"]; 

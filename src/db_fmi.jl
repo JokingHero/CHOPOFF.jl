@@ -27,7 +27,7 @@ function search_chrom(
         ot_rc = guides_fmi_rc[i][mpt.paths] # CCN + 20N + extension
         if mpt.motif.extends5
             reverse!(ot; dims = 2) # extension + 20N + NGG
-        else # Cpf1
+        else # Cas12a
             reverse!(ot_rc; dims = 2) # extension + 20N + NAAA
         end
         

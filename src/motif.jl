@@ -229,7 +229,7 @@ function setdist(motif::Motif, distance::Int)
         distance, motif.extends5, motif.ambig_max)
 end
 
-# TODO add more motifs
+
 const motif_db = Dict(
     "test" => Motif("test",
                     "NNNX",
@@ -237,9 +237,12 @@ const motif_db = Dict(
     "Cas9" => Motif("Cas9",
                     "NNNNNNNNNNNNNNNNNNNNXXX",
                     "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 3, true, 0),
-    "Cpf1" => Motif("Cas12a",
+    "Cas12a" => Motif("Cas12a",
+                    "XXXXNNNNNNNNNNNNNNNNNNNNN",
+                    "TTTVXXXXXXXXXXXXXXXXXXXXX", true, true, 3, false, 0),
+    "CasX" => Motif("CasX",
                     "XXXXNNNNNNNNNNNNNNNNNNNN",
-                    "TTTNXXXXXXXXXXXXXXXXXXXX", true, true, 3, false, 0)
+                    "TTCNXXXXXXXXXXXXXXXXXXXX", true, true, 3, false, 0)
     )
 
 
@@ -249,22 +252,16 @@ function Motif(alias::String; distance::Int = 3, ambig_max::Int = 0)
 end
 
 
-# all sequences are rotated in PAM-pattern fashion here
-function appendPAM(offtarget::LongDNA{4}, motif::Motif)
-    if motif.extends5
-        return rve(motif.fwd[motif.pam_loci_fwd]) * offtarget
-    end
-    return motif.fwd[motif.pam_loci_fwd] * offtarget
-end
-
 # all sequences will be ready to search on forward strand here
 # offtarget should be reversed if we are extend5 true
+# COV_EXCL_START
 function appendPAM_forward(offtarget::LongDNA{4}, motif::Motif)
     if motif.extends5
         return offtarget * motif.fwd[motif.pam_loci_fwd]
     end
     return motif.fwd[motif.pam_loci_fwd] * offtarget
 end
+# COV_EXCL_STOP
 
 
 function visualize_motif(motif::Motif; separator::String = "_")

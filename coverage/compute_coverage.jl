@@ -10,8 +10,9 @@ exclude = [
     "src/FMidx/saca.jl", # FMidx stuff is tested, but this package is not base ARTEMIS
     "src/FMidx/WaveletMatrices.jl",
     "src/FMidx/FMindexes.jl",
-    "src/db_fmi_seed.jl",
-    "src/example_doc.jl"] # contains docs 
+    "src/db_fmi_seed.jl", # methods using FM-index and are edge experimental
+    "src/db_hash.jl", # experimental
+    "src/example_doc.jl"] # docs
 
 function summary_by_file(x)
     p, c = get_summary(x)
@@ -24,9 +25,7 @@ coverage = process_folder()
 coverage = coverage[Base.map(p -> p.filename ∉ exclude, coverage)]
 p, c = get_summary(merge_coverage_counts(coverage))
 
-
 b = Badge(label="coverage", message = string(Int(ceil(p/c*100; digits = 0))) * "%")
-coverage_badge =   # svg string
 open("coverage/coverage_fraction.svg", "w") do io
     write(io, Badges.render(b))
 end

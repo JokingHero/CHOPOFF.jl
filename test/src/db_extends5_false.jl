@@ -44,7 +44,7 @@ end
     genome = joinpath(dirname(pathof(ARTEMIS)), "..", 
         "test", "sample_data", "genome", "semirandom.2bit")
 
-    guides = LongDNA{4}.(["TCGATTGTTTGGCTCTCTAA", "GCAGGGGGACGCAAGTACGA", "GGGCCGAAACGCGACACCGC"])
+    guides = LongDNA{4}.(["TCGATTGTTTGGCTCTCTAAA", "GCAGGGGGACGCAAGTACGAA", "GGGCCGAAACGCGACACCGCC"])
     tdir = tempname()
     mkpath(tdir)
 
@@ -53,7 +53,7 @@ end
         "test", "sample_data", "artificial.vcf")
     vcf_db = build_vcfDB(
         "samirandom", genome, vcf,
-        Motif("Cpf1"; distance = 1, ambig_max = 0))
+        Motif("Cas12a"; distance = 1, ambig_max = 0))
     vcf_res = search_vcfDB(vcf_db, guides)
 
     @testset "vcfDB result is empty" begin
@@ -63,7 +63,7 @@ end
     # make and run default linearDB
     ldb_path = joinpath(tdir, "linearDB")
     mkpath(ldb_path)
-    build_linearDB("samirandom", genome, Motif("Cpf1"), ldb_path, 7)
+    build_linearDB("samirandom", genome, Motif("Cas12a"), ldb_path, 7)
     detail_path = joinpath(ldb_path, "detail.csv")
     search_linearDB(ldb_path, guides, detail_path; distance = 3)
     ldb = DataFrame(CSV.File(detail_path))
@@ -72,22 +72,22 @@ end
     # make and run default dictDB
     dictDB = build_dictDB(
         "samirandom", genome, 
-        Motif("Cpf1"; distance = 2))
+        Motif("Cas12a"; distance = 2))
     ddb_res = search_dictDB(dictDB, guides)
 
     # make and run default hashDB
     hashDB = build_hashDB(
         "samirandom", genome, 
-        Motif("Cpf1"; distance = 1, ambig_max = 0))
+        Motif("Cas12a"; distance = 1, ambig_max = 0))
     hdb_res = search_hashDB(hashDB, guides, false)
 
     # hashDB but with ambig
     hashDBambig = build_hashDB(
         "samirandom", genome, 
-        Motif("Cpf1"; distance = 1, ambig_max = 1))
+        Motif("Cas12a"; distance = 1, ambig_max = 1))
     hdb_res2 = search_hashDB(hashDBambig, guides, false)
 
-    len_noPAM = ARTEMIS.length_noPAM(Motif("Cpf1"))
+    len_noPAM = ARTEMIS.length_noPAM(Motif("Cas12a"))
 
     @testset "linearDB vs dictDB" begin
         @test compare_result(ldb_res, ddb_res)
@@ -107,7 +107,7 @@ end
     @testset "linearDB vs treeDB" begin
         tdb_path = joinpath(tdir, "treeDB")
         mkpath(tdb_path)
-        build_treeDB("samirandom", genome, Motif("Cpf1"), tdb_path, 7)
+        build_treeDB("samirandom", genome, Motif("Cas12a"), tdb_path, 7)
         detail_path = joinpath(tdb_path, "detail.csv")
         
         # this should work without errors
@@ -130,7 +130,7 @@ end
     @testset "linearDB vs motifDB" begin
         mdb_path = joinpath(tdir, "motifDB")
         mkpath(mdb_path)
-        build_motifDB("samirandom", genome, Motif("Cpf1"), mdb_path, 7)
+        build_motifDB("samirandom", genome, Motif("Cas12a"), mdb_path, 7)
         detail_path = joinpath(mdb_path, "detail.csv")
         
         for d in 1:3
@@ -151,7 +151,7 @@ end
         build_fmiDB(genome, fmi_dir)
 
         # build a pamDB
-        motif = Motif("Cpf1"; distance = 1)
+        motif = Motif("Cas12a"; distance = 1)
 
         # prepare PathTemplates
         mpt = build_PathTemplates(motif; withPAM = true)
@@ -184,7 +184,7 @@ end
         build_fmiDB(genome, fmi_dir)
 
         # build a pamDB
-        motif = Motif("Cpf1"; distance = 2)
+        motif = Motif("Cas12a"; distance = 2)
 
         bff_dir = joinpath(tdir, "bffDB")
         mkpath(bff_dir)
@@ -210,5 +210,71 @@ end
         # test outputs for brute force method!
         failed = antijoin(ldb, res_bffDB, on = [:guide, :distance, :chromosome, :start, :strand])
         @test nrow(failed) == 0
+    end
+
+    @testset "linearDB vs linearDB early stopped" begin
+        ldb_filt = DataFrame(CSV.File(detail_path))
+        ldb_filt = filter_overlapping(ldb_filt, 3*2 + 1)
+        ldb_res_filt = summarize_offtargets(ldb_filt; distance = 3)
+
+        detail_path_es = joinpath(ldb_path, "detail_es.csv")
+        # find all offtargets with overlap filtering on the go
+        search_linearDB_with_es(ldb_path, guides, detail_path_es; distance = 3, early_stopping = [50, 50, 50, 50])
+        ldbes = DataFrame(CSV.File(detail_path_es))
+        ldbes_res = summarize_offtargets(ldbes; distance = 3)
+        @test compare_result(ldb_res_filt, ldbes_res; less_or_equal = true)
+
+        # find all offtargets with es with overlap filtering
+        search_linearDB_with_es(ldb_path, [dna"NNNNNNNNNNNNNNNNNNNN"], 
+            detail_path_es; distance = 3, early_stopping = repeat([2], 4))
+        ldbes = DataFrame(CSV.File(detail_path_es))
+        # because of the Thread break there it is highly non-deterministic how many offtargets we will get
+        @test nrow(ldbes) >= 2
+    end
+
+
+    @testset "linearDB vs linearHashDB" begin
+        lhdb_path = joinpath(tdir, "linearHashDB")
+        mkpath(lhdb_path)
+        build_linearHashDB("samirandom", genome, Motif("Cas12a"), lhdb_path, 7)
+        detail_path = joinpath(lhdb_path, "detail.csv")
+        
+        for d in 1:3
+            search_linearHashDB(lhdb_path, guides, detail_path; distance = d)
+            lhdb = DataFrame(CSV.File(detail_path))
+
+            search_linearDB(ldb_path, guides, detail_path; distance = d)
+            ldb = DataFrame(CSV.File(detail_path))
+            failed = antijoin(ldb, lhdb, on = [:guide, :distance, :chromosome, :start, :strand])
+            @test nrow(failed) == 0
+        end
+    end
+
+
+    @testset "linearDB vs linearHahsDB early stopped" begin
+        # remember that this early stopping can find overlaps
+        search_linearDB(ldb_path, guides, detail_path; distance = 3)
+        ldb = DataFrame(CSV.File(detail_path))
+
+        lhdb_path = joinpath(tdir, "linearHashDBes")
+        mkpath(lhdb_path)
+        build_linearHashDB("samirandom", genome, Motif("Cas12a"), lhdb_path, 7)
+        detail_path_es = joinpath(lhdb_path, "detail_es.csv")
+
+        # find all offtargets with overlap filtering on the go
+        # search_linearHashDB(lhdb_path, guides, detail_path_es; distance = 3)
+        # lhdb = DataFrame(CSV.File(detail_path))
+
+        search_linearHashDB_with_es(lhdb_path, guides, detail_path_es; distance = 3, early_stopping = [300, 300, 300, 300])
+        ldbes = DataFrame(CSV.File(detail_path_es))
+        failed = antijoin(ldb, ldbes, on = [:guide, :distance, :chromosome, :start, :strand])
+        @test nrow(failed) == 0
+        
+        # find all offtargets with es with overlap filtering - we dont support ambigous guides anymore
+        search_linearHashDB_with_es(lhdb_path, guides, 
+            detail_path_es; distance = 3, early_stopping = repeat([0], 4))
+        ldbes = DataFrame(CSV.File(detail_path_es))
+        ldbes_res = summarize_offtargets(ldbes)
+        @test nrow(ldbes) == 6 # I checked these results
     end
 end

@@ -256,7 +256,7 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
     guides = copy(guides)
     chunk_len = Int(floor(length(guides[1]) / chunks)) # this can not be used in actual calculations because chunks might not be of equal size...
 
-    # important here is that last chunk is dependant on the motif Cas9 vs Cpf1 style
+    # important here is that last chunk is dependant on the motif Cas9 vs Cas12a style
     # add PAM in front or in the back
     # expand ambiguous
     if motif.extends5 # Cas9 style with pattern-PAM
@@ -265,7 +265,7 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
         chunk_idx[1]= 1:chunk_idx[1].stop # leftovers are added to the first chunk
         guide_chunks = map(x -> [x[i] for i in chunk_idx], guides)
         map(x -> x[end] = x[end] * motif.fwd[motif.pam_loci_fwd], guide_chunks)
-    else # Cpf1 style with PAM-pattern
+    else # Cas12a style with PAM-pattern
         chunk_idx = [(chunk_len*j+1):(chunk_len*(j+1)) for j = 0:chunks-1]
         chunk_idx[end]= chunk_idx[end].start:length(guides[1]) # leftovers are added to the last chunk
         guide_chunks = map(x -> [x[i] for i in chunk_idx], guides)
