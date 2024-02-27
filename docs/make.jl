@@ -4,7 +4,6 @@ DocMeta.setdocmeta!(ARTEMIS, :DocTestSetup, :(using ARTEMIS, BioSequences); recu
 
 makedocs(
     clean = true,
-    strict = :doctest,
     doctest = true,
     sitename = "ARTEMIS.jl",
     authors = "Kornel Labun",
