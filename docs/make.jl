@@ -13,6 +13,7 @@ makedocs(
         assets = ["assets/theme.css"],
         disable_git = true
     ),
+    # warnonly = Documenter.except(:linkcheck, :footnote), # may allow to build on git
     modules  = [ARTEMIS],
     pages = [
         "General" => "index.md",

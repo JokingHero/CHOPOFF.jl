@@ -551,10 +551,10 @@ function main(args::Array{String})
                     distance = args["distance"])
             end
         elseif args["%COMMAND%"] == "linearHashDB"
-            if length(args["linearDB"]["early_stopping"]) != 0
+            if length(args["linearHashDB"]["early_stopping"]) != 0
                 res = search_linearHashDB_with_es(args["database"], guides, args["output"]; 
                     distance = args["distance"], 
-                    early_stopping = args["linearDB"]["early_stopping"])
+                    early_stopping = args["linearHashDB"]["early_stopping"])
             else
                 search_linearHashDB(args["database"], guides, args["output"]; 
                     distance = args["distance"])
