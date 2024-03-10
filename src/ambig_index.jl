@@ -4,6 +4,13 @@
 struct AmbigIdx
     ambig::SMatrix
     annot::Union{Vector{String}, Nothing}
+
+    #=
+    variants::Vector{LongDNA{4}}
+    loci::Vector{Loc}
+    annot::Union{Vector{String}, Nothing}
+    hash::Vector{UInt32} # vector of hashes, must be sorted
+    pointers::Vector{UInt32} # vector of pointers towards each variant, relative to hashes =#
 end
 
 

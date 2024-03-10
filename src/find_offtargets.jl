@@ -21,12 +21,53 @@ function locate_telomeres(seq::BioSequence, telomere_symbol = DNA_N)
 end
 
 
+# this rejects all ambiguity
+function findall_no_ambig(pat::T, seq::T,
+    start::Integer = 1, stop::Integer = lastindex(seq)) where T <: BioSequence
+    
+    res = Vector{UnitRange{Int64}}()
+    m = length(pat)
+    n = length(seq)
+    stop_ = min(stop, n) - m
+    s::Int = max(start - 1, 0)
+    
+    if m == 0  # empty query
+        return nothing
+    end
+    
+    @inbounds while s ≤ stop_
+        if isambiguous(seq[s+m])
+            s += m
+        elseif iscompatible(pat[m], seq[s+m])
+            i = m - 1
+            @inbounds while i > 0
+                if isambiguous(seq[s+i]) || !iscompatible(pat[i], seq[s+i])
+                    break
+                end
+                i -= 1
+            end
+            if i == 0
+                push!(res, (s+1):(s+length(pat))) #found
+            end
+            s += 1
+        else
+            s += 1
+        end
+    end
+    
+    return res  # not found
+end
+
+
 "
 Find all instances of pat inside seq, uses iscompatible for pattern matching.
 Restrict seq to subset of start:stop and allow maximum `ambig_max` ambiguous bases.
 "
 function Base.findall(pat::T, seq::T,
     start::Int = 1, stop::Int = lastindex(seq); ambig_max::Int = length(pat)) where T <: BioSequence
+    if ambig_max == 0
+        return findall_no_ambig(pat, seq, start, stop)
+    end
 
     res = Vector{UnitRange{Int64}}()
     m = length(pat)
