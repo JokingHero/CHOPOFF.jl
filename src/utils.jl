@@ -139,48 +139,25 @@ end
 end
 
 
-function Base.convert(::Type{UInt64}, x::LongDNA{4})
-    # BioSequences.encoded_data(DNAMer(x))
+function Base.convert(T::Type{<:Unsigned}, x::LongDNA{4})
     x = LongDNA{2}(x)
-    if (length(x.data) > 1) 
-        throw("Sequence too long to save as UInt64.")
+    if length(x) > (sizeof(T) * 4) 
+        throw("Sequence too long to save as " * string(T))
     end
 
-    y = zero(UInt64)
+    y = zero(T)
     for c in x
         nt = convert(DNA, c)
         if isambiguous(nt)
-            throw(ArgumentError("cannot create a mer with ambiguous nucleotides"))
+            throw(ArgumentError("Ambiguous nucleotides are not allowed."))
         elseif isgap(nt)
-            throw(ArgumentError("cannot create a mer with gaps"))
+            throw(ArgumentError("Gaps are not allowed."))
         end
-        y = (y << 2) | UInt64(BioSequences.twobitnucs[reinterpret(UInt8, nt) + 0x01])
+        y = (y << 2) | convert(T, BioSequences.twobitnucs[reinterpret(UInt8, nt) + 0x01])
     end
 
-    mask = (one(UInt64) << (2 * length(x))) - 1
-    return reinterpret(UInt64, y & mask) # encoded_data
-end
-
-
-function Base.convert(::Type{UInt32}, x::LongDNA{4})
-    x = LongDNA{2}(x)
-    if (length(x) > 16) 
-        throw("Sequence too long to save as UInt32.")
-    end
-
-    y = zero(UInt32)
-    for c in x
-        nt = convert(DNA, c)
-        if isambiguous(nt)
-            throw(ArgumentError("cannot create a mer with ambiguous nucleotides"))
-        elseif isgap(nt)
-            throw(ArgumentError("cannot create a mer with gaps"))
-        end
-        y = (y << 2) | UInt32(BioSequences.twobitnucs[reinterpret(UInt8, nt) + 0x01])
-    end
-
-    mask = (one(UInt32) << (2 * length(x))) - one(UInt32)
-    return reinterpret(UInt32, y & mask) # encoded_data
+    mask = (one(T) << (2 * length(x))) - one(T)
+    return reinterpret(T, y & mask) # encoded_data
 end
 
 
@@ -203,7 +180,7 @@ end
 end
 
 
-@inline function BioSequences.LongDNA{4}(x::Union{UInt64, UInt32}, len::Int)
+@inline function BioSequences.LongDNA{4}(x::Union{<:Unsigned}, len::Int)
     y = []
     for i in 1:len
         push!(y, reinterpret(DNA, 0x01 << ((x >> 2(len - i)) & 0b11)))

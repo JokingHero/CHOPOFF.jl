@@ -129,8 +129,7 @@ end
 
 
 add_guides!(vec::Vector{String}, guides::Vector{LongDNA{4}}) = append!(vec, string.(guides))
-add_guides!(vec::Vector{UInt128}, guides::Vector{UInt128}) = append!(vec, guides)
-add_guides!(vec::Vector{UInt64}, guides::Vector{UInt64}) = append!(vec, guides)
+add_guides!(vec::Vector{T}, guides::Vector{T}) where {T <: Unsigned} = append!(vec, guides)
 
 
 "
@@ -154,13 +153,11 @@ function pushguides!(
     restrict_to_len::Union{Nothing, Int64} = nothing) where {
         T<:Union{
             Vector{String},
-            Vector{UInt128}, 
-            Vector{UInt64}}, 
+            Vector{<:Unsigned}}, 
         K<:BioSequence}
 
     pam_loci = is_antisense ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
-    as_UInt128 = output isa Vector{UInt128}
-    as_UInt64 = output isa Vector{UInt64}
+    as_unsigned = output isa Vector{<:Unsigned}
 
     if length(dbi.motif) != 0
         guides_pos = findguides(dbi, chrom, is_antisense)
@@ -191,12 +188,8 @@ function pushguides!(
             guides = ThreadsX.map(x -> getindex(x, 1:restrict_to_len), guides)
         end
 
-        if as_UInt128
-            guides = convert.(UInt128, guides)
-        end
-
-        if as_UInt64
-            guides = convert.(UInt64, guides)
+        if as_unsigned
+            guides = convert.(eltype(output), guides)
         end
 
         add_guides!(output, guides)
@@ -273,7 +266,6 @@ function gatherofftargets(
     guides_fwd = add_extension(guides_fwd, guides_pos_fwd, dbi, seq, false)
     guides_fwd, guides_pos = normalize_to_PAMseqEXT(guides_fwd, guides_pos_fwd, dbi, false)
     
-
     guides_pos_rve = findguides(dbi, seq, true)
     guides_rve = ThreadsX.map(guides_pos_rve) do x 
         guide = LongDNA{4}(seq[x])

@@ -67,27 +67,6 @@ function get_ug_ranges(bv::BitVector, idx::Int)
 end
 
 
-function gatherofftargets(
-    dbi::DBInfo,
-    chrom::K,
-    chrom_name::String,
-    is_antisense::Bool) where {K<:BioSequence}
- 
-    pam_loci = is_antisense ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
-    chrom_name_ = convert(dbi.gi.chrom_type, findfirst(isequal(chrom_name), dbi.gi.chrom))
-
-    if length(dbi.motif) != 0
-        guides_pos = findguides(dbi, chrom, is_antisense)
-        guides = ThreadsX.map(x -> removepam(chrom[x], pam_loci), guides_pos)
-        guides = add_extension(guides, guides_pos, dbi, chrom, is_antisense)
-        guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, is_antisense)
-        guides_pos = convert.(dbi.gi.pos_type, guides_pos)
-        return (chrom_name_, guides, guides_pos, !is_antisense)
-    end
-    return nothing
-end
-
-
 """
 ```
 build_motifDB(
