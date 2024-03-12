@@ -147,7 +147,7 @@ function search_dictDB(
     for (i, s) in enumerate(guides_)
 
         pat = guides_uint2[i][db.mpt.paths]
-        pat = map(asUInt64, eachrow(pat))
+        pat = map(x -> asUInt(UInt64, x), eachrow(pat))
         # further reduce non-unique seqeunces
         uniq = .!duplicated(pat)
         pat = pat[uniq]

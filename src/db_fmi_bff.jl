@@ -166,9 +166,9 @@ function search_chrom2(
 
         # STEP 1. Check in hash whether this OT is there or not
         ot_uint64 = guides_uint64[i][bffDB.mpt.paths[:, 1:restrict_to_len]] # PAMseqEXT
-        ot_uint64 = map(ARTEMIS.asUInt64, eachrow(ot_uint64))
+        ot_uint64 = map(x -> ARTEMIS.asUInt(UInt64, x), eachrow(ot_uint64))
         ot_uint64_rc = guides_uint64_rc[i][bffDB.mpt.paths[:, 1:restrict_to_len]] # PAMseqEXT - normalized always
-        ot_uint64_rc = map(ARTEMIS.asUInt64, eachrow(ot_uint64_rc))
+        ot_uint64_rc = map(x -> asUInt(UInt64, x), eachrow(ot_uint64_rc))
         # further reduce non-unique seqeunces
         ot_uint64 = in.(ot_uint64, Ref(bff.bff_fwd))
         ot_uint64_rc = in.(ot_uint64_rc, Ref(bff.bff_rve))

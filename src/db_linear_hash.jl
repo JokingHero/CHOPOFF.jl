@@ -242,7 +242,7 @@ function search_linearHashDB(
     paths_set = ThreadsX.map(copy(guides_)) do g
         guides_formated = guide_to_template_format(g; alphabet = ALPHABET_TWOBIT)
         ot_uint32 = guides_formated[paths]
-        ot_uint32 = map(ARTEMIS.asUInt32, eachrow(ot_uint32))
+        ot_uint32 = map(x -> asUInt(UInt32, x), eachrow(ot_uint32))
         # BinaryFuseFilter{UInt32}(unique(ot_uint64)) # very space efficient!!!
         return Set(ot_uint32)
     end
@@ -326,7 +326,7 @@ function search_linearHashDB_with_es(
     paths_set = ThreadsX.map(copy(guides_)) do g
         guides_formated = ARTEMIS.guide_to_template_format(g; alphabet = ARTEMIS.ALPHABET_TWOBIT)
         ot_uint32 = guides_formated[paths]
-        ot_uint32 = map(ARTEMIS.asUInt32, eachrow(ot_uint32))
+        ot_uint32 = map(x -> asUInt(UInt32, x), eachrow(ot_uint32))
         return Set(ot_uint32)
     end
 

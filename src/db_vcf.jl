@@ -261,7 +261,7 @@ function search_vcfDB(
     res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)
         pat_uint2 = guides_uint2[i][mpt.paths]
-        pat_uint2 = map(asUInt64, eachrow(pat_uint2))
+        pat_uint2 = map(x -> asUInt(UInt64, x), eachrow(pat_uint2))
 
         pat_uint8 = guides_uint8[i][mpt.paths]
         pat_uint8 = reinterpret(DNA, pat_uint8) # back to DNA

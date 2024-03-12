@@ -59,6 +59,7 @@ include("db_fmi_helpers.jl")
 include("db_fmi.jl")
 include("db_fmi_seed.jl")
 include("db_fmi_bff.jl")
+include("db_prefix_hash.jl")
 
 
 export Motif, length_noPAM, length, setambig, setdist # motif
@@ -83,6 +84,7 @@ export build_pamDB, search_fmiDB_seed
 export search_fmiDB_hash
 export build_binaryFuseFilterDB, search_binaryFuseFilterDB
 export build_linearHashDB, search_linearHashDB, search_linearHashDB_with_es
+export build_prefixHashDB, search_prefixHashDB
 
 ## Standalone binary generation
 function parse_commandline(args::Array{String})
@@ -121,6 +123,9 @@ function parse_commandline(args::Array{String})
         "linearHashDB"
             action = :command
             help = "linearHashDB utilizes prefixes to decrease search time, and on top of that uses hashes."
+        "prefixHashDB"
+            action = :command
+            help = "prefixHashDB utilizes prefixes to decrease search time, and on top of that uses hashes."
         "motifDB"
             action = :command
             help = "motifDB utilizes prefixes together with q-gram filtering."
@@ -223,6 +228,13 @@ function parse_commandline(args::Array{String})
             required = false
     end
 
+    @add_arg_table! s["build"]["prefixHashDB"] begin
+        "--hash_length"
+            help = "Defines length of the hash. "
+            arg_type = Int
+            required = false
+    end
+
 
     @add_arg_table! s["build"]["motifDB"] begin
         "--prefix_length"
@@ -319,6 +331,9 @@ function parse_commandline(args::Array{String})
         "linearHashDB"
             action = :command
             help = "linearHashDB utilizes prefixes to decrease search time, and on top of that uses hash."
+        "prefixHashDB"
+            action = :command
+            help = "prefixHashDB utilizes prefixes to decrease search time, and on top of that uses hash."
         "motifDB"
             action = :command
             help = "motifDB utilizes prefixes together with q-gram filtering."
@@ -369,6 +384,14 @@ function parse_commandline(args::Array{String})
     end
 
     @add_arg_table! s["search"]["linearHashDB"] begin
+        "--early_stopping"
+            help = "Input a vector of length of distance + 1 with early stopping conditions."
+            arg_type = Int
+            nargs = '*'
+            required = false
+    end
+
+    @add_arg_table! s["search"]["prefixHashDB"] begin
         "--early_stopping"
             help = "Input a vector of length of distance + 1 with early stopping conditions."
             arg_type = Int
@@ -493,6 +516,12 @@ function main(args::Array{String})
             end
             build_linearHashDB(args["name"], args["genome"], motif, args["output"], 
                 args["linearHashDB"]["prefix_length"], hash_len)
+        elseif args["%COMMAND%"] == "prefixHashDB"
+            hash_len = args["prefixHashDB"]["hash_length"]
+            if hash_len === nothing
+                hash_len = min(length_noPAM(motif) - (motif.distance), 16)
+            end
+            build_prefixHashDB(args["name"], args["genome"], motif, args["output"], hash_len)
         elseif args["%COMMAND%"] == "motifDB"
             skipmer = args["motifDB"]["skipmer_size"]
             if skipmer === nothing
@@ -556,6 +585,15 @@ function main(args::Array{String})
                     early_stopping = args["linearHashDB"]["early_stopping"])
             else
                 search_linearHashDB(args["database"], guides, args["output"]; 
+                    distance = args["distance"])
+            end
+        elseif args["%COMMAND%"] == "prefixHashDB"
+            if length(args["prefixHashDB"]["early_stopping"]) != 0
+                res = search_prefixHashDB(args["database"], guides, args["output"]; 
+                    distance = args["distance"], 
+                    early_stopping = args["prefixHashDB"]["early_stopping"])
+            else
+                search_prefixHashDB(args["database"], guides, args["output"]; 
                     distance = args["distance"])
             end
         elseif args["%COMMAND%"] == "motifDB"

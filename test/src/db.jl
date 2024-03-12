@@ -385,4 +385,49 @@ end
         ldbes_res = summarize_offtargets(ldbes)
         @test nrow(ldbes) == 36 # I checked these results
     end
+
+    @testset "linearDB vs prefixHashDB" begin
+        phdb_path = joinpath(tdir, "prefixHashDB")
+        mkpath(phdb_path)
+        build_prefixHashDB("samirandom", genome, setdist(Motif("Cas9"), 2), phdb_path)
+        detail_path = joinpath(phdb_path, "detail.csv")
+        
+        for d in 1:2
+            search_prefixHashDB(phdb_path, guides, detail_path; distance = d, early_stopping = repeat([1000], d + 1))
+            phdb = DataFrame(CSV.File(detail_path))
+
+            search_linearDB(ldb_path, guides, detail_path; distance = d)
+            ldb = DataFrame(CSV.File(detail_path))
+            failed = antijoin(ldb, phdb, on = [:guide, :distance, :chromosome, :start, :strand])
+            @test nrow(failed) == 0
+        end
+    end
+
+
+    @testset "linearDB vs prefixHashDB early stopped" begin
+        # remember that this early stopping can find overlaps
+        search_linearDB(ldb_path, guides, detail_path; distance = 2)
+        ldb = DataFrame(CSV.File(detail_path))
+
+        phdb_path = joinpath(tdir, "prefixHashDBes")
+        mkpath(phdb_path)
+        build_prefixHashDB("samirandom", genome, setdist(Motif("Cas9"), 2), phdb_path)
+        detail_path_es = joinpath(phdb_path, "detail_es.csv")
+
+        # find all offtargets with overlap filtering on the go
+        # search_linearHashDB(lhdb_path, guides, detail_path_es; distance = 3)
+        # lhdb = DataFrame(CSV.File(detail_path))
+
+        search_prefixHashDB(phdb_path, guides, detail_path_es; distance = 2, early_stopping = [300, 300, 300])
+        pdbes = DataFrame(CSV.File(detail_path_es))
+        failed = antijoin(ldb, pdbes, on = [:guide, :distance, :chromosome, :start, :strand])
+        @test nrow(failed) == 0
+        
+        # find all offtargets with es with overlap filtering - we dont support ambigous guides anymore
+        search_prefixHashDB(phdb_path, guides, 
+            detail_path_es; distance = 2, early_stopping = repeat([0], 3))
+        pdbes = DataFrame(CSV.File(detail_path_es))
+        pdbes_res = summarize_offtargets(pdbes)
+        @test nrow(pdbes) == 36 # I checked these results
+    end
 end

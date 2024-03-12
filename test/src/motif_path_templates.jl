@@ -5,11 +5,11 @@ using Combinatorics
 
 @testset "motif_path_templates.jl" begin
 
-    @testset "as UInt64" begin
+    @testset "as UInt" begin
         for i in 1:100
             guide = ARTEMIS.getseq(20)
             guide_uint8 = ARTEMIS.guide_to_template_format(guide; alphabet = ARTEMIS.ALPHABET_TWOBIT)[1:20] # first 20 are guide
-            @test ARTEMIS.asUInt64(guide_uint8) == convert(UInt64, guide)
+            @test ARTEMIS.asUInt(UInt64, guide_uint8) == convert(UInt64, guide)
         end
     end
 

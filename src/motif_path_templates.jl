@@ -485,45 +485,24 @@ function guide_to_template_format_ambig(guide::LongDNA{4}, is_antisense = false)
 end
 
 
-
 """
 ```
-asUInt64(x::AbstractVecOrMat)
+asUInt(x::AbstractVecOrMat)
 ```
 
-Helper that allows you to create one UInt64 for each row out of each PathTemplate.
+Helper that allows you to create one UInt for DNA strings smaller.
+There is no checking for the size of the vector.
 
     matp = guide_in_template_format[pathTemplate]
-    map(asUInt64, eachrow(matp))
+    map(x -> asUInt(UInt32, x), eachrow(sa))
 """
-function asUInt64(x::AbstractVecOrMat)
-    y = zero(UInt64)
+function asUInt(t::Type{<:Unsigned}, x::AbstractVecOrMat)
+    y = zero(t)
     for c in x
-        y = (y << 2) | UInt64(c)
+        y = (y << 2) | convert(t, c)
     end
-    mask = (one(UInt64) << (2 * length(x))) - 1
-    return reinterpret(UInt64, y & mask)
-end
-
-
-"""
-```
-asUInt32(x::AbstractVecOrMat)
-```
-
-Helper that allows you to create one UInt32 for DNA strings smaller 16bp.
-There is no checking for the size of the vector therefore make sure it is <= 16bp.
-
-    matp = guide_in_template_format[pathTemplate]
-    map(asUInt32, eachrow(matp))
-"""
-function asUInt32(x::AbstractVecOrMat)
-    y = zero(UInt32)
-    for c in x
-        y = (y << 2) | UInt32(c)
-    end
-    mask = (one(UInt32) << (2 * length(x))) - UInt32(1)
-    return reinterpret(UInt32, y & mask)
+    mask = (one(t) << (2 * length(x))) - t(1)
+    return reinterpret(t, y & mask)
 end
 
 
