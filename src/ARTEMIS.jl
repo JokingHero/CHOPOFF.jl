@@ -393,7 +393,7 @@ function parse_commandline(args::Array{String})
 
     @add_arg_table! s["search"]["prefixHashDB"] begin
         "--early_stopping"
-            help = "Input a vector of length of distance + 1 with early stopping conditions."
+            help = "Input a vector of length of distance + 1 with early stopping conditions. If not supplied we will look up to 1e6 OTs for each distance."
             arg_type = Int
             nargs = '*'
             required = false
@@ -594,7 +594,8 @@ function main(args::Array{String})
                     early_stopping = args["prefixHashDB"]["early_stopping"])
             else
                 search_prefixHashDB(args["database"], guides, args["output"]; 
-                    distance = args["distance"])
+                    distance = args["distance"],
+                    early_stopping = repeat([1000000], args["distance"] + 1))
             end
         elseif args["%COMMAND%"] == "motifDB"
             search_motifDB(
