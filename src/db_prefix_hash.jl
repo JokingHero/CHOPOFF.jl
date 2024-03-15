@@ -291,31 +291,42 @@ function search_prefixHashDB(
     paths = db.mpt.paths[db.mpt.paths_distances .<= distance, :]
     mkpath(dirname(output_file))
 
-    all_ots = ThreadsX.map(guides_) do g
+    ThreadsX.map(guides_) do g
         guides_formated = ARTEMIS.guide_to_template_format(g; alphabet = ARTEMIS.ALPHABET_TWOBIT)
         sa = guides_formated[paths]
         sa = Base.map(x -> ARTEMIS.asUInt(eltype(db.prefix), x), eachrow(sa))
         sa = Set(sa)
-        sa = in.(db.prefix, Ref(sa)) # around 2 seconds and around 7500 candidates
+        sa = in.(db.prefix, Ref(sa))
         
         es_acc = zeros(Int64, length(early_stopping))
         is_es = false
-        ot_aln = Vector{Aln}()
-        ot_chrom = Vector{eltype(db.chrom)}()
-        ot_pos = Vector{eltype(db.pos)}()
-        ot_isplus = Vector{Bool}()
         ots = LongDNA{4}.((convert.(ot_type, db.prefix[sa]) .<< (2 * s_len)) .| convert.(ot_type, db.suffix[sa]), ot_len)
+        
+        detail_path = joinpath(dirname(output_file), "detail_" * string(g) * ".csv")
+        detail_file = open(detail_path, "w")
+        guide_stranded = db.mpt.dbi.motif.extends5 ? reverse(g) : g
+        guide_stranded = string(guide_stranded)
         if length(ots) == 0
-            return OffTargets(g, is_es, ot_aln, ot_chrom, ot_pos, ot_isplus)
+            close(detail_file)
+            return
         end
 
         aln = ARTEMIS.align(g, ots[1], distance, iscompatible)
         if aln.dist <= distance
-            push!(ot_aln, aln)
-            push!(ot_chrom, db.chrom[sa][1])
-            push!(ot_pos, db.pos[sa][1])
-            push!(ot_isplus, db.isplus[sa][1])
             es_acc[aln.dist + 1] += 1
+            if db.mpt.dbi.motif.extends5
+                aln_guide = reverse(aln.guide)
+                aln_ref = reverse(aln.ref)
+            else
+                aln_guide = aln.guide
+                aln_ref = aln.ref
+            end
+            strand = db.isplus[sa][1] ? "+" : "-"
+            ot = guide_stranded * "," * aln_guide * "," * 
+                aln_ref * "," * string(aln.dist) * "," *
+                db.mpt.dbi.gi.chrom[db.chrom[sa][1]] * "," * 
+                string(db.pos[sa][1]) * "," * strand * "\n"
+            write(detail_file, ot)
         end
         for i in 2:length(ots)
             ot = ots[i]
@@ -324,10 +335,19 @@ function search_prefixHashDB(
             end
             
             if aln.dist <= distance
-                push!(ot_aln, aln)
-                push!(ot_chrom, db.chrom[sa][i])
-                push!(ot_pos, db.pos[sa][i])
-                push!(ot_isplus, db.isplus[sa][i])
+                if db.mpt.dbi.motif.extends5
+                    aln_guide = reverse(aln.guide)
+                    aln_ref = reverse(aln.ref)
+                else
+                    aln_guide = aln.guide
+                    aln_ref = aln.ref
+                end
+                strand = db.isplus[sa][i] ? "+" : "-"
+                ot = guide_stranded * "," * aln_guide * "," * 
+                    aln_ref * "," * string(aln.dist) * "," *
+                    db.mpt.dbi.gi.chrom[db.chrom[sa][i]] * "," * 
+                    string(db.pos[sa][i]) * "," * strand * "\n"
+                write(detail_file, ot)
                 es_acc[aln.dist + 1] += 1
                 if es_acc[aln.dist + 1] >= early_stopping[aln.dist + 1]
                     is_es = true
@@ -335,29 +355,10 @@ function search_prefixHashDB(
                 end
             end
         end
-        return OffTargets(g, is_es, ot_aln, ot_chrom, ot_pos, ot_isplus)
+        close(detail_file)
+        return
     end
-    
-    detail_file = open(output_file, "w")
-    write(detail_file, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
-    for g_ots in all_ots
-        guide_stranded = db.mpt.dbi.motif.extends5 ? reverse(g_ots.guide) : g_ots.guide
-        guide_stranded = string(guide_stranded)
-        for i in 1:length(g_ots.alignments)
-            if db.mpt.dbi.motif.extends5
-                aln_guide = reverse(g_ots.alignments[i].guide)
-                aln_ref = reverse(g_ots.alignments[i].ref)
-            else
-                aln_guide = g_ots.alignments[i].guide
-                aln_ref = g_ots.alignments[i].ref
-            end
-            strand = g_ots.isplus[i] ? "+" : "-"
-            ot = guide_stranded * "," * aln_guide * "," * 
-                aln_ref * "," * string(g_ots.alignments[i].dist) * "," *
-                db.mpt.dbi.gi.chrom[g_ots.chrom[i]] * "," * string(g_ots.pos[i]) * "," * strand * "\n"
-            write(detail_file, ot)
-        end
-    end
-    close(detail_file)
+
+    cleanup_detail(output_file)
     return
 end
