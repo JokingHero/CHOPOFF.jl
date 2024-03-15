@@ -215,6 +215,13 @@ function build_prefixHashDB(
 end
 
 
+# sa - sometimes small, sometimes large
+# prefixes - around 300M                       
+function potential_ots_idx(sa::Vector{<:Unsigned}, prefixes::Vector{<:Unsigned})
+    idx = searchsorted.(Ref(prefixes), sa)
+    return filter(x -> x.start <= x.stop, idx)
+end
+
 """
 ```
 search_prefixHashDB(
@@ -291,49 +298,27 @@ function search_prefixHashDB(
     paths = db.mpt.paths[db.mpt.paths_distances .<= distance, :]
     mkpath(dirname(output_file))
 
-    ThreadsX.map(guides_) do g
+    ThreadsX.map(guides_) do g # maybe a function would be faster than lambda here?
         guides_formated = ARTEMIS.guide_to_template_format(g; alphabet = ARTEMIS.ALPHABET_TWOBIT)
         sa = guides_formated[paths]
         sa = Base.map(x -> ARTEMIS.asUInt(eltype(db.prefix), x), eachrow(sa))
-        sa = Set(sa)
-        sa = in.(db.prefix, Ref(sa))
+        sa = unique(sa)
+        sa = potential_ots_idx(sa, db.prefix)
         
-        es_acc = zeros(Int64, length(early_stopping))
-        is_es = false
-        ots = LongDNA{4}.((convert.(ot_type, db.prefix[sa]) .<< (2 * s_len)) .| convert.(ot_type, db.suffix[sa]), ot_len)
-        
+        es_acc = zeros(Int64, length(early_stopping))   
         detail_path = joinpath(dirname(output_file), "detail_" * string(g) * ".csv")
         detail_file = open(detail_path, "w")
         guide_stranded = db.mpt.dbi.motif.extends5 ? reverse(g) : g
         guide_stranded = string(guide_stranded)
-        if length(ots) == 0
+        if length(sa) == 0
             close(detail_file)
             return
         end
 
-        aln = ARTEMIS.align(g, ots[1], distance, iscompatible)
-        if aln.dist <= distance
-            es_acc[aln.dist + 1] += 1
-            if db.mpt.dbi.motif.extends5
-                aln_guide = reverse(aln.guide)
-                aln_ref = reverse(aln.ref)
-            else
-                aln_guide = aln.guide
-                aln_ref = aln.ref
-            end
-            strand = db.isplus[sa][1] ? "+" : "-"
-            ot = guide_stranded * "," * aln_guide * "," * 
-                aln_ref * "," * string(aln.dist) * "," *
-                db.mpt.dbi.gi.chrom[db.chrom[sa][1]] * "," * 
-                string(db.pos[sa][1]) * "," * strand * "\n"
-            write(detail_file, ot)
-        end
-        for i in 2:length(ots)
-            ot = ots[i]
-            if ot != ots[i - 1] # we can recycle alignments because ots are sorted
-                aln = ARTEMIS.align(g, ot, distance, iscompatible)
-            end
-            
+        @inbounds for i in sa # each sa is range of indices of prefixes where all ots are the same
+            ot = LongDNA{4}((convert(ot_type, db.prefix[i.start]) .<< (2 * s_len)) | 
+                convert(ot_type, db.suffix[i.start]), ot_len)
+            aln = ARTEMIS.align(g, ot, distance, iscompatible)
             if aln.dist <= distance
                 if db.mpt.dbi.motif.extends5
                     aln_guide = reverse(aln.guide)
@@ -342,16 +327,18 @@ function search_prefixHashDB(
                     aln_guide = aln.guide
                     aln_ref = aln.ref
                 end
-                strand = db.isplus[sa][i] ? "+" : "-"
-                ot = guide_stranded * "," * aln_guide * "," * 
-                    aln_ref * "," * string(aln.dist) * "," *
-                    db.mpt.dbi.gi.chrom[db.chrom[sa][i]] * "," * 
-                    string(db.pos[sa][i]) * "," * strand * "\n"
-                write(detail_file, ot)
-                es_acc[aln.dist + 1] += 1
-                if es_acc[aln.dist + 1] >= early_stopping[aln.dist + 1]
-                    is_es = true
-                    break
+                @inbounds for idx in i
+                    strand = db.isplus[idx] ? "+" : "-"
+                    ot = guide_stranded * "," * aln_guide * "," * 
+                        aln_ref * "," * string(aln.dist) * "," *
+                        db.mpt.dbi.gi.chrom[db.chrom[idx]] * "," * 
+                        string(db.pos[idx]) * "," * strand * "\n"
+                    write(detail_file, ot)
+                    es_acc[aln.dist + 1] += 1
+                    if es_acc[aln.dist + 1] >= early_stopping[aln.dist + 1]
+                        close(detail_file)
+                        return
+                    end
                 end
             end
         end

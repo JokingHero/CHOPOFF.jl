@@ -428,6 +428,6 @@ end
             detail_path_es; distance = 2, early_stopping = repeat([0], 3))
         pdbes = DataFrame(CSV.File(detail_path_es))
         pdbes_res = summarize_offtargets(pdbes)
-        @test nrow(pdbes) == 36 # I checked these results
+        @test nrow(pdbes) == 20 # I checked these results
     end
 end

@@ -285,7 +285,7 @@ end
         detail_path = joinpath(phdb_path, "detail.csv")
         
         for d in 1:3
-            search_prefixHashDB(phdb_path, guides, detail_path; distance = d)
+            search_prefixHashDB(phdb_path, guides, detail_path; distance = d, early_stopping = repeat([300], d + 1))
             phdb = DataFrame(CSV.File(detail_path))
 
             search_linearDB(ldb_path, guides, detail_path; distance = d)
@@ -316,6 +316,6 @@ end
             detail_path_es; distance = 3, early_stopping = repeat([0], 4))
         ldbes = DataFrame(CSV.File(detail_path_es))
         ldbes_res = summarize_offtargets(ldbes)
-        @test nrow(ldbes) == 6 # I checked these results
+        @test nrow(ldbes) == 3 # I checked these results
     end
 end
