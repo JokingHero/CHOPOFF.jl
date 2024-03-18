@@ -1,4 +1,4 @@
-# ARTEMIS.jl
+# CHOPOFF.jl
 
 ## About
 
@@ -21,10 +21,10 @@ Uncompromising finding of CRISPR off-targets:
 
 ## Build application
 
-It is possible to build ARTEMIS into standalone application - which includes all dependencies and Julia into one compiled software. This is **recommended** method for using of ARTEMIS when you are not a developer. If you know how to code in Julia, you might make use of the whole framework using ARTEMIS as a package.
+It is possible to build CHOPOFF into standalone application - which includes all dependencies and Julia into one compiled software. This is **recommended** method for using of CHOPOFF when you are not a developer. If you know how to code in Julia, you might make use of the whole framework using CHOPOFF as a package.
 
 To build a standalone application run `./build_standalone.sh` script from the main directory. Script will
-produce binary in a "build" folder. Then you can run from inside that folder `./bin/ARTEMIS --help`. To learn about building a database run `./bin/ARTEMIS build --help` and to use existing database check out `./bin/ARTEMIS search --help`. It is possible to skip testing + precompile step to speed up the build process with `./build_standalone.sh --noprecompile`.
+produce binary in a "build" folder. Then you can run from inside that folder `./bin/CHOPOFF --help`. To learn about building a database run `./bin/CHOPOFF build --help` and to use existing database check out `./bin/CHOPOFF search --help`. It is possible to skip testing + precompile step to speed up the build process with `./build_standalone.sh --noprecompile`.
 
 You can alternatively download the latest release from the releases' page on the GitHub.
 
@@ -32,10 +32,10 @@ When using application as self-contained compiled software, you can control numb
 
 ## No-build application
 
-Run ARTEMIS package as an **application**, without building first. From the directory of the package run:
+Run CHOPOFF package as an **application**, without building first. From the directory of the package run:
 
 ```bash
-julia --threads 4 --project="." ./src/ARTEMIS.jl --help
+julia --threads 4 --project="." ./src/CHOPOFF.jl --help
 ```
 
 ## Quick Use

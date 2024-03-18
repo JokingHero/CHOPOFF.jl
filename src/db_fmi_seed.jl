@@ -175,16 +175,16 @@ and [pdf](https://mikael-salson.univ-lille.fr//articles/VST_Iwoca14.pdf).
 # Examples
 ```julia-repl
 # prepare libs
-using ARTEMIS, BioSequences
+using CHOPOFF, BioSequences
 
 # make a temporary directory
 tdir = tempname()
 fmi_dir = joinpath(tdir, "fmi")
 mkpath(fmi_dir)
 
-# use ARTEMIS example genome
-artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(vcat(artemis_path, 
+# use CHOPOFF example genome
+chopoff_path = splitpath(dirname(pathof(CHOPOFF)))[1:end-1]
+genome = joinpath(vcat(chopoff_path, 
     "test", "sample_data", "genome", "semirandom.fa"))
 # build FM-index
 build_fmiDB(genome, fmi_dir)
@@ -201,7 +201,7 @@ res_dir = joinpath(tdir, "results")
 mkpath(res_dir)
 
 # load up example gRNAs
-guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+guides_s = Set(readlines(joinpath(vcat(chopoff_path, 
     "test", "sample_data", "crispritz_results", "guides.txt"))))
 guides = LongDNA{4}.(guides_s)
     

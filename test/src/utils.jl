@@ -2,7 +2,7 @@ using Base: UInt128
 using Test
 
 using BioSequences
-using ARTEMIS: safeadd, smallestutype, base_to_idx, 
+using CHOPOFF: safeadd, smallestutype, base_to_idx, 
     getseq, extension, levenshtein, minkmersize, balance,
     locate_telomeres, findall, expand_ambiguous, convert, 
     all_kmers, as_bitvector_of_kmers, as_kmers

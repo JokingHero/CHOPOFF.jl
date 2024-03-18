@@ -1,12 +1,12 @@
 using Test
 
-using ARTEMIS
+using CHOPOFF
 using BioSequences
 
 @testset "find_offtargets.jl" begin
 
     genome = joinpath(vcat(
-        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+        splitpath(dirname(pathof(CHOPOFF)))[1:end-1], 
         "test", "sample_data", "genome", "semirandom.fa"))
 
     # construct example DBInfo

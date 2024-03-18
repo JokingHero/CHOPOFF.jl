@@ -1,4 +1,4 @@
-using ARTEMIS.FMIndexes: FMIndex, restore, count, locate, locateall
+using CHOPOFF.FMIndexes: FMIndex, restore, count, locate, locateall
 using Combinatorics
 using Test
 using Random

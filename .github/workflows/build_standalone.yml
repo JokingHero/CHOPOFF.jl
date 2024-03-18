@@ -22,17 +22,17 @@ jobs:
         with:
           version: ${{ matrix.julia-version }}
       - uses: julia-actions/julia-buildpkg@v1
-      - name: "Setup artemis version"
-        run: echo "artemis=$(julia --project=. -e 'using Pkg; print(Pkg.TOML.parse(read("./Project.toml", String))["version"]);')" >> $GITHUB_ENV
+      - name: "Setup chopoff version"
+        run: echo "chopoff=$(julia --project=. -e 'using Pkg; print(Pkg.TOML.parse(read("./Project.toml", String))["version"]);')" >> $GITHUB_ENV
       - name: "Setup J version"
         run: echo "jver=$(julia -e 'print(VERSION)')" >> $GITHUB_ENV
-      - name: "Setup artemis name"
-        run: echo "artemis_name=ARTEMIS_v${{ env.artemis }}-julia_v${{ env.jver }}_${{ matrix.julia-arch }}-${{ matrix.os }}" >> $GITHUB_ENV
+      - name: "Setup chopoff name"
+        run: echo "chopoff_name=CHOPOFF_v${{ env.chopoff }}-julia_v${{ env.jver }}_${{ matrix.julia-arch }}-${{ matrix.os }}" >> $GITHUB_ENV
       - name: "Build"
         run: ./build_standalone.sh --noprecompile
       - uses: actions/upload-artifact@v3
         with:
-          name: ${{ env.artemis_name }}
+          name: ${{ env.chopoff_name }}
           path: build/
           retention-days: 1
 
@@ -51,6 +51,6 @@ jobs:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           automatic_release_tag: "latest"
           prerelease: false
-          title: "ARTEMIS"
+          title: "CHOPOFF"
           files: |
             ./*.tar.gz

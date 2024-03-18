@@ -1,6 +1,6 @@
 __precompile__(true)
 
-module ARTEMIS
+module CHOPOFF
 
 using Dates: isequal # MIT
 using Base: Float32 # MIT
@@ -87,9 +87,9 @@ export build_prefixHashDB, search_prefixHashDB
 ## Standalone binary generation
 function parse_commandline(args::Array{String})
     s = ArgParseSettings(
-        prog = "ARTEMIS", 
+        prog = "CHOPOFF", 
         description = "Fast and reliable off-target detection for CRISPR guideRNAs.",
-        epilog = "This standalone is build on top of the ARTEMIS.jl package.",
+        epilog = "This standalone is build on top of the CHOPOFF.jl package.",
         version = "1.0.0", # keep this in sync with Project.toml, dont automatize as build step will be broken
         add_version = true)
 

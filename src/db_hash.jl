@@ -107,11 +107,11 @@ Prepare hashDB index for future searches using `search_hashDB`.
 # Examples
 ```julia-repl
 # prepare libs
-using ARTEMIS, BioSequences
+using CHOPOFF, BioSequences
 
-# use ARTEMIS example genome
+# use CHOPOFF example genome
 genome = joinpath(
-    vcat(splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+    vcat(splitpath(dirname(pathof(CHOPOFF)))[1:end-1], 
     test", "sample_data", "genome", "semirandom.fa"))
 
 # finally, build a hashDB
@@ -213,11 +213,11 @@ off-target free it is also guaranteed to be true in both cases (low-to-high and 
 # Examples
 ```julia-repl
 # prepare libs
-using ARTEMIS, BioSequences
+using CHOPOFF, BioSequences
 
-# use ARTEMIS example genome
-ARTEMIS_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(vcat(ARTEMIS_path, 
+# use CHOPOFF example genome
+CHOPOFF_path = splitpath(dirname(pathof(CHOPOFF)))[1:end-1]
+genome = joinpath(vcat(CHOPOFF_path, 
     "test", "sample_data", "genome", "semirandom.fa"))
 
 # build a hashDB
@@ -226,7 +226,7 @@ db = build_hashDB(
     Motif("Cas9"; distance = 1, ambig_max = 0))
 
 # load up example gRNAs
-guides_s = Set(readlines(joinpath(vcat(ARTEMIS_path, 
+guides_s = Set(readlines(joinpath(vcat(CHOPOFF_path, 
     "test", "sample_data", "crispritz_results", "guides.txt"))))
 guides = LongDNA{4}.(guides_s)
 

@@ -23,11 +23,7 @@ end
 
 struct PrefixHashDB
     mpt::SymbolicAlignments
-    
     prefix::Vector{<:Unsigned} # sorted, unique 
-    #prefix_start::Vector{<:Unsigned} # pointers to suffix
-    #prefix_width::Vector{<:Unsigned}
-
     suffix::Vector{<:Unsigned}
     chrom::Vector{<:Unsigned}
     pos::Vector{<:Unsigned}
@@ -62,15 +58,15 @@ function gather_hashes!(
     pam_loci = is_antisense ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
 
     if length(dbi.motif) != 0
-        this_pos = ARTEMIS.findguides(dbi, chrom_seq, is_antisense)
-        this_guides = ThreadsX.map(x -> ARTEMIS.removepam(chrom_seq[x], pam_loci), this_pos)
+        this_pos = CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
+        this_guides = ThreadsX.map(x -> CHOPOFF.removepam(chrom_seq[x], pam_loci), this_pos)
         if dbi.motif.distance > 0
-            this_guides = ARTEMIS.add_extension(this_guides, this_pos, dbi, chrom_seq, is_antisense)
+            this_guides = CHOPOFF.add_extension(this_guides, this_pos, dbi, chrom_seq, is_antisense)
         end
-        this_guides, this_pos = ARTEMIS.normalize_to_PAMseqEXT(this_guides, this_pos, dbi, is_antisense)
-        this_pos = ARTEMIS.convert.(dbi.gi.pos_type, this_pos)
+        this_guides, this_pos = CHOPOFF.normalize_to_PAMseqEXT(this_guides, this_pos, dbi, is_antisense)
+        this_pos = CHOPOFF.convert.(dbi.gi.pos_type, this_pos)
 
-        idx = ThreadsX.map(ARTEMIS.isambig, this_guides)
+        idx = ThreadsX.map(CHOPOFF.isambig, this_guides)
         idx_sum = sum(idx)
         if sum(idx) != 0
             append!(ambig_guides, this_guides[idx])
@@ -135,9 +131,9 @@ function build_prefixHashDB(
     end
 
     dbi = DBInfo(genomepath, name, motif)
-    hash_type = ARTEMIS.smallestutype(parse(UInt, repeat("1", hash_len * 2); base = 2))
-    suffix_type = ARTEMIS.smallestutype(parse(UInt, repeat("1", (ARTEMIS.length_noPAM(motif) - hash_len + motif.distance) * 2); base = 2))
-    ot_type = ARTEMIS.smallestutype(parse(UInt, repeat("1", (ARTEMIS.length_noPAM(motif) + motif.distance) * 2); base = 2))
+    hash_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", hash_len * 2); base = 2))
+    suffix_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", (CHOPOFF.length_noPAM(motif) - hash_len + motif.distance) * 2); base = 2))
+    ot_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", (CHOPOFF.length_noPAM(motif) + motif.distance) * 2); base = 2))
 
     # step 1
     @info "Step 1: Searching chromosomes."
@@ -277,8 +273,8 @@ function search_prefixHashDB(
     end
 
     db = load(joinpath(storage_dir, "prefixHashDB.bin"))
-    ot_len = ARTEMIS.length_noPAM(db.mpt.dbi.motif) + db.mpt.dbi.motif.distance
-    ot_type = ARTEMIS.smallestutype(parse(UInt, repeat("1", ot_len * 2); base = 2))
+    ot_len = CHOPOFF.length_noPAM(db.mpt.dbi.motif) + db.mpt.dbi.motif.distance
+    ot_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", ot_len * 2); base = 2))
     s_len = ot_len - db.mpt.hash_len
 
     if distance > db.mpt.dbi.motif.distance
@@ -299,9 +295,9 @@ function search_prefixHashDB(
     mkpath(dirname(output_file))
 
     ThreadsX.map(guides_) do g # maybe a function would be faster than lambda here?
-        guides_formated = ARTEMIS.guide_to_template_format(g; alphabet = ARTEMIS.ALPHABET_TWOBIT)
+        guides_formated = CHOPOFF.guide_to_template_format(g; alphabet = CHOPOFF.ALPHABET_TWOBIT)
         sa = guides_formated[paths]
-        sa = Base.map(x -> ARTEMIS.asUInt(eltype(db.prefix), x), eachrow(sa))
+        sa = Base.map(x -> CHOPOFF.asUInt(eltype(db.prefix), x), eachrow(sa))
         sa = unique(sa)
         sa = potential_ots_idx(sa, db.prefix)
         
@@ -318,7 +314,7 @@ function search_prefixHashDB(
         @inbounds for i in sa # each sa is range of indices of prefixes where all ots are the same
             ot = LongDNA{4}((convert(ot_type, db.prefix[i.start]) .<< (2 * s_len)) | 
                 convert(ot_type, db.suffix[i.start]), ot_len)
-            aln = ARTEMIS.align(g, ot, distance, iscompatible)
+            aln = CHOPOFF.align(g, ot, distance, iscompatible)
             if aln.dist <= distance
                 if db.mpt.dbi.motif.extends5
                     aln_guide = reverse(aln.guide)

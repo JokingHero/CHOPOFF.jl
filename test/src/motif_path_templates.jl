@@ -1,15 +1,15 @@
 using BioSequences
 using Test
-using ARTEMIS
+using CHOPOFF
 using Combinatorics
 
 @testset "motif_path_templates.jl" begin
 
     @testset "as UInt" begin
         for i in 1:100
-            guide = ARTEMIS.getseq(20)
-            guide_uint8 = ARTEMIS.guide_to_template_format(guide; alphabet = ARTEMIS.ALPHABET_TWOBIT)[1:20] # first 20 are guide
-            @test ARTEMIS.asUInt(UInt64, guide_uint8) == convert(UInt64, guide)
+            guide = CHOPOFF.getseq(20)
+            guide_uint8 = CHOPOFF.guide_to_template_format(guide; alphabet = CHOPOFF.ALPHABET_TWOBIT)[1:20] # first 20 are guide
+            @test CHOPOFF.asUInt(UInt64, guide_uint8) == convert(UInt64, guide)
         end
     end
 
@@ -17,10 +17,10 @@ using Combinatorics
         dist = 1
         motif = Motif("test"; distance = dist)
         g_len = length_noPAM(motif)
-        template = ARTEMIS.build_PathTemplates(motif)
-        template_minus1 = ARTEMIS.restrictDistance(template, dist - 1)
-        @test_throws String ARTEMIS.restrictDistance(template, -1)
-        @test_throws String ARTEMIS.restrictDistance(template, 4)
+        template = CHOPOFF.build_PathTemplates(motif)
+        template_minus1 = CHOPOFF.restrictDistance(template, dist - 1)
+        @test_throws String CHOPOFF.restrictDistance(template, -1)
+        @test_throws String CHOPOFF.restrictDistance(template, 4)
         @test maximum(template_minus1.distances) == (dist - 1)
         @test size(template_minus1.paths)[2] == dist + length_noPAM(motif)
 
@@ -48,8 +48,8 @@ using Combinatorics
         end
 
         for i in 1:iter
-            guide = ARTEMIS.getseq(g_len)
-            guide_uint8 = ARTEMIS.guide_to_template_format(guide; alphabet = ARTEMIS.ALPHABET_UINT8)
+            guide = CHOPOFF.getseq(g_len)
+            guide_uint8 = CHOPOFF.guide_to_template_format(guide; alphabet = CHOPOFF.ALPHABET_UINT8)
             all_potential_ot_no_PAM = guide_uint8[template.paths]
             all_potential_ot_no_PAM = reinterpret(DNA, all_potential_ot_no_PAM) # back to DNA
             all_potential_ot_no_PAM = map(LongDNA{4}, eachrow(all_potential_ot_no_PAM))

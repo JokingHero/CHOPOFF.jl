@@ -129,7 +129,7 @@ function build_motifDB(
     prefix_len::Int = 7;
     skipmer_size::Int = Int(floor(length_noPAM(motif) / (motif.distance + 3))))
 
-    dbi = ARTEMIS.DBInfo(genomepath, name, motif)
+    dbi = CHOPOFF.DBInfo(genomepath, name, motif)
 
     # step 1
     @info "Step 1: Searching chromosomes."

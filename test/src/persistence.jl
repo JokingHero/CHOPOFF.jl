@@ -1,6 +1,6 @@
 using Test
 
-using ARTEMIS: load, save
+using CHOPOFF: load, save
 using BioSequences
 
 @testset "persistence.jl" begin

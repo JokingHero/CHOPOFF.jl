@@ -1,11 +1,11 @@
 push!(LOAD_PATH, "../src/")
-using Documenter, ARTEMIS
-DocMeta.setdocmeta!(ARTEMIS, :DocTestSetup, :(using ARTEMIS, BioSequences); recursive=true)
+using Documenter, CHOPOFF
+DocMeta.setdocmeta!(CHOPOFF, :DocTestSetup, :(using CHOPOFF, BioSequences); recursive=true)
 
 makedocs(
     clean = true,
     doctest = true,
-    sitename = "ARTEMIS.jl",
+    sitename = "CHOPOFF.jl",
     authors = "Kornel Labun",
     format = Documenter.HTML(
         sidebar_sitename = false,
@@ -14,7 +14,7 @@ makedocs(
         disable_git = true
     ),
     # warnonly = Documenter.except(:linkcheck, :footnote), # may allow to build on git
-    modules  = [ARTEMIS],
+    modules  = [CHOPOFF],
     pages = [
         "General" => "index.md",
         "API" => Any[
@@ -28,7 +28,7 @@ makedocs(
 
 # uncomment when repo becomes public
 #deploydocs(
-#    repo = "github.com/JokingHero/ARTEMIS.jl.git",
+#    repo = "github.com/JokingHero/CHOPOFF.jl.git",
 #    target = "build",
 #    branch = "gh-pages",
 #    versions = nothing, # currently make things simple

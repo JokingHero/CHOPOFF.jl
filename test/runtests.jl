@@ -1,7 +1,7 @@
 # include all files in test/src directory
-using ARTEMIS
+using CHOPOFF
 
-dir = joinpath(pkgdir(ARTEMIS), "test", "src")
+dir = joinpath(pkgdir(CHOPOFF), "test", "src")
 files = readdir(dir)
 for f in files
     include(joinpath(dir, f))

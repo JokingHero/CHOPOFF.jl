@@ -1,6 +1,6 @@
 using Test
 
-using ARTEMIS
+using CHOPOFF
 using BioSequences
 using CSV
 using DataFrames
@@ -41,7 +41,7 @@ end
 
 
 @testset "databases" begin
-    genome = joinpath(dirname(pathof(ARTEMIS)), "..", 
+    genome = joinpath(dirname(pathof(CHOPOFF)), "..", 
         "test", "sample_data", "genome", "semirandom.2bit")
 
     guides = LongDNA{4}.(["TCGATTGTTTGGCTCTCTAAA", "GCAGGGGGACGCAAGTACGAA", "GGGCCGAAACGCGACACCGCC"])
@@ -49,7 +49,7 @@ end
     mkpath(tdir)
 
     # make and run default vcfDB
-    vcf = joinpath(dirname(pathof(ARTEMIS)), "..", 
+    vcf = joinpath(dirname(pathof(CHOPOFF)), "..", 
         "test", "sample_data", "artificial.vcf")
     vcf_db = build_vcfDB(
         "samirandom", genome, vcf,
@@ -87,7 +87,7 @@ end
         Motif("Cas12a"; distance = 1, ambig_max = 1))
     hdb_res2 = search_hashDB(hashDBambig, guides, false)
 
-    len_noPAM = ARTEMIS.length_noPAM(Motif("Cas12a"))
+    len_noPAM = CHOPOFF.length_noPAM(Motif("Cas12a"))
 
     @testset "linearDB vs dictDB" begin
         @test compare_result(ldb_res, ddb_res)

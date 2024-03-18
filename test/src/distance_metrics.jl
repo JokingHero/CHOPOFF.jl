@@ -1,6 +1,6 @@
 using Test
 
-using ARTEMIS: isinclusive, commonprefix, hamming, getseq,
+using CHOPOFF: isinclusive, commonprefix, hamming, getseq,
     levenshtein, pa_sa, align, prefix_align, suffix_align!, suffix_align
 using BioSequences
 

@@ -1,2 +1,2 @@
 {"rule":"ENGLISH_WORD_REPEAT_RULE","sentence":"^\\QLogo Logo\\E$"}
-{"rule":"MORFOLOGIK_RULE_EN_US","sentence":"^\\QARTEMIS.jl\\E$"}
+{"rule":"MORFOLOGIK_RULE_EN_US","sentence":"^\\QCHOPOFF.jl\\E$"}

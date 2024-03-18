@@ -328,7 +328,7 @@ function build_PathTemplates(
     # guide + not guide + N + Gap + remove last index as it is ending node
     # 1:20    21:40       41  42
     # 1:len   len+1:len*2 len*2 + 1, len*2 + 2, len*2 + 3
-    adj = ARTEMIS.adj_matrix_of_guide(len, d; mismatch_only = mismatch_only)
+    adj = CHOPOFF.adj_matrix_of_guide(len, d; mismatch_only = mismatch_only)
     ngp = repeat([len * 2 + 1, len * 2 + 2, len * 2 + 3], len * d)
     # replace noParents (mismatches - not guide) with proper links to noParents
     for di in 1:d
@@ -345,8 +345,8 @@ function build_PathTemplates(
         pd = path_enumeration(1, (len + 1) * di, adj)
         pd = map(x -> adj_map_to_guide[x.path[1:end-1]], pd)
         # this is to remove 1bp before insertion/mm/gap
-        map(x -> ARTEMIS.remove_1_before_non_horizontal!(x, is_seq_idx), pd)
-        map(x -> ARTEMIS.remove_gap!(x, gap_idx), pd)
+        map(x -> CHOPOFF.remove_1_before_non_horizontal!(x, is_seq_idx), pd)
+        map(x -> CHOPOFF.remove_gap!(x, gap_idx), pd)
         paths[di - 1] = pd
     end
 

@@ -1,13 +1,13 @@
 using Coverage
 using Badges
 using Pkg
-using ARTEMIS
+using CHOPOFF
 
-Pkg.test("ARTEMIS"; coverage = true)
+Pkg.test("CHOPOFF"; coverage = true)
 
 exclude = [
-    "src/ARTEMIS.jl", # contains hard to test command line interface
-    "src/FMidx/saca.jl", # FMidx stuff is tested, but this package is not base ARTEMIS
+    "src/CHOPOFF.jl", # contains hard to test command line interface
+    "src/FMidx/saca.jl", # FMidx stuff is tested, but this package is not base CHOPOFF
     "src/FMidx/WaveletMatrices.jl",
     "src/FMidx/FMindexes.jl",
     "src/db_fmi_seed.jl", # methods using FM-index and are edge experimental
@@ -31,7 +31,7 @@ open("coverage/coverage_fraction.svg", "w") do io
 end
 
 # remove the coverage files
-dir = joinpath(splitpath(dirname(pathof(ARTEMIS)))[1:end-1])
+dir = joinpath(splitpath(dirname(pathof(CHOPOFF)))[1:end-1])
 cov_files = String[]
 for (r, d, f) in walkdir(dir)
     cov = occursin.(".cov", f)

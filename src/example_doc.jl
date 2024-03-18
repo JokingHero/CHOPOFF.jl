@@ -1,15 +1,15 @@
 function make_example_doc(method::String = "linearDB"; search::String = method)
     return """
-using ARTEMIS, BioSequences
+using CHOPOFF, BioSequences
 
 # make a temporary directory
 tdir = tempname()
 db_path = joinpath(tdir, "$method")
 mkpath(db_path)
 
-# use ARTEMIS example genome
-artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(vcat(artemis_path, 
+# use CHOPOFF example genome
+chopoff_path = splitpath(dirname(pathof(CHOPOFF)))[1:end-1]
+genome = joinpath(vcat(chopoff_path, 
     "test", "sample_data", "genome", "semirandom.fa"))
 
 # build a $method
@@ -19,7 +19,7 @@ build_$method(
     db_path)
 
 # load up example gRNAs
-guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+guides_s = Set(readlines(joinpath(vcat(chopoff_path, 
     "test", "sample_data", "crispritz_results", "guides.txt"))))
 guides = LongDNA{4}.(guides_s)
     
@@ -42,17 +42,17 @@ end
 function make_vcf_example_doc()
     return """
 # prepare libs
-using ARTEMIS, BioSequences
+using CHOPOFF, BioSequences
 
-# use ARTEMIS example genome and vcf file
-artemis_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(vcat(artemis_path, 
+# use CHOPOFF example genome and vcf file
+chopoff_path = splitpath(dirname(pathof(CHOPOFF)))[1:end-1]
+genome = joinpath(vcat(chopoff_path, 
     "test", "sample_data", "genome", "semirandom.fa"))
-vcf = joinpath(vcat(artemis_path, 
+vcf = joinpath(vcat(chopoff_path, 
     "test", "sample_data", "artificial.vcf"))
 
 # load up example gRNAs
-guides_s = Set(readlines(joinpath(vcat(artemis_path, 
+guides_s = Set(readlines(joinpath(vcat(chopoff_path, 
     "test", "sample_data", "crispritz_results", "guides.txt"))))
 guides = LongDNA{4}.(guides_s)
 

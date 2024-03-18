@@ -44,10 +44,10 @@ Prepare dictDB index for future searches using `search_dictDB`.
 # Examples
 ```julia-repl
 # prepare libs
-using ARTEMIS, BioSequences
+using CHOPOFF, BioSequences
 
-# use ARTEMIS example genome
-genome = joinpath(vcat(splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+# use CHOPOFF example genome
+genome = joinpath(vcat(splitpath(dirname(pathof(CHOPOFF)))[1:end-1], 
     "test", "sample_data", "genome", "semirandom.fa"))
 
 # build a hashDB!
@@ -101,11 +101,11 @@ Beware that the dictionary can be very big (e.g. human genome ~ 8Gb).
 # Examples
 ```julia-repl
 # prepare libs
-using ARTEMIS, BioSequences
+using CHOPOFF, BioSequences
 
-# use ARTEMIS example genome
-ARTEMIS_path = splitpath(dirname(pathof(ARTEMIS)))[1:end-1]
-genome = joinpath(vcat(ARTEMIS_path, 
+# use CHOPOFF example genome
+CHOPOFF_path = splitpath(dirname(pathof(CHOPOFF)))[1:end-1]
+genome = joinpath(vcat(CHOPOFF_path, 
     "test", "sample_data", "genome", "semirandom.fa"))
 
 # build a dictDB
@@ -114,7 +114,7 @@ db = build_dictDB(
     Motif("Cas9"; distance = 1, ambig_max = 0))
 
 # load up example gRNAs
-guides_s = Set(readlines(joinpath(vcat(ARTEMIS_path, 
+guides_s = Set(readlines(joinpath(vcat(CHOPOFF_path, 
     "test", "sample_data", "crispritz_results", "guides.txt"))))
 guides = LongDNA{4}.(guides_s)
 

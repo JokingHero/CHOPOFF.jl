@@ -4,4 +4,4 @@
 *.bin
 build
 docs/build
-ARTEMIS.jl.code-workspace
+CHOPOFF.jl.code-workspace

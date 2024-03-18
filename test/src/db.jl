@@ -1,6 +1,6 @@
 using Test
 
-using ARTEMIS
+using CHOPOFF
 using BioSequences
 using CSV
 using DataFrames
@@ -77,7 +77,7 @@ end
 
 
 @testset "databases" begin
-    genome = joinpath(dirname(pathof(ARTEMIS)), "..", 
+    genome = joinpath(dirname(pathof(CHOPOFF)), "..", 
         "test", "sample_data", "genome", "semirandom.fa")
     guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
     guides = LongDNA{4}.(guides_s)
@@ -87,7 +87,7 @@ end
     # it can/can't be found by different methods
 
     # make and run default vcfDB
-    vcf = joinpath(dirname(pathof(ARTEMIS)), "..", 
+    vcf = joinpath(dirname(pathof(CHOPOFF)), "..", 
         "test", "sample_data", "artificial.vcf")
     vcf_db = build_vcfDB(
         "samirandom", genome, vcf,
@@ -95,7 +95,7 @@ end
     vcf_res = search_vcfDB(vcf_db, guides)
 
     @testset "vcfDB result is same as in saved file" begin
-        ar_file = joinpath(dirname(pathof(ARTEMIS)), "..", 
+        ar_file = joinpath(dirname(pathof(CHOPOFF)), "..", 
             "test", "sample_data", "artificial_results.csv")
         ar = DataFrame(CSV.File(ar_file))
         @test compare_result(ar, vcf_res)
@@ -128,7 +128,7 @@ end
         Motif("Cas9"; distance = 1, ambig_max = 1))
     hdb_res2 = search_hashDB(hashDBambig, guides, false)
 
-    len_noPAM = ARTEMIS.length_noPAM(Motif("Cas9"))
+    len_noPAM = CHOPOFF.length_noPAM(Motif("Cas9"))
 
     @testset "linearDB against CRISPRitz" begin
         ## Files

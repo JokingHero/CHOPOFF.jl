@@ -1,6 +1,6 @@
 using Test
 
-using ARTEMIS: DBInfo, Loc, decode, 
+using CHOPOFF: DBInfo, Loc, decode, 
     Motif, length_noPAM, removepam, combinestrings, notX,
     AmbigIdx, findbits, setdist, Offtarget, insert_offtarget!, display_motif
 using BioSequences

@@ -103,8 +103,8 @@ Alignments will be performed from opposite to the extension direction (which is 
 
 # Examples
 ```julia-repl
-# use ARTEMIS example genome
-genome = joinpath(vcat(splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+# use CHOPOFF example genome
+genome = joinpath(vcat(splitpath(dirname(pathof(CHOPOFF)))[1:end-1], 
     "test", "sample_data", "genome", "semirandom.fa"))
 # construct example DBInfo
 DBInfo(genome, "Cas9_semirandom_noVCF", Motif("Cas9"))

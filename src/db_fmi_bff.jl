@@ -166,7 +166,7 @@ function search_chrom2(
 
         # STEP 1. Check in hash whether this OT is there or not
         ot_uint64 = guides_uint64[i][bffDB.mpt.paths[:, 1:restrict_to_len]] # PAMseqEXT
-        ot_uint64 = map(x -> ARTEMIS.asUInt(UInt64, x), eachrow(ot_uint64))
+        ot_uint64 = map(x -> CHOPOFF.asUInt(UInt64, x), eachrow(ot_uint64))
         ot_uint64_rc = guides_uint64_rc[i][bffDB.mpt.paths[:, 1:restrict_to_len]] # PAMseqEXT - normalized always
         ot_uint64_rc = map(x -> asUInt(UInt64, x), eachrow(ot_uint64_rc))
         # further reduce non-unique seqeunces
@@ -193,16 +193,16 @@ function search_chrom2(
         for j in 1:size(ot)[1]
             ot_j = @view ot[j, :]
 
-            fwd_iter = ARTEMIS.locate(ot_j, fmi)
+            fwd_iter = CHOPOFF.locate(ot_j, fmi)
             for pos in fwd_iter
 
                 if bffDB.mpt.motif.extends5
-                    pass = all(ARTEMIS.iscompatible.(
+                    pass = all(CHOPOFF.iscompatible.(
                         pam, chrom[(pos + restrict_to_len):(pos + restrict_to_len + pam_len - 1)])) && 
-                        all(ARTEMIS.iscompatible.(ot_tail[j, :], chrom[(pos - tail_len):(pos - 1)]))
+                        all(CHOPOFF.iscompatible.(ot_tail[j, :], chrom[(pos - tail_len):(pos - 1)]))
                 else
-                    pass = all(ARTEMIS.iscompatible.(
-                        pam, chrom[(pos - pam_len):(pos - 1)])) && all(ARTEMIS.iscompatible.(
+                    pass = all(CHOPOFF.iscompatible.(
+                        pam, chrom[(pos - pam_len):(pos - 1)])) && all(CHOPOFF.iscompatible.(
                         ot_tail[j, :], chrom[(pos + restrict_to_len):(pos + restrict_to_len + tail_len - 1)]))
                 end
 
@@ -227,17 +227,17 @@ function search_chrom2(
         for j in 1:size(ot_rc)[1]
             ot_rc_j = @view ot_rc[j, :]
                 
-            rve_iter = ARTEMIS.locate(ot_rc_j, fmi)
+            rve_iter = CHOPOFF.locate(ot_rc_j, fmi)
             for pos in rve_iter
 
                 if bffDB.mpt.motif.extends5
-                    pass = all(ARTEMIS.iscompatible.(
-                        pam_rc, chrom[(pos - pam_len):(pos - 1)])) && all(ARTEMIS.iscompatible.(
+                    pass = all(CHOPOFF.iscompatible.(
+                        pam_rc, chrom[(pos - pam_len):(pos - 1)])) && all(CHOPOFF.iscompatible.(
                         ot_rc_tail[j, :], chrom[(pos + restrict_to_len):(pos + restrict_to_len + tail_len - 1)]))
                 else
-                    pass = all(ARTEMIS.iscompatible.(
+                    pass = all(CHOPOFF.iscompatible.(
                         pam_rc, chrom[(pos + restrict_to_len):(pos + restrict_to_len + pam_len - 1)])) && 
-                        all(ARTEMIS.iscompatible.(ot_rc_tail[j, :], chrom[(pos - tail_len):(pos - 1)]))
+                        all(CHOPOFF.iscompatible.(ot_rc_tail[j, :], chrom[(pos - tail_len):(pos - 1)]))
                 end
 
                 if pass

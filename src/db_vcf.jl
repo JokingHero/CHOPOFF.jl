@@ -255,8 +255,8 @@ function search_vcfDB(
         guides_ = reverse.(guides_)
     end
 
-    guides_uint8 = guide_to_template_format.(copy(guides_); alphabet = ARTEMIS.ALPHABET_UINT8)
-    guides_uint2 = guide_to_template_format.(copy(guides_); alphabet = ARTEMIS.ALPHABET_TWOBIT)
+    guides_uint8 = guide_to_template_format.(copy(guides_); alphabet = CHOPOFF.ALPHABET_UINT8)
+    guides_uint2 = guide_to_template_format.(copy(guides_); alphabet = CHOPOFF.ALPHABET_TWOBIT)
 
     res = zeros(Int, length(guides_), 2)
     for (i, s) in enumerate(guides_)

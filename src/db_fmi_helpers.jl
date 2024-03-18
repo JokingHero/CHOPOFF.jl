@@ -34,17 +34,17 @@ NGG  CCN TTTN  NAAA
 # Examples
 ```julia-repl
 # prepare libs
-using ARTEMIS, BioSequences
+using CHOPOFF, BioSequences
 
 # make a temporary directory
 tdir = tempname()
 fmi_dir = joinpath(tdir, "fmi")
 mkpath(fmi_dir)
 
-# use ARTEMIS example genome
+# use CHOPOFF example genome
 genome = joinpath(
     vcat(
-        splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+        splitpath(dirname(pathof(CHOPOFF)))[1:end-1], 
         "test", "sample_data", "genome", "semirandom.fa"))
 # build FM-index
 build_fmiDB(genome, fmi_dir)
@@ -67,13 +67,13 @@ function build_pamDB(fmidbdir::String, motif::Motif; storage_path::String = "")
         pam_loc_fwd_chrom = Vector{gi.pos_type}()
         pam_loc_rve_chrom = Vector{gi.pos_type}()
         for pam_i in pam
-            pam_pos = ARTEMIS.locateall(pam_i, fmi) # NGG on N
+            pam_pos = CHOPOFF.locateall(pam_i, fmi) # NGG on N
             if !motif.extends5 # TTTN on N
                 pam_pos = pam_pos .+ (length(pam_i) - 1)
             end
             append!(pam_loc_fwd_chrom, pam_pos)
             
-            pam_pos = ARTEMIS.locateall(reverse_complement(pam_i), fmi) # NAAA on N
+            pam_pos = CHOPOFF.locateall(reverse_complement(pam_i), fmi) # NAAA on N
             if motif.extends5 # CCN on N
                 pam_pos = pam_pos .+ (length(pam_i) - 1)
             end
@@ -117,15 +117,15 @@ Prepare FM-index for future searches.
 # Examples
 ```julia-repl
 # prepare libs
-using ARTEMIS, BioSequences
+using CHOPOFF, BioSequences
 
 # make a temporary directory
 tdir = tempname()
 fmi_dir = joinpath(tdir, "fmi")
 mkpath(fmi_dir)
 
-# use ARTEMIS example genome
-genome = joinpath(vcat(splitpath(dirname(pathof(ARTEMIS)))[1:end-1], 
+# use CHOPOFF example genome
+genome = joinpath(vcat(splitpath(dirname(pathof(CHOPOFF)))[1:end-1], 
     "test", "sample_data", "genome", "semirandom.fa"))
 
 # build a fmiDB!
