@@ -3,9 +3,8 @@
 ## Prefix-Suffix partial alignment
 
 ```@docs
-build_linearHashDB
-search_linearHashDB
-search_linearHashDB_with_es
+build_prefixHashDB
+search_prefixHashDB
 
 build_linearDB
 search_linearDB

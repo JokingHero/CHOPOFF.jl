@@ -232,7 +232,7 @@ search_prefixHashDB(
     early_stopping::Vector{Int} = Int.(floor.(exp.(0:distance))))
 ```
 
-Find all off-targets for `guides` within distance of `dist` using linearHashDB located at `storage_dir`.
+Find all off-targets for `guides` within distance of `dist` using prefixHashDB located at `storage_dir`.
 Uses early stopping to stop searching when a guide passes a limit on number of off-targets. This method does not 
 keep track of the off-target locations and does not filter overlapping off-targets, therefore it might hit the 
 early stopping condition a little earlier than intended.

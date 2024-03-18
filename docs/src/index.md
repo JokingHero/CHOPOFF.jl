@@ -41,7 +41,7 @@ julia --threads 4 --project="." ./src/ARTEMIS.jl --help
 ## Quick Use
 
 For search of off-targets you have a couple of options:
-- `linearHashDB` - the fastest, on top of linearDB we apply hashes to filter out more
+- `prefixHashDB` - the fastest, we apply hashes to symbolic alignments for fast filtering of OTs
 - `linearDB` - most rigorously tested
 - `motifDB` - on top of linearDB we apply pigeonhole principle like filter which you can adjust
 - `treeDB` - will work best for longer gRNAs, uses vantage point for filteirng

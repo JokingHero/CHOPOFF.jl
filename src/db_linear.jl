@@ -281,7 +281,7 @@ Each consecutive value in the vector has to be equal or bigger than the previous
 
 # Examples
 ```julia-repl
-$(make_example_doc("linearHashDB"; search = "linearHashDB_with_es"))
+$(make_example_doc("linearDB"; search = "linearDB_with_es"))
 ```
 """
 function search_linearDB_with_es(

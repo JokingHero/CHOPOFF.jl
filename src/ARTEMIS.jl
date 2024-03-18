@@ -50,7 +50,6 @@ include("db_helpers.jl")
 include("db_dict.jl")
 include("db_motif.jl")
 include("db_linear.jl")
-include("db_linear_hash.jl")
 include("db_tree.jl")
 include("db_hash.jl")
 include("db_vcf.jl")
@@ -83,7 +82,6 @@ export build_fmiDB, search_fmiDB
 export build_pamDB, search_fmiDB_seed
 export search_fmiDB_hash
 export build_binaryFuseFilterDB, search_binaryFuseFilterDB
-export build_linearHashDB, search_linearHashDB, search_linearHashDB_with_es
 export build_prefixHashDB, search_prefixHashDB
 
 ## Standalone binary generation
@@ -120,9 +118,6 @@ function parse_commandline(args::Array{String})
         "linearDB"
             action = :command
             help = "linearDB utilizes prefixes to decrease search time, but no other optimizations."
-        "linearHashDB"
-            action = :command
-            help = "linearHashDB utilizes prefixes to decrease search time, and on top of that uses hashes."
         "prefixHashDB"
             action = :command
             help = "prefixHashDB utilizes prefixes to decrease search time, and on top of that uses hashes."
@@ -213,19 +208,6 @@ function parse_commandline(args::Array{String})
                 "one linearDB instance."
             arg_type = Int
             default = 7
-    end
-
-    @add_arg_table! s["build"]["linearHashDB"] begin
-        "--prefix_length"
-            help = "Defines length of the prefix. " * 
-                "For each possible prefix there will be " *
-                "one linearDB instance."
-            arg_type = Int
-            default = 7
-        "--hash_length"
-            help = "Defines length of the hash. "
-            arg_type = Int
-            required = false
     end
 
     @add_arg_table! s["build"]["prefixHashDB"] begin
@@ -328,9 +310,6 @@ function parse_commandline(args::Array{String})
         "linearDB"
             action = :command
             help = "linearDB utilizes prefixes to decrease search time, but no other optimizations."
-        "linearHashDB"
-            action = :command
-            help = "linearHashDB utilizes prefixes to decrease search time, and on top of that uses hash."
         "prefixHashDB"
             action = :command
             help = "prefixHashDB utilizes prefixes to decrease search time, and on top of that uses hash."
@@ -376,14 +355,6 @@ function parse_commandline(args::Array{String})
     end
 
     @add_arg_table! s["search"]["linearDB"] begin
-        "--early_stopping"
-            help = "Input a vector of length of distance + 1 with early stopping conditions."
-            arg_type = Int
-            nargs = '*'
-            required = false
-    end
-
-    @add_arg_table! s["search"]["linearHashDB"] begin
         "--early_stopping"
             help = "Input a vector of length of distance + 1 with early stopping conditions."
             arg_type = Int
@@ -509,13 +480,6 @@ function main(args::Array{String})
         elseif args["%COMMAND%"] == "linearDB"
             build_linearDB(args["name"], args["genome"], motif, args["output"], 
                 args["linearDB"]["prefix_length"])
-        elseif args["%COMMAND%"] == "linearHashDB"
-            hash_len = args["linearHashDB"]["hash_length"]
-            if hash_len === nothing
-                hash_len = (length_noPAM(motif) - (motif.distance))
-            end
-            build_linearHashDB(args["name"], args["genome"], motif, args["output"], 
-                args["linearHashDB"]["prefix_length"], hash_len)
         elseif args["%COMMAND%"] == "prefixHashDB"
             hash_len = args["prefixHashDB"]["hash_length"]
             if hash_len === nothing
@@ -576,15 +540,6 @@ function main(args::Array{String})
                     early_stopping = args["linearDB"]["early_stopping"])
             else
                 search_linearDB(args["database"], guides, args["output"]; 
-                    distance = args["distance"])
-            end
-        elseif args["%COMMAND%"] == "linearHashDB"
-            if length(args["linearHashDB"]["early_stopping"]) != 0
-                res = search_linearHashDB_with_es(args["database"], guides, args["output"]; 
-                    distance = args["distance"], 
-                    early_stopping = args["linearHashDB"]["early_stopping"])
-            else
-                search_linearHashDB(args["database"], guides, args["output"]; 
                     distance = args["distance"])
             end
         elseif args["%COMMAND%"] == "prefixHashDB"
