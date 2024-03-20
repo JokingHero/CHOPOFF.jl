@@ -249,6 +249,7 @@ const FROM_AMBIGUOUS = IdDict(
     DNA_W => [DNA_A,        DNA_T,      ],
     DNA_S => [       DNA_C,        DNA_G],
     DNA_Y => [       DNA_C, DNA_T,      ],
+    DNA_Gap => [DNA_A], # as in telomeres
     )
 
 
@@ -267,7 +268,7 @@ function expand_ambiguous(x::LongDNA{4})
     amb_dna = Vector{Vector{DNA}}()
     amb_idx = Vector{Int64}()
     for (i, dna) in enumerate(x)
-        if isambiguous(dna)
+        if isambiguous(dna) || isgap(dna)
             push!(amb_idx, i)
             push!(amb_dna, FROM_AMBIGUOUS[dna])
         end
