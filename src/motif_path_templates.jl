@@ -514,8 +514,8 @@ duplicated(x::Vector{UInt64})
 Helper that allows to find which values occur more than once in the Vector. 
 Returns BitVector of duplciated positions.
 """
-function duplicated(x::Vector{UInt64})
-    s = Set(Vector{UInt64}())
+function duplicated(x::Vector{<:Number})
+    s = Set(Vector{eltype(x)}())
     b = BitVector(zeros(length(x)))
     for (i, xi) in enumerate(x)
         if xi in s

@@ -260,11 +260,7 @@ Turn ambiguous bases e.g. N, into all possible combinations.
 # Examples
 ```jldoctest
 julia> expand_ambiguous(dna"AN")
-4-element Vector{LongSequence{DNAAlphabet{4}}}:
- AA
- AC
- AT
- AG
+(LongSequence{DNAAlphabet{4}}[AA, AC, AT, AG], [2])
  ```
 """
 function expand_ambiguous(x::LongDNA{4})
@@ -285,7 +281,7 @@ function expand_ambiguous(x::LongDNA{4})
         end
         i += 1
     end
-    return res
+    return res, amb_idx
 end
 
 
@@ -320,7 +316,7 @@ function as_bitvector_of_kmers(x::LongDNA{4}, kmers::Dict{LongDNA{4}, Int})
         if iscertain(xi)
             bits[kmers[xi]] = 1
         else # replace all ambigs with nonambigs
-            xexp = expand_ambiguous(xi)
+            xexp, idx = expand_ambiguous(xi)
             for xi in xexp
                 bits[kmers[xi]] = 1
             end
@@ -352,7 +348,7 @@ function as_kmers(x::LongDNA{4}, kmer_size::Int)
         if iscertain(xi)
             push!(kmers, xi)
         else # replace all ambigs with nonambigs
-            xexp = expand_ambiguous(xi)
+            xexp, idx = expand_ambiguous(xi)
             for xi in xexp
                 push!(kmers, xi)
             end
@@ -384,7 +380,7 @@ function as_skipkmers(x::LongDNA{4}, kmer_size::Int)
         if iscertain(xi)
             push!(kmers, xi)
         else # replace all ambigs with nonambigs
-            xexp = expand_ambiguous(xi)
+            xexp, idx = expand_ambiguous(xi)
             for xi in xexp
                 push!(kmers, xi)
             end

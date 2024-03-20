@@ -343,24 +343,25 @@ end
 
     @testset "linearDB vs prefixHashDB early stopped" begin
         # remember that this early stopping can find overlaps
-        search_linearDB(ldb_path, guides, detail_path; distance = 2)
+        search_linearDB(ldb_path, guides, detail_path; distance = 3)
         ldb = DataFrame(CSV.File(detail_path))
 
         phdb_path = joinpath(tdir, "prefixHashDBes")
         mkpath(phdb_path)
-        build_prefixHashDB("samirandom", genome, setdist(Motif("Cas9"), 2), phdb_path)
+        build_prefixHashDB("samirandom", genome, setdist(Motif("Cas9"), 3), phdb_path)
         detail_path_es = joinpath(phdb_path, "detail_es.csv")
 
-        search_prefixHashDB(phdb_path, guides, detail_path_es; distance = 2, early_stopping = [300, 300, 300])
+        search_prefixHashDB(phdb_path, guides, detail_path_es; distance = 3, 
+            early_stopping = [300, 300, 300, 300])
         pdbes = DataFrame(CSV.File(detail_path_es))
         failed = antijoin(ldb, pdbes, on = [:guide, :distance, :chromosome, :start, :strand])
         @test nrow(failed) == 0
         
         # find all offtargets with es with overlap filtering - we dont support ambigous guides anymore
         search_prefixHashDB(phdb_path, guides, 
-            detail_path_es; distance = 2, early_stopping = repeat([0], 3))
+            detail_path_es; distance = 0, early_stopping = [0])
         pdbes = DataFrame(CSV.File(detail_path_es))
         pdbes_res = summarize_offtargets(pdbes)
-        @test nrow(pdbes) == 20 # I checked these results
+        @test nrow(pdbes) == 20
     end
 end

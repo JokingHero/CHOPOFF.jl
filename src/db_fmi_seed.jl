@@ -275,7 +275,8 @@ function search_fmiDB_seed(guides::Vector{LongDNA{4}},
     # allows for ambiguity in the guide, solves ambiguity in the PAM
     guide_chunks = map(guide_chunks) do gch
         map(gch) do x
-            expand_ambiguous(x)
+            res, idx = expand_ambiguous(x)
+            return res
         end
     end
     pam_len = length(motif) - length_noPAM(motif)

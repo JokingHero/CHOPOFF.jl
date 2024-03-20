@@ -58,7 +58,7 @@ function build_pamDB(fmidbdir::String, motif::Motif; storage_path::String = "")
     gi = load(joinpath(fmidbdir, "genomeInfo.bin"))
     pam = motif.fwd[motif.pam_loci_fwd]
 
-    pam = expand_ambiguous(pam)
+    pam, idx = expand_ambiguous(pam)
     pam_loc_fwd = IdDict{Int, Vector{Int}}()
     pam_loc_rve = IdDict{Int, Vector{Int}}()
 

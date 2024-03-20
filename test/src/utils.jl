@@ -105,9 +105,9 @@ using Combinatorics
     end
 
     @testset "expand_ambiguous" begin
-        @test expand_ambiguous(dna"ACTG") == [dna"ACTG"]
-        @test expand_ambiguous(dna"AR") == [dna"AA", dna"AG"]
-        @test expand_ambiguous(dna"WR") == [dna"AA", dna"TA", dna"AG", dna"TG"]
+        @test expand_ambiguous(dna"ACTG")[1] == [dna"ACTG"]
+        @test expand_ambiguous(dna"AR")[1] == [dna"AA", dna"AG"]
+        @test expand_ambiguous(dna"WR")[1] == [dna"AA", dna"TA", dna"AG", dna"TG"]
     end
 
     @testset "all_kmers" begin

@@ -6,19 +6,69 @@ struct SymbolicAlignments # PathTemplates, but without the fluff and length rest
 end
 
 struct AmbigPrefixHashDB
-    mpt::Union{Nothing, SymbolicAlignments} # Nothing when Motif allows ambig in PrefixHashDB
-
-    prefix_hash::Vector{<:Unsigned} # sorted, hashes can repeat and point to different groupings
-    prefix_start::Vector{<:Unsigned} # grouping pointers - start + width (smaller)
-    prefix_width::Vector{<:Unsigned}
-
-    suffix::Vector{<:Unsigned} # leftover of the hash, as small as possible
+    mpt::Union{Nothing, CHOPOFF.SymbolicAlignments} # Nothing when Motif allows ambig in PrefixHashDB
+    prefix::Vector{<:Unsigned} # sorted, hashes can repeat and point to different groupings
+    prefix_idx::Vector{Int}
+    suffix::Vector{<:Unsigned} # leftover of the hash - ambigous bases are set to 11
     chrom::Vector{<:Unsigned}
     pos::Vector{<:Unsigned}
     isplus::Vector{Bool}
     annot::Union{Vector{AbstractString}, Nothing} # use InlineStrings here to save time loading it up
     is_ambig::BitVector # because length of the OTs is known we can have each position showing ambiguity value
     ambig::Vector{UInt8} # encoding of special bases
+end
+
+function build_ambigPrefixHashDB(
+    ambig_guides::Vector{LongDNA{4}},
+    ambig_chrom::Vector{<:Unsigned},
+    ambig_pos::Vector{<:Unsigned},
+    ambig_isplus::Vector{Bool},
+    l::Int, # length_noPAM + distance
+    hash_len::Int,
+    ot_type::Type, # type of the OTs
+    hash_type::Type,
+    suffix_type::Type,
+    annot::Union{Vector{AbstractString}, Nothing},
+    mpt::Union{Nothing, CHOPOFF.SymbolicAlignments})
+
+    ambig_prefixes = Vector{ot_type}()
+    ambig_indexes = Vector{Int}()
+    ambig_suffixes = Vector{ot_type}()
+    ambig_bv = BitVector()
+    ambig_bases = Vector{UInt8}()
+    for (i, ag) in enumerate(ambig_guides)
+        prefixes, idx = CHOPOFF.expand_ambiguous(ag) 
+        prefixes = convert.(ot_type, prefixes)
+        append!(ambig_suffixes, prefixes[1]) # any of the prefixes will do
+        prefixes = convert.(hash_type, prefixes .>> (2 * (l - hash_len)))
+        prefixes = unique(prefixes)
+        append!(ambig_prefixes, prefixes)
+        append!(ambig_indexes, repeat([i], length(prefixes)))
+        bv = BitVector(falses(l))
+        bv[idx] .= 1
+        append!(ambig_bv, bv)
+        append!(ambig_bases, convert.(UInt8, ag[idx]))
+    end
+
+    ambig_guides = nothing
+    mask = (one(ot_type) << (2 * (l - hash_len))) - one(ot_type)
+    ambig_suffixes = convert.(suffix_type, mask .& ambig_suffixes)
+    order = sortperm(ambig_prefixes)
+    ambig_prefixes = ambig_prefixes[order]
+    ambig_indexes = ambig_indexes[order]
+    ambig_isplus = BitVector(ambig_isplus)
+
+    return AmbigPrefixHashDB(
+        mpt,
+        ambig_prefixes,
+        ambig_indexes,
+        ambig_suffixes,
+        ambig_chrom,
+        ambig_pos,
+        ambig_isplus,
+        annot,
+        ambig_bv,
+        ambig_bases)
 end
 
 struct PrefixHashDB
@@ -40,20 +90,18 @@ struct OffTargets
 end
 
 function gather_hashes!(
-    ambig_guides::AG,
-    ambig_chrom::C,
-    ambig_pos::P,
+    ambig_guides::Vector{LongDNA{4}},
+    ambig_chrom::Vector{<:Unsigned},
+    ambig_pos::Vector{<:Unsigned},
     ambig_isplus::Vector{Bool},
-    guides::H,
-    chrom::C,
-    pos::P,
+    guides::Vector{<:Unsigned},
+    chrom::Vector{<:Unsigned},
+    pos::Vector{<:Unsigned},
     isplus::Vector{Bool},
     chrom_name::CU,
     dbi::DBInfo,
     chrom_seq::K,   
-    is_antisense::Bool) where {
-        AG<:Vector{LongDNA{4}}, C<:Vector{<:Unsigned}, P<:Vector{<:Unsigned}, 
-        H<:Vector{<:Unsigned}, CU<:Unsigned, K<:BioSequence}
+    is_antisense::Bool) where {CU<:Unsigned, K<:BioSequence}
 
     pam_loci = is_antisense ? dbi.motif.pam_loci_rve : dbi.motif.pam_loci_fwd
 
@@ -189,22 +237,21 @@ function build_prefixHashDB(
         prefixes, suffixes, chrom, pos, isplus), joinpath(storage_dir, "prefixHashDB.bin"))
     @info "Finished constructing prefixHashDB in " * storage_dir
 
-    if length(ambig_guides) > 0 # TODO
+    if length(ambig_guides) > 0
         @info "Step 4: Constructing DB for ambigous gRNAs."
-        #=
-        ambig_guides
-        prefixes = convert.(hash_type, guides .>> (2 * (l - hash_len)))
-        mask = (one(ot_type) << (2 * (l - hash_len))) - one(ot_type)
-        suffixes = convert.(suffix_type, mask .& guides)
-        guides = nothing
-
-        order = sortperm(prefixes)
-        prefixes = prefixes[order]
-        suffixes = suffixes[order]
-        chrom = chrom[order]
-        pos = pos[order]
-        isplus = BitVector(isplus[order])
-        =#
+        paths = nothing
+        mpt = nothing
+        prefixes = nothing
+        suffixes = nothing
+        chrom = nothing
+        pos = nothing
+        isplus = nothing
+        
+        save(build_ambigPrefixHashDB(
+                ambig_guides, ambig_chrom, ambig_pos, ambig_isplus,
+                l, hash_len, ot_type, hash_type, suffix_type, nothing, nothing), 
+            joinpath(storage_dir, "ambigPrefixHashDB.bin"))
+        @info "Finished constructing DB for ambigous OTs in " * storage_dir
     end
     
     return storage_dir
@@ -281,8 +328,11 @@ function search_prefixHashDB(
         error("For this database maximum distance is " * string(db.mpt.dbi.motif.distance))
     end
 
-    if db.mpt.dbi.motif.ambig_max > 0
-        # TODO
+    adb_file = joinpath(storage_dir, "ambigPrefixHashDB.bin")
+    if isfile(adb_file)
+        adb = load(adb_file)
+    else 
+        adb = nothing
     end
 
     guides_ = copy(guides)
@@ -294,25 +344,30 @@ function search_prefixHashDB(
     paths = db.mpt.paths[db.mpt.paths_distances .<= distance, :]
     mkpath(dirname(output_file))
 
-    ThreadsX.map(guides_) do g # maybe a function would be faster than lambda here?
+    Base.map(guides_) do g # maybe a function would be faster than lambda here?
         guides_formated = CHOPOFF.guide_to_template_format(g; alphabet = CHOPOFF.ALPHABET_TWOBIT)
         sa = guides_formated[paths]
         sa = Base.map(x -> CHOPOFF.asUInt(eltype(db.prefix), x), eachrow(sa))
         sa = unique(sa)
-        sa = potential_ots_idx(sa, db.prefix)
+        if !isnothing(adb)
+            asa = CHOPOFF.potential_ots_idx(sa, adb.prefix)
+        else
+            asa = []
+        end
+        sa = CHOPOFF.potential_ots_idx(sa, db.prefix)
         
         es_acc = zeros(Int64, length(early_stopping))   
         detail_path = joinpath(dirname(output_file), "detail_" * string(g) * ".csv")
         detail_file = open(detail_path, "w")
         guide_stranded = db.mpt.dbi.motif.extends5 ? reverse(g) : g
         guide_stranded = string(guide_stranded)
-        if length(sa) == 0
+        if length(sa) == 0 && length(asa) == 0
             close(detail_file)
             return
         end
 
         @inbounds for i in sa # each sa is range of indices of prefixes where all ots are the same
-            ot = LongDNA{4}((convert(ot_type, db.prefix[i.start]) .<< (2 * s_len)) | 
+            ot = LongDNA{4}((convert(ot_type, db.prefix[i.start]) << (2 * s_len)) | 
                 convert(ot_type, db.suffix[i.start]), ot_len)
             aln = CHOPOFF.align(g, ot, distance, iscompatible)
             if aln.dist <= distance
@@ -338,6 +393,52 @@ function search_prefixHashDB(
                 end
             end
         end
+
+        if length(asa) > 0
+            asa = vcat(collect.(asa)...)
+            prefixes = adb.prefix[asa]
+            asa = adb.prefix_idx[asa] # actual indxes of suffixes
+            
+            dups = CHOPOFF.duplicated(asa) .& CHOPOFF.duplicated(prefixes)
+            asa = asa[.!dups]
+            prefixes = prefixes[.!dups]
+            suffixes = adb.suffix[asa]
+            ots = LongDNA{4}.((convert.(ot_type, prefixes) .<< (2 * s_len)) .| 
+                    convert.(ot_type, suffixes), ot_len)
+
+            @inbounds for (i, ot) in enumerate(ots)
+                idx = asa[i] # actual index for chrom/pos/isplus/annot
+                bv_start = (idx - 1) * ot_len + 1
+                bv_end = idx * ot_len
+                bv = adb.is_ambig[bv_start:bv_end]
+                bv_start = sum(adb.is_ambig[1:bv_start]) + 1
+                bv_end = bv_start + sum(bv) - 1
+                ot[bv] = reinterpret.(DNA, adb.ambig[bv_start:bv_end])
+                
+                aln = CHOPOFF.align(g, ot, distance, iscompatible)
+                if aln.dist <= distance
+                    if db.mpt.dbi.motif.extends5
+                        aln_guide = reverse(aln.guide)
+                        aln_ref = reverse(aln.ref)
+                    else
+                        aln_guide = aln.guide
+                        aln_ref = aln.ref
+                    end
+                    strand = adb.isplus[idx] ? "+" : "-"
+                    ot = guide_stranded * "," * aln_guide * "," * 
+                        aln_ref * "," * string(aln.dist) * "," *
+                        db.mpt.dbi.gi.chrom[adb.chrom[idx]] * "," * 
+                        string(adb.pos[idx]) * "," * strand * "\n"
+                    write(detail_file, ot)
+                    es_acc[aln.dist + 1] += 1
+                    if es_acc[aln.dist + 1] >= early_stopping[aln.dist + 1]
+                        close(detail_file)
+                        return
+                    end
+                end
+            end
+        end
+
         close(detail_file)
         return
     end
