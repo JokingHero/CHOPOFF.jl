@@ -63,7 +63,7 @@ Prepare hashDB index for future searches using `search_hashDB`.
                     bases because of the potential extension) that have to be actually aligned in the genome.
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc("binaryFuseFilterDB"))
 ```
 """
@@ -306,7 +306,7 @@ will contain all those intermediate files.
 which off-targets are considered.
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc("binaryFuseFilterDB"))
 ```
 """

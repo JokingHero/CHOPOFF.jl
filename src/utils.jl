@@ -415,7 +415,7 @@ Filter overlapping off-targets. Remember that off-targets have their start relat
 `distance` - To what distance from the `:start` do we consider the off-target to be overlapping?
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc())
 ```
 """
@@ -471,7 +471,7 @@ You can specify distance to filter out some of the higher distances.
     its possible to specify smaller distance than contained in the `res` DataFrame and autofilter lower distances.
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc())
 ```
 """

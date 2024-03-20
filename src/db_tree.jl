@@ -128,7 +128,7 @@ search distance, however in that case number of files also grows.
                 however it will also result in large number of files. 
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc("treeDB"))
 ```
 """
@@ -292,7 +292,7 @@ interested in off-target counts returned by the treeDB.
 
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc("treeDB"))
 ```
 """
@@ -406,7 +406,7 @@ TreeDB can be split based on the distance to the radius (r)
 into inside (left <= r) and right (outside > r) nodes.
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc("treeDB"))
 
 # finally, view some part of the database!

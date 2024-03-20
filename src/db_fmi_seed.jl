@@ -173,7 +173,7 @@ and [pdf](https://mikael-salson.univ-lille.fr//articles/VST_Iwoca14.pdf).
 
 
 # Examples
-```julia-repl
+```julia
 # prepare libs
 using CHOPOFF, BioSequences
 

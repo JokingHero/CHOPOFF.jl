@@ -41,17 +41,17 @@ julia --threads 4 --project="." ./src/CHOPOFF.jl --help
 ## Quick Use
 
 For search of off-targets you have a couple of options:
-- `prefixHashDB` - the fastest, we apply hashes to symbolic alignments for fast filtering of OTs
-- `linearDB` - most rigorously tested
-- `motifDB` - on top of linearDB we apply pigeonhole principle like filter which you can adjust
-- `treeDB` - will work best for longer gRNAs, uses vantage point for filteirng
-- `fmiDB` - the smallest file size, very fast, but only for distances ≤ 2
-- `build_binaryFuseFilterDB` - uses hashing on top of FM-index
+- **[prefixHashDB](@ref "search_prefixHashDB")** - the fastest, we apply hashes to symbolic alignments for fast filtering of OTs  
+- [linearDB](@ref "search_linearDB") - most rigorously tested
+- [motifDB](@ref "search_motifDB") - on top of linearDB we apply pigeonhole principle like filter which you can adjust
+- [treeDB](@ref "search_treeDB") - will work best for longer gRNAs, uses vantage point for filteirng
+- [fmiDB](@ref "search_fmiDB") - the smallest file size, very fast, but only for distances ≤ 2
+- [binaryFuseFilterDB](@ref "search_binaryFuseFilterDB") - uses hashing on top of FM-index
 
-If you would like to **filter** or **rank** gRNAs to only those that are most likely off-target free you want to use `hashDB` or
-slower and much larger, but less probabilistic `dictDB`.
+If you would like to **filter** or **rank** gRNAs to only those that are most likely off-target free you want to use [hashDB](@ref "search_hashDB") or
+slower and much larger, but less probabilistic [dictDB](@ref "search_dictDB").
 
-For VCF file support use `vcfDB`. 
+For VCF file support use [vcfDB](@ref "search_vcfDB"). 
 For use of the framework as a Julia package consult the documentation - Public Interface section.
 
 

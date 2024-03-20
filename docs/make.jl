@@ -1,9 +1,11 @@
-push!(LOAD_PATH, "../src/")
+# push!(LOAD_PATH, "docs/src/")
 using Documenter, CHOPOFF
 DocMeta.setdocmeta!(CHOPOFF, :DocTestSetup, :(using CHOPOFF, BioSequences); recursive=true)
 
 makedocs(
+    root = joinpath(dirname(pathof(CHOPOFF)), "..", "docs"),
     clean = true,
+    highlightsig = true,
     doctest = true,
     sitename = "CHOPOFF.jl",
     authors = "Kornel Labun",
@@ -13,7 +15,7 @@ makedocs(
         assets = ["assets/theme.css"],
         disable_git = true
     ),
-    # warnonly = Documenter.except(:linkcheck, :footnote), # may allow to build on git
+    warnonly = true, # this is rather important it seems
     modules  = [CHOPOFF],
     pages = [
         "General" => "index.md",

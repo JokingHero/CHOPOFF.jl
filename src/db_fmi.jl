@@ -118,7 +118,7 @@ using FM-index. This method is impractically slow above distance of 2.
 
 
 # Examples
-```julia-repl
+```julia
 # prepare libs
 using CHOPOFF, BioSequences
 

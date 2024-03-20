@@ -1,3 +1,4 @@
 [deps]
-Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 BioSequences = "7e6ae17a-c86d-528c-b3b9-7f778a29fe59"
+CHOPOFF = "2408c727-2a6f-4260-b4c2-4d62f645fe8e"
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"

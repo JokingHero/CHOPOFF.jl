@@ -102,7 +102,7 @@ genome file.
 Alignments will be performed from opposite to the extension direction (which is defined by extend5).
 
 # Examples
-```julia-repl
+```julia
 # use CHOPOFF example genome
 genome = joinpath(vcat(splitpath(dirname(pathof(CHOPOFF)))[1:end-1], 
     "test", "sample_data", "genome", "semirandom.fa"))

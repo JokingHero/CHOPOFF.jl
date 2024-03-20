@@ -105,7 +105,7 @@ Prepare hashDB index for future searches using `search_hashDB`.
 
 
 # Examples
-```julia-repl
+```julia
 # prepare libs
 using CHOPOFF, BioSequences
 
@@ -211,7 +211,7 @@ Left approach may overestimate counts for some gRNAs. When gRNA is reported as
 off-target free it is also guaranteed to be true in both cases (low-to-high and high-to-low).
 
 # Examples
-```julia-repl
+```julia
 # prepare libs
 using CHOPOFF, BioSequences
 

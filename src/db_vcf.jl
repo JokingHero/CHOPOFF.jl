@@ -79,7 +79,7 @@ Distance is restricted to 0 and 1 at the moment.
 
 
 # Examples
-```julia-repl
+```julia
 $(make_vcf_example_doc())
 ```
 """
@@ -230,7 +230,7 @@ Distance is restricted to 0 and 1 at the moment.
 `guides` - a vector of gRNAs without PAM.
 
 # Examples
-```julia-repl
+```julia
 $(make_vcf_example_doc())
 ```
 """

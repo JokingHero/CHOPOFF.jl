@@ -117,7 +117,7 @@ distance `dist` and adjustment `adjust` during search step in `search_motifDB`.
 `skipmer_size` - Size of the skipmer as described above. Be careful when setting this too large!
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc("motifDB"))
 ```
 """
@@ -319,7 +319,7 @@ alignment was of distance 3 (m) and adjustment parameter is 0 (a). We are oblige
 
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc("motifDB"))
 ```
 """

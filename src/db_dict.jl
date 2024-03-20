@@ -42,7 +42,7 @@ Prepare dictDB index for future searches using `search_dictDB`.
 
 
 # Examples
-```julia-repl
+```julia
 # prepare libs
 using CHOPOFF, BioSequences
 
@@ -99,7 +99,7 @@ If you find no off-targets using this method it is guaranteed this gRNA has no o
 Beware that the dictionary can be very big (e.g. human genome ~ 8Gb).
 
 # Examples
-```julia-repl
+```julia
 # prepare libs
 using CHOPOFF, BioSequences
 

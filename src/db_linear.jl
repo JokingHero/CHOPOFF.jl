@@ -63,7 +63,7 @@ if interested with searches within distance 4, preferably use prefix length of
                 however it will also result in large number of files.
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc())
 ```
 """
@@ -208,7 +208,7 @@ will contain all those intermediate files.
 which off-targets are considered.
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc())
 ```
 """
@@ -280,7 +280,7 @@ Which means we will search with "up to 1 offtargets within distance 0", "up to 1
 Each consecutive value in the vector has to be equal or bigger than the previous.
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc("linearDB"; search = "linearDB_with_es"))
 ```
 """

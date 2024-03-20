@@ -212,7 +212,7 @@ guides in return object. We can use UInt64 and UInt128 to compress space that th
 large genomes or non-specific PAMs you might run out of memory when using this function.
 
 # Examples
-```julia-repl
+```julia
 # use CHOPOFF example genome
 genome = joinpath(
     vcat(

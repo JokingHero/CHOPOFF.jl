@@ -32,7 +32,7 @@ NGG  CCN TTTN  NAAA
 
 
 # Examples
-```julia-repl
+```julia
 # prepare libs
 using CHOPOFF, BioSequences
 
@@ -115,7 +115,7 @@ Prepare FM-index for future searches.
 
 
 # Examples
-```julia-repl
+```julia
 # prepare libs
 using CHOPOFF, BioSequences
 

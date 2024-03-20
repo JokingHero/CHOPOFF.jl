@@ -1,11 +1,15 @@
 # Find all off-targets
 
-## Prefix-Suffix partial alignment
+## Fastest method with symbolic alignments and prefix hashes
 
 ```@docs
 build_prefixHashDB
 search_prefixHashDB
+```
 
+## Prefix-Suffix partial alignment
+
+```@docs
 build_linearDB
 search_linearDB
 
@@ -21,7 +25,7 @@ inspect_treeDB
 search_treeDB
 ```
 
-## FM-index
+## Experiments with FM-index
 
 ```@docs
 build_PathTemplates

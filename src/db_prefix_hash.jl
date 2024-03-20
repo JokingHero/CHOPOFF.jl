@@ -163,7 +163,7 @@ You can also play with `hash_len` parameter, but keeping it at 16 should be clos
 `hash_len` - Length of the hash in bp. At maximum 16.
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc("prefixHashDB"))
 ```
 """
@@ -304,7 +304,7 @@ which off-targets are considered.
 Which means we will search with "up to 1 offtargets within distance 0", "up to 1 offtargets within distance 1"...
 
 # Examples
-```julia-repl
+```julia
 $(make_example_doc("prefixHashDB"))
 ```
 """
