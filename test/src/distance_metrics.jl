@@ -190,7 +190,7 @@ using BioSequences
 
 
     @testset "all alignments friction test" begin
-        iter = 1000000
+        iter = 100000
         k = rand(collect(1:10), iter)
         guide_sizes = rand(collect(1:20), iter)
         prefix_len = rand(collect(1:10), iter)

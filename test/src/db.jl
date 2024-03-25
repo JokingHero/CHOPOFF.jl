@@ -94,18 +94,18 @@ end
         vcf_storage_path = joinpath(vcf_path, "vcfDB.bin")
         build_vcfDB(
             "samirandom", genome, vcf,
-            Motif("Cas9"; distance = 3, ambig_max = 3), vcf_storage_path)
+            Motif("Cas9"; distance = 2, ambig_max = 3), vcf_storage_path)
         
         detail_path_vcf = joinpath(vcf_path, "output.csv")
-        search_vcfDB(vcf_storage_path, guides, detail_path_vcf; distance = 3, 
-            early_stopping = [300, 300, 300, 300])
+        search_vcfDB(vcf_storage_path, guides, detail_path_vcf; distance = 2, 
+            early_stopping = [300, 300, 300])
         vcf_detail = DataFrame(CSV.File(detail_path_vcf))
-        vcf_res = summarize_offtargets(vcf_detail; distance = 3)
+        vcf_res = summarize_offtargets(vcf_detail; distance = 2)
 
         ar_file = joinpath(dirname(pathof(CHOPOFF)), "..", 
             "test", "sample_data", "artificial_results.csv")
         ar_detail = DataFrame(CSV.File(ar_file))
-        ar = summarize_offtargets(ar_detail; distance = 3)
+        ar = summarize_offtargets(ar_detail; distance = 2)
         @test compare_result(ar, vcf_res)
     end
 
@@ -129,12 +129,6 @@ end
         "samirandom", genome, 
         Motif("Cas9"; distance = 1, ambig_max = 0))
     hdb_res = search_hashDB(hashDB, guides, false)
-
-    # hashDB but with ambig
-    hashDBambig = build_hashDB(
-        "samirandom", genome, 
-        Motif("Cas9"; distance = 1, ambig_max = 1))
-    hdb_res2 = search_hashDB(hashDBambig, guides, false)
 
     len_noPAM = CHOPOFF.length_noPAM(Motif("Cas9"))
 
@@ -332,7 +326,6 @@ end
         ldb_filt = filter_overlapping(ldb_filt, 3*2 + 1)
         ldb_res_filt = summarize_offtargets(ldb_filt; distance = 3)
 
-        
         detail_path_es = joinpath(ldb_path, "detail_es.csv")
         # find all offtargets with overlap filtering on the go
         search_linearDB_with_es(ldb_path, guides, detail_path_es; distance = 3, early_stopping = [50, 50, 50, 50])

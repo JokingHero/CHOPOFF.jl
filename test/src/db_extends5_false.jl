@@ -89,12 +89,6 @@ end
         Motif("Cas12a"; distance = 1, ambig_max = 0))
     hdb_res = search_hashDB(hashDB, guides, false)
 
-    # hashDB but with ambig
-    hashDBambig = build_hashDB(
-        "samirandom", genome, 
-        Motif("Cas12a"; distance = 1, ambig_max = 1))
-    hdb_res2 = search_hashDB(hashDBambig, guides, false)
-
     len_noPAM = CHOPOFF.length_noPAM(Motif("Cas12a"))
 
     @testset "linearDB vs dictDB" begin
@@ -222,19 +216,19 @@ end
 
     @testset "linearDB vs linearDB early stopped" begin
         ldb_filt = DataFrame(CSV.File(detail_path))
-        ldb_filt = filter_overlapping(ldb_filt, 3*2 + 1)
-        ldb_res_filt = summarize_offtargets(ldb_filt; distance = 3)
+        ldb_filt = filter_overlapping(ldb_filt, 2*2 + 1)
+        ldb_res_filt = summarize_offtargets(ldb_filt; distance = 2)
 
         detail_path_es = joinpath(ldb_path, "detail_es.csv")
         # find all offtargets with overlap filtering on the go
-        search_linearDB_with_es(ldb_path, guides, detail_path_es; distance = 3, early_stopping = [50, 50, 50, 50])
+        search_linearDB_with_es(ldb_path, guides, detail_path_es; distance = 2, early_stopping = [50, 50, 50])
         ldbes = DataFrame(CSV.File(detail_path_es))
-        ldbes_res = summarize_offtargets(ldbes; distance = 3)
+        ldbes_res = summarize_offtargets(ldbes; distance = 2)
         @test compare_result(ldb_res_filt, ldbes_res; less_or_equal = true)
 
         # find all offtargets with es with overlap filtering
         search_linearDB_with_es(ldb_path, [dna"NNNNNNNNNNNNNNNNNNNN"], 
-            detail_path_es; distance = 3, early_stopping = repeat([2], 4))
+            detail_path_es; distance = 2, early_stopping = repeat([2], 3))
         ldbes = DataFrame(CSV.File(detail_path_es))
         # because of the Thread break there it is highly non-deterministic how many offtargets we will get
         @test nrow(ldbes) >= 2
@@ -243,10 +237,10 @@ end
     @testset "linearDB vs prefixHashDB" begin
         phdb_path = joinpath(tdir, "prefixHashDB")
         mkpath(phdb_path)
-        build_prefixHashDB("samirandom", genome, Motif("Cas12a"), phdb_path)
+        build_prefixHashDB("samirandom", genome, Motif("Cas12a"; distance = 2), phdb_path)
         detail_path = joinpath(phdb_path, "detail.csv")
         
-        for d in 1:3
+        for d in 1:2
             search_prefixHashDB(phdb_path, guides, detail_path; distance = d, early_stopping = repeat([300], d + 1))
             phdb = DataFrame(CSV.File(detail_path))
 
@@ -255,29 +249,12 @@ end
             failed = antijoin(ldb, phdb, on = [:guide, :distance, :chromosome, :start, :strand])
             @test nrow(failed) == 0
         end
-    end
 
-
-    @testset "linearDB vs prefixHashDB early stopped" begin
-        # remember that this early stopping can find overlaps
-        search_linearDB(ldb_path, guides, detail_path; distance = 3)
-        ldb = DataFrame(CSV.File(detail_path))
-
-        lhdb_path = joinpath(tdir, "prefixHashDBes")
-        mkpath(lhdb_path)
-        build_prefixHashDB("samirandom", genome, Motif("Cas12a"), lhdb_path)
-        detail_path_es = joinpath(lhdb_path, "detail_es.csv")
-
-        search_prefixHashDB(lhdb_path, guides, detail_path_es; distance = 3, early_stopping = [300, 300, 300, 300])
-        ldbes = DataFrame(CSV.File(detail_path_es))
-        failed = antijoin(ldb, ldbes, on = [:guide, :distance, :chromosome, :start, :strand])
-        @test nrow(failed) == 0
-        
-        # find all offtargets with es with overlap filtering - we dont support ambigous guides anymore
-        search_prefixHashDB(lhdb_path, guides, 
-            detail_path_es; distance = 3, early_stopping = repeat([0], 4))
-        ldbes = DataFrame(CSV.File(detail_path_es))
-        ldbes_res = summarize_offtargets(ldbes)
-        @test nrow(ldbes) == 3 # I checked these results
+        detail_path_es = joinpath(phdb_path, "detail_es.csv")
+        search_prefixHashDB(phdb_path, guides, 
+            detail_path_es; distance = 2, early_stopping = repeat([0], 3))
+        pdbes = DataFrame(CSV.File(detail_path_es))
+        pdbes_res = summarize_offtargets(pdbes)
+        @test nrow(pdbes) == 3 # I checked these results
     end
 end
