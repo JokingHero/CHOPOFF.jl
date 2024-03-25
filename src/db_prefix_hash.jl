@@ -13,7 +13,7 @@ struct AmbigPrefixHashDB
     chrom::Vector{<:Unsigned}
     pos::Vector{<:Unsigned}
     isplus::Vector{Bool}
-    annot::Union{Vector{AbstractString}, Nothing} # use InlineStrings here to save time loading it up
+    annot::Union{Vector{<:AbstractString}, Nothing}
     is_ambig::BitVector # because length of the OTs is known we can have each position showing ambiguity value
     ambig::Vector{UInt8} # encoding of special bases
 end
@@ -28,7 +28,7 @@ function build_ambigPrefixHashDB(
     ot_type::Type, # type of the OTs
     hash_type::Type,
     suffix_type::Type,
-    annot::Union{Vector{AbstractString}, Nothing},
+    annot::Union{Vector{<:AbstractString}, Nothing},
     mpt::Union{Nothing, CHOPOFF.SymbolicAlignments})
 
     ambig_prefixes = Vector{ot_type}()
@@ -212,7 +212,6 @@ function build_prefixHashDB(
             chrom_name_, dbi, chrom_seq, true)
     end
 
-    # step 2
     @info "Step 2: Constructing DB."
     # split gRNA into prefix - suffix
     l = length_noPAM(motif) + motif.distance

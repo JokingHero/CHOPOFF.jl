@@ -49,15 +49,23 @@ end
     mkpath(tdir)
 
     # make and run default vcfDB
-    vcf = joinpath(dirname(pathof(CHOPOFF)), "..", 
+    @testset "vcfDB result is same as in saved file" begin
+        vcf = joinpath(dirname(pathof(CHOPOFF)), "..", 
         "test", "sample_data", "artificial.vcf")
-    vcf_db = build_vcfDB(
-        "samirandom", genome, vcf,
-        Motif("Cas12a"; distance = 1, ambig_max = 0))
-    vcf_res = search_vcfDB(vcf_db, guides)
+        vcf_path = joinpath(tdir, "vcfDB")
+        mkpath(vcf_path)
+        vcf_storage_path = joinpath(vcf_path, "vcfDB.bin")
+        build_vcfDB(
+            "samirandom", genome, vcf,
+            Motif("Cas12a"; distance = 1, ambig_max = 3), vcf_storage_path)
+        
+        detail_path_vcf = joinpath(vcf_path, "output.csv")
+        search_vcfDB(vcf_storage_path, guides, detail_path_vcf; distance = 1, 
+            early_stopping = [300, 300])
+        vcf_detail = DataFrame(CSV.File(detail_path_vcf))
+        vcf_res = summarize_offtargets(vcf_detail; distance = 1)
 
-    @testset "vcfDB result is empty" begin
-        @test all(vcf_res.D0 .== 0 .& vcf_res.D1 .== 0)
+        @test isempty(vcf_res)
     end
 
     # make and run default linearDB

@@ -1,7 +1,7 @@
 struct BinaryFuseFilterDB
     dbi::DBInfo
     mpt::PathTemplates
-    ambig::Union{AmbigIdx, Nothing}
+    ambig::Union{AmbigPrefixHashDB, Nothing}
     restrict_to_len::Union{Int, Nothing}
 end
 

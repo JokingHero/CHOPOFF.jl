@@ -1,10 +1,3 @@
-struct VcfDB
-    dbi::DBInfo
-    ambig::AmbigIdx
-    mpt::PathTemplates
-end
-
-
 function parse_vcf(vcf_filepath::String)
     # https://samtools.github.io/hts-specs/VCFv4.2.pdf
     reader = extension(vcf_filepath) == ".gz" ? 
@@ -52,8 +45,9 @@ build_vcfDB(
     name::String, 
     genomepath::String, 
     vcfpath::String,
-    motif::Motif;
-    storage_path::String = "")
+    motif::Motif,
+    storage_path::String,
+    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16))
 ```
 
 Search `VcfDB` for off-targets for selected `guides`. 
@@ -75,7 +69,9 @@ Distance is restricted to 0 and 1 at the moment.
 
 `motif`   - Motif defines what kind of gRNA to search for.
 
-`storage_path`  - Folder path to the where index will be saved. 
+`storage_path`  - Path to the where index will be saved. Normally, it includes ".bin" extension.
+
+`hash_len` - length of the prefix that is stored inside the hash
 
 
 # Examples
@@ -87,31 +83,42 @@ function build_vcfDB(
     name::String, 
     genomepath::String, 
     vcfpath::String,
-    motif::Motif;
-    storage_path::String = "")
+    motif::Motif,
+    storage_path::String,
+    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16))
 
-    motif = setambig(setdist(motif, 1), length(motif))
     dbi = DBInfo(genomepath, name, motif; vcf_filepath = vcfpath)
-    rs_ids, rs_chroms, rs_ref, rs_ranges, rs_alt = parse_vcf(vcfpath)
-    motif_len = length(motif) + motif.distance # include distance in all calculations!
+    hash_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", hash_len * 2); base = 2))
+    suffix_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", (CHOPOFF.length_noPAM(motif) - hash_len + motif.distance) * 2); base = 2))
+    ot_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", (CHOPOFF.length_noPAM(motif) + motif.distance) * 2); base = 2))
 
-    # For each chromosome parallelized we build database
+    rs_ids, rs_chroms, rs_ref, rs_ranges, rs_alt = CHOPOFF.parse_vcf(vcfpath)
+    l = length_noPAM(motif) + motif.distance
+    lp = length(motif) + motif.distance # with PAM
+
+    @info "Step 1: Parsing the genomic relation to the VCF file."
+        # For each chromosome parallelized we build database
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
 
-    all_guides = Vector{LongDNA{4}}()
-    guide_annot = Vector{String}()
+    ambig_guides = Vector{LongDNA{4}}()
+    ambig_chrom = Vector{dbi.gi.chrom_type}()
+    ambig_pos = Vector{dbi.gi.pos_type}()
+    ambig_isplus = Vector{Bool}()
+    ambig_annot = Vector{String}() # change to InlineStrings
 
     for ch in unique(rs_chroms)
         #ch = first(unique(rs_chroms)) # REMOVE
-        chrom_seq = getchromseq(dbi.gi.is_fa, reader[ch])
+        ch_ = convert(dbi.gi.chrom_type, findfirst(isequal(ch), dbi.gi.chrom))
+
+        chrom_seq = CHOPOFF.getchromseq(dbi.gi.is_fa, reader[ch])
         chrom_idx = findall(isequal(ch), rs_chroms)
         # now for every snp (we assume they are sorted)
         # group snps by proximity - as we have to enumerate all permutations of rs_alt for them
         grouping = 1
         grouping_idx = ones(Int, length(chrom_idx))
         for i in 1:(length(chrom_idx) - 1)
-            x = (rs_ranges[chrom_idx[i]].start - motif_len):(rs_ranges[chrom_idx[i]].stop + motif_len)
+            x = (rs_ranges[chrom_idx[i]].start - l):(rs_ranges[chrom_idx[i]].stop + l)
             if length(intersect(x, rs_ranges[chrom_idx[i+1]])) > 0 # rs overlaps
                 grouping_idx[i + 1] = grouping
             else
@@ -122,34 +129,55 @@ function build_vcfDB(
 
         # for each group we analyze these snps together
         for group in unique(grouping_idx)
+            # group = first(unique(grouping_idx))
             idxs = chrom_idx[grouping_idx .== group]
             if length(idxs) == 1 # simple case - singular snp - potentially many alternate alleles
                 idxs = idxs[1]
-                seq = chrom_seq[(rs_ranges[idxs].start - motif_len + 1):(rs_ranges[idxs].stop + motif_len)]
-                guides = Vector{LongDNA{4}}()
+                # -----A-----
+                #      5     # SNP start
+                # --2-----8--# lp of 4bp 
+                seq_start = rs_ranges[idxs].start - lp + 1
+                seq_end = rs_ranges[idxs].stop + lp - 1
+                seq = chrom_seq[seq_start:seq_end] # lp * 2 - 1 (one base is shared between lp)
+                # annot in style of rsID:REF/ALT
+                seq_ref = string(seq[lp:lp + length(rs_ranges[idxs]) - 1])
+                if seq_ref != rs_ref[idxs]
+                    @warn "Possible mismatch between VCF REF column:" * 
+                        rs_ids[idxs] * ";" * ch * ":" * string(rs_ranges[idxs].start) *
+                        string(rs_ranges[idxs].stop) * " and the reference file."
+                end
                 for alt in rs_alt[idxs]
                     seq_alt = copy(seq)
-                    seq_alt = seq_alt[1:(motif_len - 1)] * alt * seq_alt[(motif_len + length(rs_ref[idxs])):end - 1]
-                    g, gp = gatherofftargets(seq_alt, dbi)
-                    append!(guides, g)
-                end
-                guides = unique(guides)
-                append!(all_guides, guides)
-                for i in guides
-                    push!(guide_annot, join(rs_ids[idxs], ";"))
+                    seq_alt = seq_alt[1:(lp - 1)] * alt * seq_alt[lp + length(seq_ref):end]
+                    g, g_rev, gp, gp_rev = CHOPOFF.gatherofftargets(seq_alt, dbi)
+                    overlaps = in.(lp, gp) .| in.(lp + length(alt) - 1, gp)
+                    g = g[overlaps]
+                    gp = gp[overlaps]
+                    gp = Base.map(x -> seq_start + x.stop, gp)
+                    overlaps = in.(lp, gp_rev) .| in.(lp + length(alt) - 1, gp_rev)
+                    g_rev = g_rev[overlaps]
+                    gp_rev = gp_rev[overlaps]
+                    gp_rev = Base.map(x -> seq_start + x.start - 1, gp_rev)
+                    this_annot = join(rs_ids[idxs], ";") * ":" *seq_ref * "/" * string(alt)
+                    append!(ambig_guides, g)
+                    append!(ambig_guides, g_rev)
+                    append!(ambig_chrom, repeat([ch_], length(g) + length(g_rev)))
+                    append!(ambig_pos, gp)
+                    append!(ambig_pos, gp_rev)
+                    append!(ambig_isplus, trues(length(g)))
+                    append!(ambig_isplus, falses(length(g_rev)))
+                    append!(ambig_annot, repeat([this_annot], length(g) + length(g_rev)))
                 end
             else # complex case multiple overlapping snps, can have multiple alternate alleles
                 alt_combs = Iterators.product(rs_alt[idxs]...)
-                temp_guides = Vector{LongDNA{4}}() # before applying unique filter!
-                temp_annot = Vector{String}()
                 # we need to track which regions belong to which snp
                 # and which guide overlaps which snps - 
                 # we allow unique guides by sequence and annotations
                 for alt_comb in alt_combs
-                    # alt_comb = first(alt_combs) REMOve me
-                    # construct sequence
                     seq_alt = dna""
                     rg_comb = Vector{UnitRange{Int64}}()
+                    annot_comb = Vector{String}()
+                    seq_start = rs_ranges[idxs][1].start - lp + 1
                     for (i, alt) in enumerate(alt_comb)
                         rst = rs_ranges[idxs[i]].start
                         rsp = rs_ranges[idxs[i]].stop
@@ -157,8 +185,15 @@ function build_vcfDB(
                         #----ref--ref-------
                         #  --alt--alt--
                         #  --rng--rng-- range of the alt on the alt comb
+                        seq_ref = string(chrom_seq[rst:rsp])
+                        if seq_ref != rs_ref[idxs[i]]
+                            @warn "Possible mismatch between VCF REF column:" * 
+                            rs_ids[idxs[i]] * ";" * ch * ":" * string(rs_ranges[idxs[i]].start) *
+                            string(rs_ranges[idxs[i]].stop) * " and the reference file."
+                        end
+                        push!(annot_comb, join(rs_ids[idxs][i], ";") * ":" *seq_ref * "/" * string(alt))
                         if i == 1 # first snp --alt
-                            seq_alt *= chrom_seq[(rst - motif_len + 1):(rst - 1)] * alt
+                            seq_alt *= chrom_seq[(rst - lp + 1):(rst - 1)] * alt
                             push!(rg_comb, (length(seq_alt) - alt_len + 1):length(seq_alt))
                         elseif i == length(alt_comb) # last snp --alt--
                             # first --alt part
@@ -166,7 +201,7 @@ function build_vcfDB(
                             seq_alt *= chrom_seq[(rsp_prev + 1):(rst - 1)] * alt
                             push!(rg_comb, (length(seq_alt) - alt_len + 1):length(seq_alt))
                             # and -- ending part
-                            seq_alt *= chrom_seq[(rsp + 1):(rsp + motif_len)]
+                            seq_alt *= chrom_seq[(rsp + 1):(rsp + lp - 1)]
                         else # midle snps --alt part
                             rsp_prev = rs_ranges[idxs[i-1]].stop
                             seq_alt *= chrom_seq[(rsp_prev + 1):(rst - 1)] * alt
@@ -175,36 +210,57 @@ function build_vcfDB(
                     end
                     # guides here are without PAM, but with extensions, all in GGN-EXT config
                     # guide pos here have original guide pattern locations (with PAM)
-                    g, guide_ranges = gatherofftargets(seq_alt, dbi)
-                    for (i, gr) in enumerate(guide_ranges)
-                        overlaps = Base.map(x -> length(intersect(gr, x)) > 0, rg_comb)
+                    g, g_rev, gp, gp_rev = CHOPOFF.gatherofftargets(seq_alt, dbi)
+                    for (i, gr) in enumerate(gp)
+                        # overlaps for each of the SNPs
+                        overlaps = BitVector(Base.map(x -> length(intersect(gr, x)) > 0, rg_comb))
                         if sum(overlaps) > 0
-                            push!(temp_annot, join(join.(rs_ids[idxs[overlaps]], ";"), ";"))
-                            push!(temp_guides, g[i])
+                            push!(ambig_guides, g[i])
+                            push!(ambig_chrom, ch_)
+                            push!(ambig_pos, seq_start + gp[i].stop)
+                            push!(ambig_isplus, true)
+                            push!(ambig_annot, join(annot_comb[overlaps], "-"))
+                        end
+                    end
+                    for (i, gr) in enumerate(gp_rev)
+                        overlaps = BitVector(Base.map(x -> length(intersect(gr, x)) > 0, rg_comb))
+                        if sum(overlaps) > 0
+                            push!(ambig_guides, g_rev[i])
+                            push!(ambig_chrom, ch_)
+                            push!(ambig_pos, seq_start + gp_rev[i].start - 1)
+                            push!(ambig_isplus, false)
+                            push!(ambig_annot, join(annot_comb[overlaps], "-"))
                         end
                     end
                 end
-                # now reduce guides by their unique sequence and set of overlapping snps
-                temp_merged = map(x -> string(x[1]) * x[2], zip(temp_guides, temp_annot))
-                temp_not_dup = map(x -> sum(x .== temp_merged) == 1, temp_merged)
-                append!(all_guides, temp_guides[temp_not_dup])
-                append!(guide_annot, temp_annot[temp_not_dup])
             end
         end
     end
     close(ref)
 
-    mpt = build_PathTemplates(motif)
-    db = VcfDB(dbi, AmbigIdx(all_guides, guide_annot), mpt)
-    if storage_path != ""
-        save(db, storage_path)
+    @info "Step 2: Constructing Paths for hashes"
+    mpt = build_PathTemplates(motif; restrict_to_len = hash_len, withPAM = false)
+    paths = mpt.paths[:, 1:hash_len]
+    not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto)))) # how can there be no duplicated function?!
+
+    if length(ambig_guides) > 0
+        @info "Step 3: Constructing DB for ambigous gRNAs."
+        order = sortperm(ambig_guides)
+        ambig_guides = ambig_guides[order]
+        ambig_chrom = ambig_chrom[order]
+        ambig_pos = ambig_pos[order]
+        ambig_isplus = ambig_isplus[order]
+        ambig_annot = InlineStrings.inlinestrings(ambig_annot[order])    
+        save(CHOPOFF.build_ambigPrefixHashDB(
+                ambig_guides, ambig_chrom, ambig_pos, ambig_isplus,
+                l, hash_len, ot_type, hash_type, suffix_type, ambig_annot, 
+                CHOPOFF.SymbolicAlignments(dbi, paths[not_dups, :], mpt.distances[not_dups], hash_len)), 
+            storage_path)
         @info "Finished constructing vcfDB in " * storage_path
-        @info "Database size is:" *
-            "\n length -> " * string(length(db.ambig)) *
-            "\n consuming: " * string(round((filesize(storage_path) * 1e-6); digits = 3)) * 
-            " mb of disk space."
+    else
+        @info "No guides were found. vcfDB is not saved."
     end
-    return db
+    return 
 end
 
 
@@ -235,48 +291,99 @@ $(make_vcf_example_doc())
 ```
 """
 function search_vcfDB(
-    db::VcfDB,
-    guides::Vector{LongDNA{4}})
+    storage_path::String, 
+    guides::Vector{LongDNA{4}}, 
+    output_file::String;
+    distance::Int = 3,
+    early_stopping::Vector{Int} = Int.(floor.(exp.(0:distance))))
 
-    if any(isambig.(guides)) # TODO
-        throw("Ambiguous bases are not allowed in guide queries.")
+    if length(early_stopping) != (distance + 1)
+        error("Specify one early stopping condition for a each distance, starting from distance 0.")
+    end
+
+    adb = load(storage_path)
+    ot_len = CHOPOFF.length_noPAM(adb.mpt.dbi.motif) + adb.mpt.dbi.motif.distance
+    ot_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", ot_len * 2); base = 2))
+    s_len = ot_len - adb.mpt.hash_len
+
+    if distance > adb.mpt.dbi.motif.distance
+        error("For this database maximum distance is " * string(adb.mpt.dbi.motif.distance))
     end
 
     guides_ = copy(guides)
-    dist = db.mpt.motif.distance # use maximal distance as the performance is always bottlenecked by that
-    mpt = restrictDistance(db.mpt, dist)
-    mpt = removePAM(mpt)
-
-    if any(length_noPAM(mpt.motif) .!= length.(guides_))
-        throw("Guide queries are not of the correct length to use with this Motif: " * string(db.dbi.motif))
-    end
     # reverse guides so that PAM is always on the left
-    if mpt.motif.extends5
+    if adb.mpt.dbi.motif.extends5
         guides_ = reverse.(guides_)
     end
 
-    guides_uint8 = guide_to_template_format.(copy(guides_); alphabet = CHOPOFF.ALPHABET_UINT8)
-    guides_uint2 = guide_to_template_format.(copy(guides_); alphabet = CHOPOFF.ALPHABET_TWOBIT)
+    paths = adb.mpt.paths[adb.mpt.paths_distances .<= distance, :]
+    mkpath(dirname(output_file))
 
-    res = zeros(Int, length(guides_), 2)
-    for (i, s) in enumerate(guides_)
-        pat_uint2 = guides_uint2[i][mpt.paths]
-        pat_uint2 = map(x -> asUInt(UInt64, x), eachrow(pat_uint2))
-
-        pat_uint8 = guides_uint8[i][mpt.paths]
-        pat_uint8 = reinterpret(DNA, pat_uint8) # back to DNA
-        pat_uint8 = map(LongDNA{4}, eachrow(pat_uint8))
-
-        # further reduce non-unique seqeunces
-        uniq = .!duplicated(pat_uint2)
-        pat_uint8 = pat_uint8[uniq]
-        distances = mpt.distances[uniq]
-
-        for di in 0:dist
-            res[i, di + 1] = sum(Base.mapreduce(x -> findbits(x, db.ambig), .|, pat_uint8[distances .== di]))
+    Base.map(guides_) do g # maybe a function would be faster than lambda here?
+        guides_formated = CHOPOFF.guide_to_template_format(g; alphabet = CHOPOFF.ALPHABET_TWOBIT)
+        asa = guides_formated[paths]
+        asa = Base.map(x -> CHOPOFF.asUInt(eltype(adb.prefix), x), eachrow(asa))
+        asa = unique(asa)
+        asa = CHOPOFF.potential_ots_idx(asa, adb.prefix)
+        
+        es_acc = zeros(Int64, length(early_stopping))   
+        detail_path = joinpath(dirname(output_file), "detail_" * string(g) * ".csv")
+        detail_file = open(detail_path, "w")
+        guide_stranded = adb.mpt.dbi.motif.extends5 ? reverse(g) : g
+        guide_stranded = string(guide_stranded)
+        if length(asa) == 0
+            close(detail_file)
+            return
         end
+
+        asa = vcat(collect.(asa)...)
+        prefixes = adb.prefix[asa]
+         asa = adb.prefix_idx[asa] # actual indxes of suffixes
+            
+        dups = CHOPOFF.duplicated(asa) .& CHOPOFF.duplicated(prefixes)
+        asa = asa[.!dups]
+        prefixes = prefixes[.!dups]
+        suffixes = adb.suffix[asa]
+        ots = LongDNA{4}.((convert.(ot_type, prefixes) .<< (2 * s_len)) .| 
+                convert.(ot_type, suffixes), ot_len)
+
+        @inbounds for (i, ot) in enumerate(ots)
+            idx = asa[i] # actual index for chrom/pos/isplus/annot
+            bv_start = (idx - 1) * ot_len + 1
+            bv_end = idx * ot_len
+            bv = adb.is_ambig[bv_start:bv_end]
+            bv_start = sum(adb.is_ambig[1:bv_start]) + 1
+            bv_end = bv_start + sum(bv) - 1
+            ot[bv] = reinterpret.(DNA, adb.ambig[bv_start:bv_end])
+                
+            aln = CHOPOFF.align(g, ot, distance, iscompatible)
+            if aln.dist <= distance
+                if adb.mpt.dbi.motif.extends5
+                    aln_guide = reverse(aln.guide)
+                    aln_ref = reverse(aln.ref)
+                else
+                    aln_guide = aln.guide
+                    aln_ref = aln.ref
+                end
+                strand = adb.isplus[idx] ? "+" : "-"
+                ot = guide_stranded * "," * aln_guide * "," * 
+                    aln_ref * "," * string(aln.dist) * "," *
+                    adb.mpt.dbi.gi.chrom[adb.chrom[idx]] * "," * 
+                        string(adb.pos[idx]) * "," * strand * "," *
+                        string(adb.annot[idx]) * "\n"
+                write(detail_file, ot)
+                es_acc[aln.dist + 1] += 1
+                if es_acc[aln.dist + 1] >= early_stopping[aln.dist + 1]
+                    close(detail_file)
+                    return
+                end
+            end
+        end
+        close(detail_file)
+        return
     end
 
-    res = format_DF(res, 1, guides)
-    return res
+    cleanup_detail(output_file; 
+        first_line = "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand,variants\n")
+    return
 end

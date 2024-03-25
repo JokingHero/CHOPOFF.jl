@@ -3,7 +3,7 @@ __precompile__(true)
 module CHOPOFF
 
 using Dates: isequal # MIT
-using Base: Float32 # MIT
+using Base: Float32, length # MIT
 using ArgParse: command_actions # MIT
 
 using FastFilter # Apache 2 - my very own
@@ -30,6 +30,7 @@ using ProgressMeter # MIT
 using VariantCallFormat # MIT
 using CodecZlib # MIT
 using PathDistribution # MIT
+using InlineStrings # MIT
 
 include("example_doc.jl")
 include("utils.jl")
@@ -37,29 +38,27 @@ include("utils.jl")
 include("FMidx/FMindexes.jl") 
 using .FMIndexes # MIT
 
-include("ambig_index.jl")
 include("persistence.jl")
-
 include("distance_metrics.jl")
 include("motif.jl")
 include("db_info.jl")
 include("motif_path_templates.jl")
-
 include("find_offtargets.jl")
 include("db_helpers.jl")
-include("db_dict.jl")
+
 include("db_motif.jl")
 include("db_linear.jl")
 include("db_tree.jl")
+
+include("db_prefix_hash.jl")
 include("db_hash.jl")
+include("db_dict.jl")
 include("db_vcf.jl")
 
 include("db_fmi_helpers.jl")
 include("db_fmi.jl")
 include("db_fmi_seed.jl")
 include("db_fmi_bff.jl")
-include("db_prefix_hash.jl")
-
 
 export Motif, length_noPAM, length, setambig, setdist # motif
 export save, load # persistence
@@ -70,10 +69,8 @@ export gatherofftargets! # find_offtargets
 export isinclusive, hamming, levenshtein, Aln, align # distance_metrics
 
 export build_linearDB, search_linearDB, search_linearDB_with_es # db_linear
-export build_dictDB, search_dictDB # db_sketch
 export build_treeDB, search_treeDB, inspect_treeDB # db_tree
 export build_hashDB, search_hashDB # db_hash
-export build_vcfDB, search_vcfDB # db_vcf
 export build_motifDB, search_motifDB
 
 export build_PathTemplates
@@ -82,7 +79,10 @@ export build_fmiDB, search_fmiDB
 export build_pamDB, search_fmiDB_seed
 export search_fmiDB_hash
 export build_binaryFuseFilterDB, search_binaryFuseFilterDB
+
+export build_dictDB, search_dictDB # db_sketch
 export build_prefixHashDB, search_prefixHashDB
+export build_vcfDB, search_vcfDB # db_vcf
 
 ## Standalone binary generation
 function parse_commandline(args::Array{String})

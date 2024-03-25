@@ -86,18 +86,26 @@ end
     # guide ACTCAATCATGTTTCCCGTC is on the border - depending on the motif definition
     # it can/can't be found by different methods
 
-    # make and run default vcfDB
-    vcf = joinpath(dirname(pathof(CHOPOFF)), "..", 
-        "test", "sample_data", "artificial.vcf")
-    vcf_db = build_vcfDB(
-        "samirandom", genome, vcf,
-        Motif("Cas9"; distance = 1, ambig_max = 0))
-    vcf_res = search_vcfDB(vcf_db, guides)
-
     @testset "vcfDB result is same as in saved file" begin
+        vcf = joinpath(dirname(pathof(CHOPOFF)), "..", 
+        "test", "sample_data", "artificial.vcf")
+        vcf_path = joinpath(tdir, "vcfDB")
+        mkpath(vcf_path)
+        vcf_storage_path = joinpath(vcf_path, "vcfDB.bin")
+        build_vcfDB(
+            "samirandom", genome, vcf,
+            Motif("Cas9"; distance = 3, ambig_max = 3), vcf_storage_path)
+        
+        detail_path_vcf = joinpath(vcf_path, "output.csv")
+        search_vcfDB(vcf_storage_path, guides, detail_path_vcf; distance = 3, 
+            early_stopping = [300, 300, 300, 300])
+        vcf_detail = DataFrame(CSV.File(detail_path_vcf))
+        vcf_res = summarize_offtargets(vcf_detail; distance = 3)
+
         ar_file = joinpath(dirname(pathof(CHOPOFF)), "..", 
             "test", "sample_data", "artificial_results.csv")
-        ar = DataFrame(CSV.File(ar_file))
+        ar_detail = DataFrame(CSV.File(ar_file))
+        ar = summarize_offtargets(ar_detail; distance = 3)
         @test compare_result(ar, vcf_res)
     end
 

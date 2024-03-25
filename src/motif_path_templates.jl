@@ -1,8 +1,3 @@
-#struct Path
-#    seq::LongDNA{4}
-#    dist::Int
-#end
-
 """
 ```
 PathTemplates(

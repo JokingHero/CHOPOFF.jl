@@ -2,7 +2,7 @@ struct DictDB
     dict::IdDict
     mpt::PathTemplates
     dbi::DBInfo
-    ambig::Union{AmbigIdx, Nothing}
+    ambig::Union{AmbigPrefixHashDB, Nothing}
 end
 
 
@@ -10,7 +10,8 @@ function build_guide_dict(dbi::DBInfo, max_count::Int, guide_type::Type{T}) wher
     max_count_type = smallestutype(unsigned(max_count))
     guides = Vector{guide_type}()
     ambig = gatherofftargets!(guides, dbi)
-    ambig = length(ambig) > 0 ? AmbigIdx(ambig, nothing) : nothing
+    ambig = nothing # TODO
+    # ambig = length(ambig) > 0 ? AmbigIdx(ambig, nothing) : nothing
     guides = sort(guides)
     guides, counts = ranges(guides)
     counts = convert.(max_count_type, min.(length.(counts), max_count))

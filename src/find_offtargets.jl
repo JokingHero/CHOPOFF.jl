@@ -275,5 +275,5 @@ function gatherofftargets(
     guides_rve = add_extension(guides_rve, guides_pos_rve, dbi, seq, true)
     guides_rve, guides_pos = normalize_to_PAMseqEXT(guides_rve, guides_pos_rve, dbi, true)
 
-    return vcat(guides_fwd, guides_rve), vcat(guides_pos_fwd, guides_pos_rve)
+    return guides_fwd, guides_rve, guides_pos_fwd, guides_pos_rve
 end

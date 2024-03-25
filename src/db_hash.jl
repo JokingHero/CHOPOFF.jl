@@ -3,7 +3,7 @@ struct HashDB{T<:Unsigned, K<:Union{UInt8, UInt16, UInt32}}
     mpt::PathTemplates
     bins::Vector{BinaryFuseFilter{K}}
     counts::Vector{T}
-    ambig::Union{AmbigIdx, Nothing}
+    ambig::Union{AmbigPrefixHashDB, Nothing}
 end
 
 
@@ -141,7 +141,9 @@ function build_hashDB(
     # gather all unique off-targets
     guides = Vector{UInt64}()
     ambig = gatherofftargets!(guides, dbi)
-    ambig = length(ambig) > 0 ? AmbigIdx(ambig, nothing) : nothing
+    # TODO
+    ambig = nothing 
+    #ambig = length(ambig) > 0 ? AmbigIdx(ambig, nothing) : nothing
 
     # guides are here of length 21
     bins, counts, err_left, err_right = 

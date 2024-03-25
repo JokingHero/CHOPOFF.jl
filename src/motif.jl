@@ -171,6 +171,7 @@ function length_noPAM(motif::Motif)
 end
 
 
+import Base.length 
 """
 `length(motif::Motif)`
 
