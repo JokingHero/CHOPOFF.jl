@@ -50,17 +50,13 @@ build_vcfDB(
     hash_len::Int = min(length_noPAM(motif) - motif.distance, 16))
 ```
 
-Search `VcfDB` for off-targets for selected `guides`. 
-
-**Experimental! Proof-of-concept!** 
-
-This function does not yet lists all off-targets and this will be added at a later date.
-Current output is a list of counts of the ambiguous off-targets by distance.
-Distance is restricted to 0 and 1 at the moment.
+Builds a database of all potential off-targets that overlap any of the variants in the VCF file.
+It supports combinations of variants that are close to each other, will report all possible combinations of 
+variants. This database uses simialr principles to `prefixHashDB`, also utilizes hashed prefix of specific length.
 
 
 # Arguments
-`name` - Your preferred name for this index for easier identification.
+`name` - Your preferred name for this index for future identification.
 
 `genomepath` - Path to the genome file, it can either be fasta or 2bit file. In case of fasta
                also prepare fasta index file with ".fai" extension.
@@ -267,23 +263,42 @@ end
 """
 ```
 search_vcfDB(
-    db::VcfDB,
-    guides::Vector{LongDNA{4}})
+    storage_path::String, 
+    guides::Vector{LongDNA{4}}, 
+    output_file::String;
+    distance::Int = 3,
+    early_stopping::Vector{Int} = Int.(floor.(exp.(0:distance))))
 ```
 
-Search `VcfDB` for off-targets for selected `guides`. 
+Find all off-targets for `guides` within distance of `dist` using vcfDB located at `storage_dir`.
+Uses early stopping to stop searching when a guide passes a limit on number of off-targets. This method does not 
+keep track of the off-target locations and does not filter overlapping off-targets, therefore it might hit the 
+early stopping condition a little earlier than intended. Especially, when variants have multiple ALT and 
+multiple variants are overlapping off-targets, this function will report each combination of the overlapping variants.
+Each of these combinations will also count towards early stopping condition.
 
-**Experimental! Proof-of-concept!** 
+Assumes that your guides do not contain PAM, and are all in the same direction as 
+you would order for the lab e.g.:
 
-This function does not yet lists all off-targets and this will be added at a later date.
-Current output is a list of counts of the ambiguous off-targets by distance.
-Distance is restricted to 0 and 1 at the moment.
-
+```
+5' - ...ACGTCATCG NGG - 3'  -> will be input: ...ACGTCATCG
+     guide        PAM
+    
+3' - CCN GGGCATGCT... - 5'  -> will be input: ...AGCATGCCC
+     PAM guide
+```
 
 # Arguments
-`db` - object built with `build_vcfDB`
 
-`guides` - a vector of gRNAs without PAM.
+`output_file` - Path and name for the output file, this will be comma separated table, therefore `.csv` extension is preferred. 
+This search will create intermediate files which will have same name as `output_file`, but with a sequence prefix. Final file
+will contain all those intermediate files.
+
+`distance` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
+which off-targets are considered.
+
+`early_stopping` - Integer vector. Early stopping condition. For example for distance 2, we need vector with 3 values e.g. [1, 1, 5].
+Which means we will search with "up to 1 offtargets within distance 0", "up to 1 offtargets within distance 1"...
 
 # Examples
 ```julia

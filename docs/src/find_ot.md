@@ -1,3 +1,7 @@
+```@meta
+CollapsedDocStrings = true
+```
+
 # Find all off-targets
 
 ## Fastest method with symbolic alignments and prefix hashes

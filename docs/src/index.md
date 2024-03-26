@@ -19,7 +19,7 @@ Uncompromising finding of CRISPR off-targets:
 
 * When using many cores for building the indexes - you have to have around ~1 GB of RAM per thread.
 
-## Build application
+## Standalone application
 
 It is possible to build CHOPOFF into standalone application - which includes all dependencies and Julia into one compiled software. This is **recommended** method for using of CHOPOFF when you are not a developer. If you know how to code in Julia, you might make use of the whole framework using CHOPOFF as a package.
 
@@ -29,6 +29,22 @@ produce binary in a "build" folder. Then you can run from inside that folder `./
 You can alternatively download the latest release from the releases' page on the GitHub.
 
 When using application as self-contained compiled software, you can control number of cores by setting `JULIA_NUM_THREADS` environment variable.
+
+**Example commands for using standalone**
+
+Building of `prefixHashDB` database for standard Cas9 `--motif` with support for up to levenshtein distance 4 `--distance` for an example genome using 10 threads.
+
+```bash
+export JULIA_NUM_THREADS=10  
+CHOPOFF build --name Cas9_hg38 --genome hg38.fa -o out_dir/phDB_16_4/ --distance 4 --motif Cas9 prefixHashDB --hash_length 16
+```
+
+Searching of above database for all off-targets for guides listed in `--guides` up to the 2 levenshtein distance `--distance` using 15 threads, writing the results into `--output` file.
+
+```bash
+export JULIA_NUM_THREADS=15  
+CHOPOFF search --database phDB_16_4/ --guides guides_wo_PAM.txt --output out_dir/phDB_16_2.csv --distance 2 prefixHashDB
+```
 
 ## No-build application
 

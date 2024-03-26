@@ -280,7 +280,7 @@ keep track of the off-target locations and does not filter overlapping off-targe
 early stopping condition a little earlier than intended.
 
 Assumes your guides do not contain PAM, and are all in the same direction as 
-you would order from the lab e.g.:
+you would order for the lab e.g.:
 
 ```
 5' - ...ACGTCATCG NGG - 3'  -> will be input: ...ACGTCATCG

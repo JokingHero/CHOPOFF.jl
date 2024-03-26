@@ -1,3 +1,7 @@
+```@meta
+CollapsedDocStrings = true
+```
+
 # Alignment-free filters for gRNAs
 
 ```@docs

@@ -44,6 +44,10 @@ function make_vcf_example_doc()
 # prepare libs
 using CHOPOFF, BioSequences
 
+# make a temporary directory
+tdir = tempname()
+db_path = joinpath(tdir, "vcfDB.bin")
+
 # use CHOPOFF example genome and vcf file
 chopoff_path = splitpath(dirname(pathof(CHOPOFF)))[1:end-1]
 genome = joinpath(vcat(chopoff_path, 
@@ -57,11 +61,17 @@ guides_s = Set(readlines(joinpath(vcat(chopoff_path,
 guides = LongDNA{4}.(guides_s)
 
 # example VCF file
-vcf_db = build_vcfDB(
+build_vcfDB(
     "samirandom", genome, vcf,
-    Motif("Cas9"; distance = 1, ambig_max = 0))
+    Motif("Cas9"; distance = 2, ambig_max = 3),
+    db_path)
 
-# search using vcfDB!
-vcf_res = search_vcfDB(vcf_db, guides)
+# search using vcfDB
+output_file = joinpath(tdir, "output.csv")
+search_vcfDB(db_path, guides, output_file)
+
+# load results
+using DataFrames, CSV
+res = DataFrame(CSV.File(output_file))
 """
 end
