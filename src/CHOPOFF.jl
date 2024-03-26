@@ -132,7 +132,7 @@ function parse_commandline(args::Array{String})
             help = "dictDB is a simple dictionary of all unique guides and their counts."
         "vcfDB"
             action = :command
-            help = "vcfDB is similar specialized database to handle .vcf files and personalized off-target search."
+            help = "vcfDB is a specialized database to handle .vcf files and personalized off-target search."
         "fmi"
             action = :command
             help = "Build FM-index of a genome"
@@ -294,6 +294,10 @@ function parse_commandline(args::Array{String})
             help = "Path to the .vcf or .vcf.gz file. "
             arg_type = String
             required = true
+        "--hash_length"
+            help = "Defines length of the hash. "
+            arg_type = Int
+            required = false
     end
 
     @add_arg_table! s["build"]["pamDB"] begin
@@ -318,7 +322,7 @@ function parse_commandline(args::Array{String})
             help = "motifDB utilizes prefixes together with q-gram filtering."
         "vcfDB"
             action = :command
-            help = "vcfDB is similar specialized database to handle .vcf files and personalized off-target search."
+            help = "vcfDB is a specialized database to handle .vcf files and personalized off-target search."
         "fmi"
             action = :command
             help = "Search fmi index using brute force method."
@@ -363,6 +367,14 @@ function parse_commandline(args::Array{String})
     end
 
     @add_arg_table! s["search"]["prefixHashDB"] begin
+        "--early_stopping"
+            help = "Input a vector of length of distance + 1 with early stopping conditions. If not supplied we will look up to 1e6 OTs for each distance."
+            arg_type = Int
+            nargs = '*'
+            required = false
+    end
+
+    @add_arg_table! s["search"]["vcfDB"] begin
         "--early_stopping"
             help = "Input a vector of length of distance + 1 with early stopping conditions. If not supplied we will look up to 1e6 OTs for each distance."
             arg_type = Int
@@ -508,7 +520,11 @@ function main(args::Array{String})
         elseif args["%COMMAND%"] == "dictDB"
             build_dictDB(args["name"], args["genome"], motif; storage_path = args["output"])
         elseif args["%COMMAND%"] == "vcfDB"
-            build_vcfDB(args["name"], args["genome"], args["vcfDB"]["vcf"], motif; storage_path = args["output"])
+            hash_len = args["prefixHashDB"]["hash_length"]
+            if hash_len === nothing
+                hash_len = min(length_noPAM(motif) - (motif.distance), 16)
+            end
+            build_vcfDB(args["name"], args["genome"], args["vcfDB"]["vcf"], motif, args["output"], hash_len)
         elseif args["%COMMAND%"] == "fmi"
             build_fmiDB(args["genome"], args["output"])
         elseif args["%COMMAND%"] == "pamDB"
@@ -531,7 +547,7 @@ function main(args::Array{String})
         args = args["search"]
         guides = LongDNA{4}.(readlines(args["guides"]))
         if args["%COMMAND%"] == "treeDB"
-            res = search_treeDB(args["database"], guides, args["output"]; 
+            search_treeDB(args["database"], guides, args["output"]; 
                 distance = args["distance"])
         elseif args["%COMMAND%"] == "linearDB"
             if length(args["linearDB"]["early_stopping"]) != 0
@@ -544,7 +560,7 @@ function main(args::Array{String})
             end
         elseif args["%COMMAND%"] == "prefixHashDB"
             if length(args["prefixHashDB"]["early_stopping"]) != 0
-                res = search_prefixHashDB(args["database"], guides, args["output"]; 
+                search_prefixHashDB(args["database"], guides, args["output"]; 
                     distance = args["distance"], 
                     early_stopping = args["prefixHashDB"]["early_stopping"])
             else
@@ -557,8 +573,15 @@ function main(args::Array{String})
                 args["database"], guides, args["output"]; 
                 distance = args["distance"], adjust = args["motifDB"]["adjust"])
         elseif args["%COMMAND%"] == "vcfDB"
-            db = load(args["database"])
-            res = search_vcfDB(db, guides)
+            if length(args["prefixHashDB"]["early_stopping"]) != 0
+                search_vcfDB(args["database"], guides, args["output"]; 
+                    distance = args["distance"], 
+                    early_stopping = args["prefixHashDB"]["early_stopping"])
+            else
+                search_vcfDB(args["database"], guides, args["output"]; 
+                    distance = args["distance"],
+                    early_stopping = repeat([1000000], args["distance"] + 1))
+            end
         elseif args["%COMMAND%"] == "fmi"
             template = load(args["fmi"]["template"])
             search_fmiDB(guides, template, args["database"], args["output"];

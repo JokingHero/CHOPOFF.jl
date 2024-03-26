@@ -39,7 +39,8 @@ export JULIA_NUM_THREADS=10
 CHOPOFF build --name Cas9_hg38 --genome hg38.fa -o out_dir/phDB_16_4/ --distance 4 --motif Cas9 prefixHashDB --hash_length 16
 ```
 
-Searching of above database for all off-targets for guides listed in `--guides` up to the 2 levenshtein distance `--distance` using 15 threads, writing the results into `--output` file.
+Searching of above database for all off-targets for guides listed in `--guides` up to the 2 levenshtein distance `--distance` using 15 threads, writing the results into `--output` file. Because `--early_stopping` argument is not supplied below, by default
+`prefixHashDB` will search for up to 1e6 off-targets per guide per distance.
 
 ```bash
 export JULIA_NUM_THREADS=15  
