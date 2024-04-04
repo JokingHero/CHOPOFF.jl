@@ -2,12 +2,12 @@
 ![Coverage is High](./coverage/coverage_fraction.svg) 
 [![](https://img.shields.io/badge/docs-latest-blue.svg)](https://jokinghero.github.io/CHOPOFF.jl/) 
 
-# CHOPOFF
+# 
 
 ![Logo](./docs/src/assets/logo-dark.png#gh-dark-mode-only)
 ![Logo](./docs/src/assets/logo.png#gh-light-mode-only)
 
-## About
+## About CHOPOFF
 
 Uncompromising finding of CRISPR off-targets:
 * many fast alignment algorithms optimized specifically for CRISPR
