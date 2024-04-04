@@ -6,7 +6,7 @@
 
 ![Logo](./docs/src/assets/logo-dark.png#gh-dark-mode-only)
 ![Logo](./docs/src/assets/logo.png#gh-light-mode-only)
-## <p style="text-align: center;">Sensitive and fast CRISPR off-target detection</p>
+## <p align="center">Sensitive and fast CRISPR off-target detection</p>
 
 ## About CHOPOFF
 
