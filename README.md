@@ -6,16 +6,16 @@
 
 ![Logo](./docs/src/assets/logo-dark.png#gh-dark-mode-only)
 ![Logo](./docs/src/assets/logo.png#gh-light-mode-only)
+## <p style="text-align: center;">Sensitive and fast CRISPR off-target detection</p>
 
 ## About CHOPOFF
 
-Uncompromising finding of CRISPR off-targets:
 * many fast alignment algorithms optimized specifically for CRISPR
 * search for larger distances allowing for mismatches and bulges
 * support for ambiguous bases
 * arbitrarily large genomes
 * VCF support - with multiple overlapping SNPs
-* near-instant alignment-free off-target filtering
+* off-target filtering that is near-instant and alignment-free 
 * pruning of off-targets by their location (remove overlapping, competing off-targets)
 * extensively tested
 * full framework that can be extended for your own algorithms with ease
@@ -37,7 +37,7 @@ You can buy me a [coffee](https://www.buymeacoffee.com/kornellabun) to show some
 
 ## License  
 
-Copyright © 2022 Kornel Labun
+Copyright © 2024 Kornel Labun
 
 License for non-commercial applications is aGPL-3.0. 
 For commercial applications you should acquire permission or licensing contract.
