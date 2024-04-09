@@ -9,6 +9,7 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
 if [[ $noprecompile == 0 ]]
 then
     julia --project=. --startup-file=no --trace-compile=./precompile/app_precompile.jl ./precompile/precompile.jl

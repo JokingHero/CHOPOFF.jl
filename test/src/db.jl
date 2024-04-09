@@ -79,7 +79,7 @@ end
 @testset "databases" begin
     genome = joinpath(dirname(pathof(CHOPOFF)), "..", 
         "test", "sample_data", "genome", "semirandom.fa")
-    guides_s = Set(readlines("./sample_data/crispritz_results/guides.txt"))
+    guides_s = Set(readlines("./sample_data/guides.txt"))
     guides = LongDNA{4}.(guides_s)
     tdir = tempname()
     mkpath(tdir)

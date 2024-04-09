@@ -32,19 +32,21 @@ When using application as self-contained compiled software, you can control numb
 
 **Example commands for using standalone**
 
-Building of `prefixHashDB` database for standard Cas9 `--motif` with support for up to levenshtein distance 4 `--distance` for an example genome using 10 threads.
+Building of `prefixHashDB` database for standard Cas9 `--motif` with support for up to levenshtein distance 3 `--distance` for an example genome using 10 threads.
 
 ```bash
 export JULIA_NUM_THREADS=10  
-CHOPOFF build --name Cas9_hg38 --genome hg38.fa -o out_dir/phDB_16_4/ --distance 4 --motif Cas9 prefixHashDB --hash_length 16
+EXAMPLE_GENOME="./test/sample_data/genome/semirandom.fa"
+CHOPOFF build --name Cas9_hg38 --genome "$EXAMPLE_GENOME" -o out_dir/phDB_16_3/ --distance 3 --motif Cas9 prefixHashDB
 ```
 
 Searching of above database for all off-targets for guides listed in `--guides` up to the 2 levenshtein distance `--distance` using 15 threads, writing the results into `--output` file. Because `--early_stopping` argument is not supplied below, by default
-`prefixHashDB` will search for up to 1e6 off-targets per guide per distance.
+`prefixHashDB` will search for up to 1e6 off-targets per guide per distance. Pay attention that default guides for the Cas9, are 20bp long, as can be inspected in the example file.
 
 ```bash
 export JULIA_NUM_THREADS=15  
-CHOPOFF search --database phDB_16_4/ --guides guides_wo_PAM.txt --output out_dir/phDB_16_2.csv --distance 2 prefixHashDB
+EXAMPLE_GUIDES="./test/sample_data/guides.txt"
+CHOPOFF search --database phDB_16_3/ --guides "$EXAMPLE_GUIDES" --output out_dir/phDB_16_2.csv --distance 2 prefixHashDB
 ```
 
 ## No-build application

@@ -13,7 +13,7 @@ using BioSequences
         tdir = tempname()
         mkpath(tdir)
         genome = joinpath(dirname(pathof(CHOPOFF)), "..", "test", "sample_data", "genome", "semirandom.fa")
-        guides_s = "./sample_data/crispritz_results/guides.txt"
+        guides_s = "./sample_data/guides.txt"
         guides = LongDNA{4}.(Set(readlines(guides_s)))
 
         tdirDB = joinpath(tdir, "hashDB.bin")

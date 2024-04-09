@@ -28,6 +28,37 @@
 * When using many cores for building the indexes - you have to have around ~1 GB of RAM per thread.
 
 
+## Install and use as a standalone application
+
+It is possible to build CHOPOFF into standalone application - which includes all dependencies and Julia into one compiled software. This is **recommended** method for using of CHOPOFF when you are not a developer. If you know how to code in Julia, you might make use of the whole framework using CHOPOFF as a package (see docs [![](https://img.shields.io/badge/docs-latest-blue.svg)](https://jokinghero.github.io/CHOPOFF.jl/)).
+
+To build a standalone application run `./build_standalone.sh` script from the main directory. Script will run all tests and also 
+produce binary in a "build" folder. Then you can run from inside that folder `./bin/CHOPOFF --help`. To learn about building a database run `./bin/CHOPOFF build --help` and to use existing database check out `./bin/CHOPOFF search --help`. It is possible to skip testing + precompile step to speed up the build process with `./build_standalone.sh --noprecompile`.
+
+You can alternatively download the latest release from the releases' page on the GitHub.
+
+When using application as self-contained compiled software, you can control number of cores by setting `JULIA_NUM_THREADS` environment variable.
+
+**Example commands for using standalone**
+
+Building of `prefixHashDB` database for standard Cas9 `--motif` with support for up to levenshtein distance 3 `--distance` for an example genome using 10 threads.
+
+```bash
+export JULIA_NUM_THREADS=10  
+EXAMPLE_GENOME="./test/sample_data/genome/semirandom.fa"
+CHOPOFF build --name Cas9_hg38 --genome "$EXAMPLE_GENOME" -o out_dir/phDB_16_3/ --distance 3 --motif Cas9 prefixHashDB
+```
+
+Searching of above database for all off-targets for guides listed in `--guides` up to the 2 levenshtein distance `--distance` using 15 threads, writing the results into `--output` file. Because `--early_stopping` argument is not supplied below, by default
+`prefixHashDB` will search for up to 1e6 off-targets per guide per distance. Pay attention that default guides for the Cas9, are 20bp long, as can be inspected in the example file.
+
+```bash
+export JULIA_NUM_THREADS=15  
+EXAMPLE_GUIDES="./test/sample_data/guides.txt"
+CHOPOFF search --database phDB_16_3/ --guides "$EXAMPLE_GUIDES" --output out_dir/phDB_16_2.csv --distance 2 prefixHashDB
+```
+
+
 ## Support
 
 You can buy me a [coffee](https://www.buymeacoffee.com/kornellabun) to show some love and appreciation!

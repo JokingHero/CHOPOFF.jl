@@ -142,7 +142,7 @@ mkpath(res_dir)
 
 # load up example gRNAs
 guides_s = Set(readlines(joinpath(vcat(chopoff_path, 
-    "test", "sample_data", "crispritz_results", "guides.txt"))))
+    "test", "sample_data", "guides.txt"))))
 guides = LongDNA{4}.(guides_s)
     
 # finally, make results!
