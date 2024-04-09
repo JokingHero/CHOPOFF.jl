@@ -30,8 +30,8 @@ For example: ACTG and ANNN with restriction to length 2, would result in these s
 This length does not includes PAM - it applies directly to the guide seqeunce. The default is full length of the guide and its maximal distance.
 """
 struct PathTemplates
-    paths::Matrix{Int}
-    distances::Vector{Int}
+    paths::Matrix{<:Unsigned}
+    distances::Vector{UInt8}
     #len::Int # length without the PAM
     #max_distance::Int
     mismatch_only::Bool
@@ -330,13 +330,12 @@ function build_PathTemplates(
             paths = CHOPOFF.load(joinpath(dir, "Cas9_d4_p16_paths.bin"))
             distances = CHOPOFF.load(joinpath(dir, "Cas9_d4_p16_distances.bin"))
             paths = paths[:, 1:restrict_to_len]
-            paths = Int.(paths)
-            distances = Int.(distances)
             not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto))))
             not_over_dist = BitVector(distances .<= d)
             not = not_dups .& not_over_dist
             paths = paths[not, :]
             distances = distances[not]
+            paths = convert.(smallestutype(maximum(paths)), paths)
             paths = PathTemplates(paths, distances, mismatch_only, motif, withPAM, restrict_to_len)
             if storagepath != ""
                 save(paths, storagepath)
@@ -396,6 +395,8 @@ function build_PathTemplates(
     distances = vcat([repeat([convert(UInt8, i)], paths_lengths[i + 1]) for i in 0:d]...)
     distances = distances[not_dups]
     
+    paths_expanded = convert.(smallestutype(maximum(paths_expanded)), paths_expanded)
+    distances = UInt8.(distances)
     paths = PathTemplates(paths_expanded, distances, mismatch_only, motif, withPAM, restrict_to_len)
     if storagepath != ""
         save(paths, storagepath)
