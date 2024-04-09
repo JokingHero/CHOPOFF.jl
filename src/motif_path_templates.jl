@@ -325,22 +325,26 @@ function build_PathTemplates(
             motif.pam_loci_fwd == m2.pam_loci_fwd && 
             motif.pam_loci_rve == m2.pam_loci_rve)
 
-            @info "Reusing precomputed alignments."
             dir = joinpath(dirname(pathof(CHOPOFF)), "..", "data")
-            paths = CHOPOFF.load(joinpath(dir, "Cas9_d4_p16_paths.bin"))
-            distances = CHOPOFF.load(joinpath(dir, "Cas9_d4_p16_distances.bin"))
-            paths = paths[:, 1:restrict_to_len]
-            not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto))))
-            not_over_dist = BitVector(distances .<= d)
-            not = not_dups .& not_over_dist
-            paths = paths[not, :]
-            distances = distances[not]
-            paths = convert.(smallestutype(maximum(paths)), paths)
-            paths = PathTemplates(paths, distances, mismatch_only, motif, withPAM, restrict_to_len)
-            if storagepath != ""
-                save(paths, storagepath)
+            pfile = joinpath(dir, "Cas9_d4_p16_paths.bin")
+            dfile = joinpath(dir, "Cas9_d4_p16_distances.bin")
+            if (isfile(pfile) && isfile(dfile))
+                @info "Reusing precomputed alignments."
+                paths = CHOPOFF.load(pfile)
+                distances = CHOPOFF.load(joinpath(dir, "Cas9_d4_p16_distances.bin"))
+                paths = paths[:, 1:restrict_to_len]
+                not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto))))
+                not_over_dist = BitVector(distances .<= d)
+                not = not_dups .& not_over_dist
+                paths = paths[not, :]
+                distances = distances[not]
+                paths = convert.(smallestutype(maximum(paths)), paths)
+                paths = PathTemplates(paths, distances, mismatch_only, motif, withPAM, restrict_to_len)
+                if storagepath != ""
+                    save(paths, storagepath)
+                end
+                return paths 
             end
-            return paths 
         end
     end
 
