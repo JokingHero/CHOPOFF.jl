@@ -141,7 +141,8 @@ name::String,
     genomepath::String,
     motif::Motif,
     storage_dir::String,
-    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16))
+    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16);
+    reuse_saved::Bool = true)
 ```
 
 Prepare prefixHashDB index for future searches using `search_prefixHashDB`.
@@ -162,6 +163,8 @@ You can also play with `hash_len` parameter, but keeping it at 16 should be clos
 
 `hash_len` - Length of the hash in bp. At maximum 16.
 
+`reuse_saved` - Whether to reuse paths that were saved for Cas9 distance 4 and prefix 16.
+
 # Examples
 ```julia
 $(make_example_doc("prefixHashDB"))
@@ -172,7 +175,8 @@ function build_prefixHashDB(
     genomepath::String,
     motif::Motif,
     storage_dir::String,
-    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16))
+    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16);
+    reuse_saved::Bool = true)
 
     if hash_len > 16
         throw("hash_len $hash_len is more than 16")
@@ -228,11 +232,45 @@ function build_prefixHashDB(
     isplus = BitVector(isplus[order])
 
     @info "Step 3: Constructing Paths for hashes"
-    mpt = build_PathTemplates(motif; restrict_to_len = hash_len, withPAM = false)
-    paths = mpt.paths[:, 1:hash_len]
-    not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto)))) # how can there be no duplicated function?!
+    # trying to preload paths for most common use case
+    paths = nothing
+    if (reuse_saved && (motif.distance <= 4) && (hash_len <= 16))
+        m2 = Motif("Cas9")
+        if (motif.fwd == m2.fwd && 
+            motif.rve == m2.rve &&
+            motif.pam_loci_fwd == m2.pam_loci_fwd && 
+            motif.pam_loci_rve == m2.pam_loci_rve)
+
+            dir = joinpath(dirname(pathof(CHOPOFF)), "..", "data")
+            pfile1 = joinpath(dir, "Cas9_d4_p16_paths_part1.bin")
+            pfile2 = joinpath(dir, "Cas9_d4_p16_paths_part2.bin")
+            dfile = joinpath(dir, "Cas9_d4_p16_distances.bin")
+            if (isfile(pfile1) && isfile(pfile2) && isfile(dfile))
+                @info "Reusing precomputed alignments."
+                paths = CHOPOFF.load(pfile1)
+                paths2 = CHOPOFF.load(pfile2)
+                paths = vcat(paths, paths2)
+                distances = CHOPOFF.load(joinpath(dir, "Cas9_d4_p16_distances.bin"))
+                paths = paths[:, 1:hash_len]
+                not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto))))
+                not_over_dist = BitVector(distances .<= motif.distance)
+                not = not_dups .& not_over_dist
+                paths = paths[not, :]
+                distances = distances[not]
+                paths = convert.(smallestutype(maximum(paths)), paths)
+            end
+        end
+    end
+
+    if isnothing(paths)
+        mpt = build_PathTemplates(motif; restrict_to_len = hash_len, withPAM = false)
+        paths = mpt.paths[:, 1:hash_len]
+        not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto)))) # how can there be no duplicated function?!
+        paths = paths[not_dups, :]
+        distances = mpt.distances[not_dups]
+    end
     mkpath(storage_dir)
-    save(PrefixHashDB(SymbolicAlignments(dbi, paths[not_dups, :], mpt.distances[not_dups], hash_len),
+    save(PrefixHashDB(SymbolicAlignments(dbi, paths, distances, hash_len),
         prefixes, suffixes, chrom, pos, isplus), joinpath(storage_dir, "prefixHashDB.bin"))
     @info "Finished constructing prefixHashDB in " * storage_dir
 

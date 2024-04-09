@@ -47,7 +47,8 @@ build_vcfDB(
     vcfpath::String,
     motif::Motif,
     storage_path::String,
-    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16))
+    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16);
+    reuse_saved::Bool = true)
 ```
 
 Builds a database of all potential off-targets that overlap any of the variants in the VCF file.
@@ -69,6 +70,8 @@ variants. This database uses simialr principles to `prefixHashDB`, also utilizes
 
 `hash_len` - length of the prefix that is stored inside the hash
 
+`reuse_saved` - Whether to reuse paths that were saved for Cas9 distance 4 and prefix 16.
+
 
 # Examples
 ```julia
@@ -81,7 +84,7 @@ function build_vcfDB(
     vcfpath::String,
     motif::Motif,
     storage_path::String,
-    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16))
+    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16); reuse_saved = true)
 
     dbi = DBInfo(genomepath, name, motif; vcf_filepath = vcfpath)
     hash_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", hash_len * 2); base = 2))
@@ -235,9 +238,42 @@ function build_vcfDB(
     close(ref)
 
     @info "Step 2: Constructing Paths for hashes"
-    mpt = build_PathTemplates(motif; restrict_to_len = hash_len, withPAM = false)
-    paths = mpt.paths[:, 1:hash_len]
-    not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto)))) # how can there be no duplicated function?!
+    paths = nothing
+    if (reuse_saved && (motif.distance <= 4) && (hash_len <= 16))
+        m2 = Motif("Cas9")
+        if (motif.fwd == m2.fwd && 
+            motif.rve == m2.rve &&
+            motif.pam_loci_fwd == m2.pam_loci_fwd && 
+            motif.pam_loci_rve == m2.pam_loci_rve)
+
+            dir = joinpath(dirname(pathof(CHOPOFF)), "..", "data")
+            pfile1 = joinpath(dir, "Cas9_d4_p16_paths_part1.bin")
+            pfile2 = joinpath(dir, "Cas9_d4_p16_paths_part2.bin")
+            dfile = joinpath(dir, "Cas9_d4_p16_distances.bin")
+            if (isfile(pfile1) && isfile(pfile2) && isfile(dfile))
+                @info "Reusing precomputed alignments."
+                paths = CHOPOFF.load(pfile1)
+                paths2 = CHOPOFF.load(pfile2)
+                paths = vcat(paths, paths2)
+                distances = CHOPOFF.load(joinpath(dir, "Cas9_d4_p16_distances.bin"))
+                paths = paths[:, 1:hash_len]
+                not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto))))
+                not_over_dist = BitVector(distances .<= motif.distance)
+                not = not_dups .& not_over_dist
+                paths = paths[not, :]
+                distances = distances[not]
+                paths = convert.(smallestutype(maximum(paths)), paths)
+            end
+        end
+    end
+    
+    if isnothing(paths)
+        mpt = build_PathTemplates(motif; restrict_to_len = hash_len, withPAM = false)
+        paths = mpt.paths[:, 1:hash_len]
+        not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto)))) # how can there be no duplicated function?!
+        paths = paths[not_dups, :]
+        distances = mpt.distances[not_dups]
+    end
 
     if length(ambig_guides) > 0
         @info "Step 3: Constructing DB for ambigous gRNAs."
@@ -250,7 +286,7 @@ function build_vcfDB(
         save(CHOPOFF.build_ambigPrefixHashDB(
                 ambig_guides, ambig_chrom, ambig_pos, ambig_isplus,
                 l, hash_len, ot_type, hash_type, suffix_type, ambig_annot, 
-                CHOPOFF.SymbolicAlignments(dbi, paths[not_dups, :], mpt.distances[not_dups], hash_len)), 
+                CHOPOFF.SymbolicAlignments(dbi, paths, distances, hash_len)), 
             storage_path)
         @info "Finished constructing vcfDB in " * storage_path
     else

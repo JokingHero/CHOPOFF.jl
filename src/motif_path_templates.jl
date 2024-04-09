@@ -310,43 +310,11 @@ function build_PathTemplates(
     storagepath::String = "", 
     mismatch_only::Bool = false, 
     restrict_to_len::Int = (length_noPAM(motif) + motif.distance),
-    withPAM::Bool = false,
-    reuse_saved::Bool = true)
+    withPAM::Bool = false)
 
     len = length_noPAM(motif)
     d = motif.distance
     length_of_paths = (withPAM ? length(motif) : length_noPAM(motif)) + motif.distance
-
-    # trying to preload paths for most common use case
-    if (reuse_saved && (motif.distance <= 4) && (restrict_to_len <= 16) && !withPAM && !mismatch_only)
-        m2 = Motif("Cas9")
-        if (motif.fwd == m2.fwd && 
-            motif.rve == m2.rve &&
-            motif.pam_loci_fwd == m2.pam_loci_fwd && 
-            motif.pam_loci_rve == m2.pam_loci_rve)
-
-            dir = joinpath(dirname(pathof(CHOPOFF)), "..", "data")
-            pfile = joinpath(dir, "Cas9_d4_p16_paths.bin")
-            dfile = joinpath(dir, "Cas9_d4_p16_distances.bin")
-            if (isfile(pfile) && isfile(dfile))
-                @info "Reusing precomputed alignments."
-                paths = CHOPOFF.load(pfile)
-                distances = CHOPOFF.load(joinpath(dir, "Cas9_d4_p16_distances.bin"))
-                paths = paths[:, 1:restrict_to_len]
-                not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto))))
-                not_over_dist = BitVector(distances .<= d)
-                not = not_dups .& not_over_dist
-                paths = paths[not, :]
-                distances = distances[not]
-                paths = convert.(smallestutype(maximum(paths)), paths)
-                paths = PathTemplates(paths, distances, mismatch_only, motif, withPAM, restrict_to_len)
-                if storagepath != ""
-                    save(paths, storagepath)
-                end
-                return paths 
-            end
-        end
-    end
 
     # path is mapped to these numbers, path numbers are
     # (len + end) * (dist  + 1) and
