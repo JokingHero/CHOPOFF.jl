@@ -520,7 +520,7 @@ function main(args::Array{String})
         elseif args["%COMMAND%"] == "dictDB"
             build_dictDB(args["name"], args["genome"], motif; storage_path = args["output"])
         elseif args["%COMMAND%"] == "vcfDB"
-            hash_len = args["prefixHashDB"]["hash_length"]
+            hash_len = args["vcfDB"]["hash_length"]
             if hash_len === nothing
                 hash_len = min(length_noPAM(motif) - (motif.distance), 16)
             end
@@ -573,10 +573,10 @@ function main(args::Array{String})
                 args["database"], guides, args["output"]; 
                 distance = args["distance"], adjust = args["motifDB"]["adjust"])
         elseif args["%COMMAND%"] == "vcfDB"
-            if length(args["prefixHashDB"]["early_stopping"]) != 0
+            if length(args["vcfDB"]["early_stopping"]) != 0
                 search_vcfDB(args["database"], guides, args["output"]; 
                     distance = args["distance"], 
-                    early_stopping = args["prefixHashDB"]["early_stopping"])
+                    early_stopping = args["vcfDB"]["early_stopping"])
             else
                 search_vcfDB(args["database"], guides, args["output"]; 
                     distance = args["distance"],

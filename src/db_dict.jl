@@ -134,10 +134,10 @@ function search_dictDB(
     guides_ = copy(guides)
     dist = db.mpt.motif.distance # use maximal distance as the performance is always bottlenecked by that
     # mpt = restrictDistance(db.mpt, dist)
-
-    if any(length_noPAM(db.mpt.motif) .!= length.(guides_))
-        throw("Guide queries are not of the correct length to use with this Motif: " * string(db.dbi.motif))
+    if any(length_noPAM(db.mpt.motif) .!= length.(guides))
+        throw("Guide queries are not of the correct length to use with this Motif: " * string(db.mpt.motif))
     end
+
     # reverse guides so that PAM is always on the left
     if db.mpt.motif.extends5
         guides_ = reverse.(guides_)

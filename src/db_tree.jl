@@ -308,6 +308,10 @@ function search_treeDB(
               string(min(ldb.dbi.motif.distance, length(first(prefixes)))))
     end
 
+    if any(length_noPAM(ldb.dbi.motif) .!= length.(guides))
+        error("Guide queries are not of the correct length to use with this Motif: " * string(ldb.dbi.motif))
+    end
+
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
     if ldb.dbi.motif.extends5

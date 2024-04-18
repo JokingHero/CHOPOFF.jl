@@ -335,6 +335,10 @@ function search_motifDB(
         error("Maximum distance is " * string(sdb.dbi.motif.distance))
     end
 
+    if any(length_noPAM(sdb.dbi.motif) .!= length.(guides))
+        error("Guide queries are not of the correct length to use with this Motif: " * string(sdb.dbi.motif))
+    end
+
     guides_ = copy(guides)
     # reverse guides so that PAM is always on the left
     if sdb.dbi.motif.extends5

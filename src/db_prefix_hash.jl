@@ -361,6 +361,10 @@ function search_prefixHashDB(
     ot_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", ot_len * 2); base = 2))
     s_len = ot_len - db.mpt.hash_len
 
+    if any(length_noPAM(db.mpt.dbi.motif) .!= length.(guides))
+        error("Guide queries are not of the correct length to use with this Motif: " * string(db.mpt.dbi.motif))
+    end
+
     if distance > db.mpt.dbi.motif.distance
         error("For this database maximum distance is " * string(db.mpt.dbi.motif.distance))
     end
