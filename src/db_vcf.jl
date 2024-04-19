@@ -35,7 +35,8 @@ function parse_vcf(vcf_filepath::String)
         recordNum += 1
     end
     close(reader)
-    return rs_ids, rs_chroms, rs_ref, rs_ranges, rs_alt
+    order = sortperm(collect(zip(rs_chroms, rs_ranges)))
+    return rs_ids[order], rs_chroms[order], rs_ref[order], rs_ranges[order], rs_alt[order]
 end
 
 
@@ -48,12 +49,15 @@ build_vcfDB(
     motif::Motif,
     storage_path::String,
     hash_len::Int = min(length_noPAM(motif) - motif.distance, 16);
-    reuse_saved::Bool = true)
+    reuse_saved::Bool = true,
+    variant_overlaps = false)
 ```
 
 Builds a database of all potential off-targets that overlap any of the variants in the VCF file.
 It supports combinations of variants that are close to each other, will report all possible combinations of 
 variants. This database uses simialr principles to `prefixHashDB`, also utilizes hashed prefix of specific length.
+In case of troubles with loading of VCF files, the only fields that we use are ID, CHROM, POS, REF, ALT, so its 
+often possible to remove INFO field and other unnecesary fields which may cause troubles.
 
 
 # Arguments
@@ -72,6 +76,8 @@ variants. This database uses simialr principles to `prefixHashDB`, also utilizes
 
 `reuse_saved` - Whether to reuse paths that were saved for Cas9 distance 4 and prefix 16.
 
+`variant_overlaps` - Whether to check for all potential combinations of alternate alleles for nearby variants.
+    Only use with small VCF files! Preferably only run for specific variants.
 
 # Examples
 ```julia
@@ -84,19 +90,21 @@ function build_vcfDB(
     vcfpath::String,
     motif::Motif,
     storage_path::String,
-    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16); reuse_saved = true)
+    hash_len::Int = min(length_noPAM(motif) - motif.distance, 16); 
+    reuse_saved = true,
+    variant_overlaps = false)
 
     dbi = DBInfo(genomepath, name, motif; vcf_filepath = vcfpath)
     hash_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", hash_len * 2); base = 2))
     suffix_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", (CHOPOFF.length_noPAM(motif) - hash_len + motif.distance) * 2); base = 2))
     ot_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", (CHOPOFF.length_noPAM(motif) + motif.distance) * 2); base = 2))
-
+    
+    @info "Step 1: Reading VCF file."
     rs_ids, rs_chroms, rs_ref, rs_ranges, rs_alt = CHOPOFF.parse_vcf(vcfpath)
     l = length_noPAM(motif) + motif.distance
     lp = length(motif) + motif.distance # with PAM
 
-    @info "Step 1: Parsing the genomic relation to the VCF file."
-        # For each chromosome parallelized we build database
+    @info "Step 2: Parsing the genomic relation to the VCF file."
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
 
@@ -107,27 +115,34 @@ function build_vcfDB(
     ambig_annot = Vector{String}() # change to InlineStrings
 
     for ch in unique(rs_chroms)
-        #ch = first(unique(rs_chroms)) # REMOVE
-        ch_ = convert(dbi.gi.chrom_type, findfirst(isequal(ch), dbi.gi.chrom))
+        ch_numeric = findfirst(isequal(ch), dbi.gi.chrom)
+        if isnothing(ch_numeric)
+            @warn("Chromosome " * string(ch) * " is not indexed for specified genome, skipping it.")
+            continue
+        end
+        ch_ = convert(dbi.gi.chrom_type, ch_numeric)
+        @info "Working on " * string(ch) 
 
         chrom_seq = CHOPOFF.getchromseq(dbi.gi.is_fa, reader[ch])
         chrom_idx = findall(isequal(ch), rs_chroms)
-        # now for every snp (we assume they are sorted)
+
         # group snps by proximity - as we have to enumerate all permutations of rs_alt for them
         grouping = 1
-        grouping_idx = ones(Int, length(chrom_idx))
-        for i in 1:(length(chrom_idx) - 1)
-            x = (rs_ranges[chrom_idx[i]].start - l):(rs_ranges[chrom_idx[i]].stop + l)
-            if length(intersect(x, rs_ranges[chrom_idx[i+1]])) > 0 # rs overlaps
-                grouping_idx[i + 1] = grouping
-            else
-                grouping += 1
-                grouping_idx[i + 1] = grouping
+        grouping_idx = collect(1:length(chrom_idx))
+        if variant_overlaps # we need to correct grouping, otherwise each variant is in its own group
+            for i in 1:(length(chrom_idx) - 1)
+                x = (rs_ranges[chrom_idx[i]].start - l):(rs_ranges[chrom_idx[i]].stop + l)
+                if length(intersect(x, rs_ranges[chrom_idx[i+1]])) > 0 # rs overlaps
+                    grouping_idx[i + 1] = grouping
+                else
+                    grouping += 1
+                    grouping_idx[i + 1] = grouping
+                end
             end
         end
 
         # for each group we analyze these snps together
-        for group in unique(grouping_idx)
+        @showprogress dt=60 for group in unique(grouping_idx)
             # group = first(unique(grouping_idx))
             idxs = chrom_idx[grouping_idx .== group]
             if length(idxs) == 1 # simple case - singular snp - potentially many alternate alleles
@@ -237,7 +252,7 @@ function build_vcfDB(
     end
     close(ref)
 
-    @info "Step 2: Constructing Paths for hashes"
+    @info "Step 3: Constructing Paths for hashes"
     paths = nothing
     if (reuse_saved && (motif.distance <= 4) && (hash_len <= 16))
         m2 = Motif("Cas9")
@@ -276,7 +291,7 @@ function build_vcfDB(
     end
 
     if length(ambig_guides) > 0
-        @info "Step 3: Constructing DB for ambigous gRNAs."
+        @info "Step 4: Constructing DB for ambigous gRNAs."
         order = sortperm(ambig_guides)
         ambig_guides = ambig_guides[order]
         ambig_chrom = ambig_chrom[order]

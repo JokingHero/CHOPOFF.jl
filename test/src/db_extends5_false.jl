@@ -57,7 +57,7 @@ end
         vcf_storage_path = joinpath(vcf_path, "vcfDB.bin")
         build_vcfDB(
             "samirandom", genome, vcf,
-            Motif("Cas12a"; distance = 1, ambig_max = 3), vcf_storage_path)
+            Motif("Cas12a"; distance = 1, ambig_max = 3), vcf_storage_path; variant_overlaps = true)
         
         detail_path_vcf = joinpath(vcf_path, "output.csv")
         search_vcfDB(vcf_storage_path, guides, detail_path_vcf; distance = 1, 

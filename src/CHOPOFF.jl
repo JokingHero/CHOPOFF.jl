@@ -298,6 +298,13 @@ function parse_commandline(args::Array{String})
             help = "Defines length of the hash. "
             arg_type = Int
             required = false
+        "--reuse_saved_not"
+            help = "Whether to reuse paths that were saved for Cas9 distance 4 and prefix 16."
+            action = :store_true
+        "--variant_overlaps"
+            help = "Whether to check for all potential combinations of alternate alleles for nearby variants. " *
+                "Only use with small VCF files! Preferably only run for specific variants."
+            action = :store_true
     end
 
     @add_arg_table! s["build"]["pamDB"] begin
@@ -524,7 +531,9 @@ function main(args::Array{String})
             if hash_len === nothing
                 hash_len = min(length_noPAM(motif) - (motif.distance), 16)
             end
-            build_vcfDB(args["name"], args["genome"], args["vcfDB"]["vcf"], motif, args["output"], hash_len)
+            build_vcfDB(args["name"], args["genome"], args["vcfDB"]["vcf"], motif, args["output"], hash_len;
+                reuse_saved = !args["vcfDB"]["reuse_saved_not"],
+                variant_overlaps = args["vcfDB"]["variant_overlaps"])
         elseif args["%COMMAND%"] == "fmi"
             build_fmiDB(args["genome"], args["output"])
         elseif args["%COMMAND%"] == "pamDB"
