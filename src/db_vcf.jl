@@ -86,7 +86,9 @@ function find_ots_one(
         g_rev = g_rev[overlaps]
         gp_rev = gp_rev[overlaps]
         gp_rev = Base.map(x -> seq_start + x.start - 1, gp_rev)
-        this_annot = rs_ids * ":" *seq_ref * "/" * string(alt)
+        seq_ref_annot = length(seq_ref) > 10 ? seq_ref[1:4] * "..." * string(length(seq_ref)) * "bp" : seq_ref
+        alt_annot = length(alt) > 10 ? string(alt[1:4]) * "..." * string(length(alt)) * "bp" : string(alt)
+        this_annot = rs_ids * ":" * seq_ref_annot * "/" * alt_annot
         # instead of this we need to accumulate vector of tuples
         res = vcat(
             map(x -> VarOT(x[1], x[2], x[3], x[4], x[5]), 
@@ -151,7 +153,9 @@ function find_ots_many(
                 rs_ids[i] * ":" * string(rs_ranges[i].start) *
                 string(rs_ranges[i].stop) * " and the reference file."
             end
-            push!(annot_comb, rs_ids[i] * ":" *seq_ref * "/" * string(alt))
+            seq_ref_annot = length(seq_ref) > 10 ? seq_ref[1:4] * "..." * string(length(seq_ref)) * "bp" : seq_ref
+            alt_annot = length(alt) > 10 ? string(alt[1:4]) * "..." * string(length(alt)) * "bp" : string(alt)
+            push!(annot_comb, rs_ids[i] * ":" *seq_ref_annot * "/" * alt_annot)
             if i == 1 # first snp --alt
                 seq_alt *= chrom_seq[(rst - lp + 1):(rst - 1)] * alt
                 push!(rg_comb, (length(seq_alt) - alt_len + 1):length(seq_alt))
@@ -374,7 +378,13 @@ function build_vcfDB(
         ambig_chrom = ambig_chrom[order]
         ambig_pos = ambig_pos[order]
         ambig_isplus = ambig_isplus[order]
-        ambig_annot = InlineStrings.inlinestrings(ambig_annot[order])    
+        ambig_annot = ambig_annot[order]
+
+        typeofannot = eltype(InlineStrings.inlinestrings(
+            [ambig_annot[argmax(length.(ambig_annot))]]))
+        if (typeofannot != String)
+            ambig_annot = InlineStrings.inlinestrings(ambig_annot)
+        end
         save(CHOPOFF.build_ambigPrefixHashDB(
                 ambig_guides, ambig_chrom, ambig_pos, ambig_isplus,
                 l, hash_len, ot_type, hash_type, suffix_type, ambig_annot, 
