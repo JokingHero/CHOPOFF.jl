@@ -4,14 +4,14 @@ function parse_vcf(vcf_filepath::String)
         VCF.Reader(GzipDecompressorStream(open(vcf_filepath))) : 
         VCF.Reader(open(vcf_filepath))
 
-    rs_ids = Vector{Vector{String}}()
+    rs_ids = Vector{String}()
     rs_chroms = Vector{String}()
     rs_ref = Vector{String}()
     rs_ranges = Vector{UnitRange{Int64}}()
     rs_alt = Vector{Vector{LongDNA{4}}}()
     recordNum = 1
     for record in reader
-        push!(rs_ids, isempty(record.id) ? Vector([string(recordNum)]) : VCF.id(record))
+        push!(rs_ids, isempty(record.id) ? string(recordNum) : join(VCF.id(record), ";"))
         push!(rs_chroms, VCF.chrom(record))
         push!(rs_ref, VCF.ref(record))
         push!(rs_ranges, VCF.pos(record):(VCF.pos(record) + length(VCF.ref(record)) - 1))
@@ -40,6 +40,159 @@ function parse_vcf(vcf_filepath::String)
 end
 
 
+struct VarOT{C<:Unsigned, A<:AbstractString}
+    guide::LongDNA{4}
+    chrom::C
+    pos::Int64
+    isplus::Bool
+    annot::A
+end
+
+
+function find_ots_one(
+    lp::Int,
+    chrom_seq::LongSequence{DNAAlphabet{4}}, 
+    rs_ranges::UnitRange{Int64},
+    rs_ref::String,
+    rs_ids::String,
+    rs_alt::Vector{LongSequence{DNAAlphabet{4}}},
+    ch_::Unsigned,
+    dbi::DBInfo)
+    # -----A-----
+    #      5     # SNP start
+    # --2-----8--# lp of 4bp 
+
+    ambig_vots = Vector{VarOT}()
+
+    seq_start = rs_ranges.start - lp + 1
+    seq_end = rs_ranges.stop + lp - 1
+    seq = chrom_seq[seq_start:seq_end] # lp * 2 - 1 (one base is shared between lp)
+    # annot in style of rsID:REF/ALT
+    seq_ref = string(seq[lp:lp + length(rs_ranges) - 1])
+    if seq_ref != rs_ref
+        @warn "Possible mismatch between VCF REF: " * 
+            rs_ids * ":" * string(rs_ranges.start) *
+            string(rs_ranges.stop) * " and the reference file."
+    end
+    for alt in rs_alt
+        seq_alt = copy(seq)
+        seq_alt = seq_alt[1:(lp - 1)] * alt * seq_alt[lp + length(seq_ref):end]
+        g, g_rev, gp, gp_rev = CHOPOFF.gatherofftargets(seq_alt, dbi)
+        overlaps = in.(lp, gp) .| in.(lp + length(alt) - 1, gp)
+        g = g[overlaps]
+        gp = gp[overlaps]
+        gp = Base.map(x -> seq_start + x.stop, gp)
+        overlaps = in.(lp, gp_rev) .| in.(lp + length(alt) - 1, gp_rev)
+        g_rev = g_rev[overlaps]
+        gp_rev = gp_rev[overlaps]
+        gp_rev = Base.map(x -> seq_start + x.start - 1, gp_rev)
+        this_annot = rs_ids * ":" *seq_ref * "/" * string(alt)
+        # instead of this we need to accumulate vector of tuples
+        res = vcat(
+            map(x -> VarOT(x[1], x[2], x[3], x[4], x[5]), 
+                zip(g, repeat([ch_], length(g)), gp, trues(length(g)), 
+                    repeat([this_annot], length(g)))),
+            map(x -> VarOT(x[1], x[2], x[3], x[4], x[5]), 
+                zip(g_rev, repeat([ch_], length(g_rev)), gp_rev, trues(length(g_rev)), 
+                    repeat([this_annot], length(g_rev)))))
+        append!(ambig_vots, res)
+    end
+    return ambig_vots
+end
+
+
+function find_ots_many(
+    lp::Int,
+    chrom_seq::LongSequence{DNAAlphabet{4}}, 
+    rs_ranges::Vector{UnitRange{Int64}},
+    rs_ref::Vector{String},
+    rs_ids::Vector{String},
+    rs_alt::Vector{Vector{LongSequence{DNAAlphabet{4}}}},
+    ch_::Unsigned,
+    dbi::DBInfo)
+
+    ambig_vots = Vector{VarOT}()
+    # because using too long tuples causes some serious problems, 
+    # we focus only on the ones that that have multiple alterante alleles
+    # and we figure out their products, the rest will be always constant
+    malt = length.(rs_alt) .> 1
+    if sum(malt) == 0
+        alt_combs = [collect(Iterators.flatten(rs_alt))]
+    else
+        alt_combs = Iterators.product(rs_alt[malt]...)
+        rs_alt[malt] .= [[dna""]]
+        rs_alt = collect(Iterators.flatten(rs_alt))
+        alt_combs = Base.map(alt_combs) do alt_comb
+            x = copy(rs_alt)
+            x[malt] .= alt_comb
+            return x
+        end
+        alt_combs = vec(alt_combs)
+    end
+
+    # we need to track which regions belong to which snp
+    # and which guide overlaps which snps - 
+    # we allow unique guides by sequence and annotations
+    for alt_comb in alt_combs
+        seq_alt = dna""
+        rg_comb = Vector{UnitRange{Int64}}()
+        annot_comb = Vector{String}()
+        seq_start = rs_ranges[1].start - lp + 1
+        for (i, alt) in enumerate(alt_comb)
+            rst = rs_ranges[i].start
+            rsp = rs_ranges[i].stop
+            alt_len = length(alt) == 0 ? -1 : length(alt) # deletions 
+            #----ref--ref-------
+            #  --alt--alt--
+            #  --rng--rng-- range of the alt on the alt comb
+            seq_ref = string(chrom_seq[rst:rsp])
+            if seq_ref != rs_ref[i]
+                @warn "Possible mismatch between VCF REF: " * 
+                rs_ids[i] * ":" * string(rs_ranges[i].start) *
+                string(rs_ranges[i].stop) * " and the reference file."
+            end
+            push!(annot_comb, rs_ids[i] * ":" *seq_ref * "/" * string(alt))
+            if i == 1 # first snp --alt
+                seq_alt *= chrom_seq[(rst - lp + 1):(rst - 1)] * alt
+                push!(rg_comb, (length(seq_alt) - alt_len + 1):length(seq_alt))
+            elseif i == length(alt_comb) # last snp --alt--
+                # first --alt part
+                rsp_prev = rs_ranges[i-1].stop
+                seq_alt *= chrom_seq[(rsp_prev + 1):(rst - 1)] * alt
+                push!(rg_comb, (length(seq_alt) - alt_len + 1):length(seq_alt))
+                # and -- ending part
+                seq_alt *= chrom_seq[(rsp + 1):(rsp + lp - 1)]
+            else # midle snps --alt part
+                rsp_prev = rs_ranges[i-1].stop
+                seq_alt *= chrom_seq[(rsp_prev + 1):(rst - 1)] * alt
+                push!(rg_comb, (length(seq_alt) - alt_len + 1):length(seq_alt))
+            end
+        end
+        # guides here are without PAM, but with extensions, all in GGN-EXT config
+        # guide pos here have original guide pattern locations (with PAM)
+        g, g_rev, gp, gp_rev = CHOPOFF.gatherofftargets(seq_alt, dbi)
+        for (i, gr) in enumerate(gp)
+            # overlaps for each of the SNPs
+            overlaps = BitVector(Base.map(x -> length(intersect(gr, x)) > 0, rg_comb))
+            if sum(overlaps) > 0
+                push!(
+                    ambig_vots, 
+                    VarOT(g[i], ch_, seq_start + gp[i].stop, true, join(annot_comb[overlaps], "-")))
+            end
+        end
+        for (i, gr) in enumerate(gp_rev)
+            overlaps = BitVector(Base.map(x -> length(intersect(gr, x)) > 0, rg_comb))
+            if sum(overlaps) > 0
+                push!(
+                    ambig_vots, 
+                    VarOT(g_rev[i], ch_, seq_start + gp_rev[i].stop, false, join(annot_comb[overlaps], "-")))
+            end
+        end
+    end
+    return ambig_vots
+end
+
+
 """
 ```
 build_vcfDB(
@@ -50,7 +203,7 @@ build_vcfDB(
     storage_path::String,
     hash_len::Int = min(length_noPAM(motif) - motif.distance, 16);
     reuse_saved::Bool = true,
-    variant_overlaps = false)
+    variant_overlaps = true)
 ```
 
 Builds a database of all potential off-targets that overlap any of the variants in the VCF file.
@@ -92,7 +245,7 @@ function build_vcfDB(
     storage_path::String,
     hash_len::Int = min(length_noPAM(motif) - motif.distance, 16); 
     reuse_saved = true,
-    variant_overlaps = false)
+    variant_overlaps = true)
 
     dbi = DBInfo(genomepath, name, motif; vcf_filepath = vcfpath)
     hash_type = CHOPOFF.smallestutype(parse(UInt, repeat("1", hash_len * 2); base = 2))
@@ -108,11 +261,7 @@ function build_vcfDB(
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
 
-    ambig_guides = Vector{LongDNA{4}}()
-    ambig_chrom = Vector{dbi.gi.chrom_type}()
-    ambig_pos = Vector{dbi.gi.pos_type}()
-    ambig_isplus = Vector{Bool}()
-    ambig_annot = Vector{String}() # change to InlineStrings
+    ambig_vots = Vector{VarOT}()
 
     for ch in unique(rs_chroms)
         ch_numeric = findfirst(isequal(ch), dbi.gi.chrom)
@@ -121,136 +270,64 @@ function build_vcfDB(
             continue
         end
         ch_ = convert(dbi.gi.chrom_type, ch_numeric)
-        @info "Working on " * string(ch) 
+        @info "Working on " * string(ch)
 
         chrom_seq = CHOPOFF.getchromseq(dbi.gi.is_fa, reader[ch])
         chrom_idx = findall(isequal(ch), rs_chroms)
-
+        
         # group snps by proximity - as we have to enumerate all permutations of rs_alt for them
         grouping = 1
-        grouping_idx = collect(1:length(chrom_idx))
+        grouping_idx = collect(1:length(rs_ranges[chrom_idx]))
+        grouping_idx_ones = BitVector(ones(length(rs_ranges[chrom_idx])))
         if variant_overlaps # we need to correct grouping, otherwise each variant is in its own group
             for i in 1:(length(chrom_idx) - 1)
                 x = (rs_ranges[chrom_idx[i]].start - l):(rs_ranges[chrom_idx[i]].stop + l)
                 if length(intersect(x, rs_ranges[chrom_idx[i+1]])) > 0 # rs overlaps
                     grouping_idx[i + 1] = grouping
+                    grouping_idx_ones[i] = false
+                    grouping_idx_ones[i + 1] = false
                 else
                     grouping += 1
                     grouping_idx[i + 1] = grouping
                 end
             end
         end
+        grouping_idx = grouping_idx[.!grouping_idx_ones]
 
-        # for each group we analyze these snps together
-        @showprogress dt=60 for group in unique(grouping_idx)
-            # group = first(unique(grouping_idx))
-            idxs = chrom_idx[grouping_idx .== group]
-            if length(idxs) == 1 # simple case - singular snp - potentially many alternate alleles
-                idxs = idxs[1]
-                # -----A-----
-                #      5     # SNP start
-                # --2-----8--# lp of 4bp 
-                seq_start = rs_ranges[idxs].start - lp + 1
-                seq_end = rs_ranges[idxs].stop + lp - 1
-                seq = chrom_seq[seq_start:seq_end] # lp * 2 - 1 (one base is shared between lp)
-                # annot in style of rsID:REF/ALT
-                seq_ref = string(seq[lp:lp + length(rs_ranges[idxs]) - 1])
-                if seq_ref != rs_ref[idxs]
-                    @warn "Possible mismatch between VCF REF column:" * 
-                        rs_ids[idxs] * ";" * ch * ":" * string(rs_ranges[idxs].start) *
-                        string(rs_ranges[idxs].stop) * " and the reference file."
-                end
-                for alt in rs_alt[idxs]
-                    seq_alt = copy(seq)
-                    seq_alt = seq_alt[1:(lp - 1)] * alt * seq_alt[lp + length(seq_ref):end]
-                    g, g_rev, gp, gp_rev = CHOPOFF.gatherofftargets(seq_alt, dbi)
-                    overlaps = in.(lp, gp) .| in.(lp + length(alt) - 1, gp)
-                    g = g[overlaps]
-                    gp = gp[overlaps]
-                    gp = Base.map(x -> seq_start + x.stop, gp)
-                    overlaps = in.(lp, gp_rev) .| in.(lp + length(alt) - 1, gp_rev)
-                    g_rev = g_rev[overlaps]
-                    gp_rev = gp_rev[overlaps]
-                    gp_rev = Base.map(x -> seq_start + x.start - 1, gp_rev)
-                    this_annot = join(rs_ids[idxs], ";") * ":" *seq_ref * "/" * string(alt)
-                    append!(ambig_guides, g)
-                    append!(ambig_guides, g_rev)
-                    append!(ambig_chrom, repeat([ch_], length(g) + length(g_rev)))
-                    append!(ambig_pos, gp)
-                    append!(ambig_pos, gp_rev)
-                    append!(ambig_isplus, trues(length(g)))
-                    append!(ambig_isplus, falses(length(g_rev)))
-                    append!(ambig_annot, repeat([this_annot], length(g) + length(g_rev)))
-                end
-            else # complex case multiple overlapping snps, can have multiple alternate alleles
-                alt_combs = Iterators.product(rs_alt[idxs]...)
-                # we need to track which regions belong to which snp
-                # and which guide overlaps which snps - 
-                # we allow unique guides by sequence and annotations
-                for alt_comb in alt_combs
-                    seq_alt = dna""
-                    rg_comb = Vector{UnitRange{Int64}}()
-                    annot_comb = Vector{String}()
-                    seq_start = rs_ranges[idxs][1].start - lp + 1
-                    for (i, alt) in enumerate(alt_comb)
-                        rst = rs_ranges[idxs[i]].start
-                        rsp = rs_ranges[idxs[i]].stop
-                        alt_len = length(alt) == 0 ? -1 : length(alt) # deletions 
-                        #----ref--ref-------
-                        #  --alt--alt--
-                        #  --rng--rng-- range of the alt on the alt comb
-                        seq_ref = string(chrom_seq[rst:rsp])
-                        if seq_ref != rs_ref[idxs[i]]
-                            @warn "Possible mismatch between VCF REF column:" * 
-                            rs_ids[idxs[i]] * ";" * ch * ":" * string(rs_ranges[idxs[i]].start) *
-                            string(rs_ranges[idxs[i]].stop) * " and the reference file."
-                        end
-                        push!(annot_comb, join(rs_ids[idxs][i], ";") * ":" *seq_ref * "/" * string(alt))
-                        if i == 1 # first snp --alt
-                            seq_alt *= chrom_seq[(rst - lp + 1):(rst - 1)] * alt
-                            push!(rg_comb, (length(seq_alt) - alt_len + 1):length(seq_alt))
-                        elseif i == length(alt_comb) # last snp --alt--
-                            # first --alt part
-                            rsp_prev = rs_ranges[idxs[i-1]].stop
-                            seq_alt *= chrom_seq[(rsp_prev + 1):(rst - 1)] * alt
-                            push!(rg_comb, (length(seq_alt) - alt_len + 1):length(seq_alt))
-                            # and -- ending part
-                            seq_alt *= chrom_seq[(rsp + 1):(rsp + lp - 1)]
-                        else # midle snps --alt part
-                            rsp_prev = rs_ranges[idxs[i-1]].stop
-                            seq_alt *= chrom_seq[(rsp_prev + 1):(rst - 1)] * alt
-                            push!(rg_comb, (length(seq_alt) - alt_len + 1):length(seq_alt))
-                        end
-                    end
-                    # guides here are without PAM, but with extensions, all in GGN-EXT config
-                    # guide pos here have original guide pattern locations (with PAM)
-                    g, g_rev, gp, gp_rev = CHOPOFF.gatherofftargets(seq_alt, dbi)
-                    for (i, gr) in enumerate(gp)
-                        # overlaps for each of the SNPs
-                        overlaps = BitVector(Base.map(x -> length(intersect(gr, x)) > 0, rg_comb))
-                        if sum(overlaps) > 0
-                            push!(ambig_guides, g[i])
-                            push!(ambig_chrom, ch_)
-                            push!(ambig_pos, seq_start + gp[i].stop)
-                            push!(ambig_isplus, true)
-                            push!(ambig_annot, join(annot_comb[overlaps], "-"))
-                        end
-                    end
-                    for (i, gr) in enumerate(gp_rev)
-                        overlaps = BitVector(Base.map(x -> length(intersect(gr, x)) > 0, rg_comb))
-                        if sum(overlaps) > 0
-                            push!(ambig_guides, g_rev[i])
-                            push!(ambig_chrom, ch_)
-                            push!(ambig_pos, seq_start + gp_rev[i].start - 1)
-                            push!(ambig_isplus, false)
-                            push!(ambig_annot, join(annot_comb[overlaps], "-"))
-                        end
-                    end
-                end
-            end
+
+        if (sum(grouping_idx_ones) > 0) 
+            chrom_idx_ones = chrom_idx[grouping_idx_ones]
+            append!(ambig_vots,
+            ThreadsX.mapreduce(x -> find_ots_one(lp, chrom_seq, x[1], x[2], x[3], x[4], ch_, dbi), vcat, 
+                zip(rs_ranges[chrom_idx_ones], 
+                    rs_ref[chrom_idx_ones], 
+                    rs_ids[chrom_idx_ones], 
+                    rs_alt[chrom_idx_ones]); 
+                init = Vector{VarOT}()))
+        end
+        
+        if (length(grouping_idx) > 0)
+            chrom_idx_not_ones = chrom_idx[.!grouping_idx_ones]
+            append!(ambig_vots,
+            ThreadsX.mapreduce(vcat, unique(grouping_idx); init = Vector{VarOT}()) do x
+                first = searchsortedfirst(grouping_idx, x)
+                last = searchsortedlast(grouping_idx, x)
+                first_last = chrom_idx_not_ones[first:last]
+                return find_ots_many(
+                    lp, chrom_seq, 
+                    rs_ranges[first_last], 
+                    rs_ref[first_last], 
+                    rs_ids[first_last], 
+                    rs_alt[first_last], ch_, dbi)
+            end)
         end
     end
     close(ref)
+    ambig_guides = Base.map(x -> x.guide, ambig_vots)
+    ambig_chrom = Base.map(x -> x.chrom, ambig_vots)
+    ambig_pos = Base.map(x -> convert(dbi.gi.pos_type, x.pos), ambig_vots)
+    ambig_isplus = Base.map(x -> x.isplus, ambig_vots)
+    ambig_annot = Base.map(x -> x.annot, ambig_vots)
 
     @info "Step 3: Constructing Paths for hashes"
     paths = nothing
