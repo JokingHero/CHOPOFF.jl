@@ -200,9 +200,12 @@ end
 
 """
 ```
-gatherofftargets!(
+function gatherofftargets!(
     output::T,
-    dbi::DBInfo) where {T<:Union{Vector{String}, Vector{UInt64}, Vector{UInt128}}}
+    dbi::DBInfo;
+    remove_pam::Bool = true,
+    normalize::Bool = true,
+    restrict_to_len::Union{Nothing, Int64} = nothing) where {T<:Union{Vector{String}, Vector{UInt64}, Vector{UInt128}}}
 ```
 
 Gathers all off-targets that conform to the given `dbi` Motif.
@@ -210,6 +213,11 @@ Gathers all off-targets that conform to the given `dbi` Motif.
 This function appends to the `output` during the run, however it will also return all ambiguous 
 guides in return object. We can use UInt64 and UInt128 to compress space that the gRNAs use. When using 
 large genomes or non-specific PAMs you might run out of memory when using this function.
+
+remove_pam - whether PAM sequence should be removed
+normalize - whether all guides should be flipped into PAMseqEXT e.g. GGn-20N-3bp
+restrict_to_len - will restrict the guides to be of specific lengths, smaller than the initial motif
+    this includes/excludes PAM based on remove_pam as remove_pam is applied before the length restriction
 
 # Examples
 ```julia
@@ -235,7 +243,10 @@ guides2 = String.(LongDNA{4}.(guides2, guide_with_extension_len))
 """
 function gatherofftargets!(
     output::T,
-    dbi::DBInfo) where {T<:Union{Vector{String}, Vector{UInt64}, Vector{UInt128}}}
+    dbi::DBInfo;
+    remove_pam::Bool = true,
+    normalize::Bool = true,
+    restrict_to_len::Union{Nothing, Int64} = nothing) where {T<:Union{Vector{String}, Vector{UInt64}, Vector{UInt128}}}
 
     ref = open(dbi.gi.filepath, "r")
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)

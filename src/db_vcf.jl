@@ -302,28 +302,28 @@ function build_vcfDB(
         if (sum(grouping_idx_ones) > 0) 
             chrom_idx_ones = chrom_idx[grouping_idx_ones]
             append!(ambig_vots,
-            ThreadsX.mapreduce(x -> find_ots_one(lp, chrom_seq, x[1], x[2], x[3], x[4], ch_, dbi), vcat, 
-                zip(rs_ranges[chrom_idx_ones], 
-                    rs_ref[chrom_idx_ones], 
-                    rs_ids[chrom_idx_ones], 
-                    rs_alt[chrom_idx_ones]); 
-                init = Vector{VarOT}()))
+                ThreadsX.mapreduce(x -> find_ots_one(lp, chrom_seq, x[1], x[2], x[3], x[4], ch_, dbi), vcat, 
+                    zip(rs_ranges[chrom_idx_ones], 
+                        rs_ref[chrom_idx_ones], 
+                        rs_ids[chrom_idx_ones], 
+                        rs_alt[chrom_idx_ones]); 
+                    init = Vector{VarOT}()))
         end
         
         if (length(grouping_idx) > 0)
             chrom_idx_not_ones = chrom_idx[.!grouping_idx_ones]
             append!(ambig_vots,
-            ThreadsX.mapreduce(vcat, unique(grouping_idx); init = Vector{VarOT}()) do x
-                first = searchsortedfirst(grouping_idx, x)
-                last = searchsortedlast(grouping_idx, x)
-                first_last = chrom_idx_not_ones[first:last]
-                return find_ots_many(
-                    lp, chrom_seq, 
-                    rs_ranges[first_last], 
-                    rs_ref[first_last], 
-                    rs_ids[first_last], 
-                    rs_alt[first_last], ch_, dbi)
-            end)
+                ThreadsX.mapreduce(vcat, unique(grouping_idx); init = Vector{VarOT}()) do x
+                    first = searchsortedfirst(grouping_idx, x)
+                    last = searchsortedlast(grouping_idx, x)
+                    first_last = chrom_idx_not_ones[first:last]
+                    return find_ots_many(
+                        lp, chrom_seq, 
+                        rs_ranges[first_last], 
+                        rs_ref[first_last], 
+                        rs_ids[first_last], 
+                        rs_alt[first_last], ch_, dbi)
+                end)
         end
     end
     close(ref)

@@ -224,7 +224,7 @@ function build_prefixHashDB(
     suffixes = convert.(suffix_type, mask .& guides)
     guides = nothing
 
-    order = sortperm(prefixes)
+    order = sortperm(collect(zip(prefixes, suffixes)))
     prefixes = prefixes[order]
     suffixes = suffixes[order]
     chrom = chrom[order]
@@ -385,7 +385,7 @@ function search_prefixHashDB(
     paths = db.mpt.paths[db.mpt.paths_distances .<= distance, :]
     mkpath(dirname(output_file))
 
-    Base.map(guides_) do g # maybe a function would be faster than lambda here?
+    ThreadsX.map(guides_) do g
         guides_formated = CHOPOFF.guide_to_template_format(g; alphabet = CHOPOFF.ALPHABET_TWOBIT)
         sa = guides_formated[paths]
         sa = Base.map(x -> CHOPOFF.asUInt(eltype(db.prefix), x), eachrow(sa))
@@ -407,7 +407,16 @@ function search_prefixHashDB(
             return
         end
 
-        @inbounds for i in sa # each sa is range of indices of prefixes where all ots are the same
+        if length(sa) != 0
+            sa = Base.mapreduce(vcat, sa) do x # split sa based on suffixes
+                finds = findall(diff(db.suffix[x]) .!= 0)
+                stops = vcat(finds, length(x)) .+ x.start .- 1
+                starts = vcat(0, finds) .+ x.start
+                Base.map(x -> UnitRange(x[1], x[2]), zip(starts, stops))
+            end
+        end
+
+        @inbounds for i in sa # each sa is range of indices of prefixes where all prefixes are the same
             ot = LongDNA{4}((convert(ot_type, db.prefix[i.start]) << (2 * s_len)) | 
                 convert(ot_type, db.suffix[i.start]), ot_len)
             aln = CHOPOFF.align(g, ot, distance, iscompatible)

@@ -342,6 +342,39 @@ end
         @test nrow(ldbes) >= 2
     end
 
+    #=
+    @testset "linearDB vs prefixHashDB on distance 3 and semirandom1"
+        motif = Motif("Cas9"; distance = 1)
+        # take all possible guides on our semirandom genome and query them
+        dbi = DBInfo(genome, "Cas9_semirandom_noVCF", motif)
+        # finally gather all off-targets
+        guides = Vector{String}()
+        # guides are GGN...20bp+ext
+        ambig = gatherofftargets!(guides, dbi; remove_pam = true, normalize = true)
+        guides = LongDNA{4}.(guides)
+        guides = Base.map(x -> x[1:20], guides)
+        reverse!.(guides)
+
+        # lets randomize here some 
+        phdb_path = joinpath(tdir, "prefixHashDBes")
+        mkpath(phdb_path)
+        build_prefixHashDB("samirandom", genome, setdist(Motif("Cas9"), 3), phdb_path)
+        detail_path = joinpath(ldb_path, "detail2.csv")
+        detail_path_es = joinpath(phdb_path, "detail_es.csv")
+        for g in guides
+            @info g
+            search_linearDB(ldb_path, [g], detail_path; distance = 3)
+            ldb = DataFrame(CSV.File(detail_path))
+            search_prefixHashDB(phdb_path, [g], detail_path_es; 
+                distance = 3, 
+                early_stopping = [100000, 100000, 100000, 100000])
+            pdbes = DataFrame(CSV.File(detail_path_es))
+            failed = antijoin(ldb, pdbes, on = [:guide, :distance, :chromosome, :start, :strand])
+            @test nrow(failed) == 0
+        end
+    end
+    =#
+
 
     @testset "linearDB vs prefixHashDB early stopped" begin
         # remember that this early stopping can find overlaps
