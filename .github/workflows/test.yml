@@ -1,8 +1,11 @@
 name: Tests
 
 on:
+  push:
+    branches:
+      - master # update to match your development branch (master, main, dev, trunk, ...)
+    tags: '*'
   pull_request:
-    branches: [ master ]
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:

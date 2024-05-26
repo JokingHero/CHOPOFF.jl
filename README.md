@@ -1,4 +1,4 @@
-[![Tests & Release](https://github.com/JokingHero/CHOPOFF.jl/actions/workflows/build_standalone.yml/badge.svg?branch=master)](https://github.com/JokingHero/CHOPOFF.jl/releases/tag/latest) 
+![Tests](https://github.com/JokingHero/CHOPOFF.jl/actions/workflows/test.yml/badge.svg?branch=master) 
 ![Coverage is High](./coverage/coverage_fraction.svg) 
 [![](https://img.shields.io/badge/docs-latest-blue.svg)](https://jokinghero.github.io/CHOPOFF.jl/) 
 
