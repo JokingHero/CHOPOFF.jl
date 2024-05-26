@@ -1,2 +1,4 @@
 {"rule":"ENGLISH_WORD_REPEAT_RULE","sentence":"^\\QLogo Logo\\E$"}
 {"rule":"MORFOLOGIK_RULE_EN_US","sentence":"^\\QCHOPOFF.jl\\E$"}
+{"rule":"ENGLISH_WORD_REPEAT_RULE","sentence":"^\\QLogo Logo\nSensitive and fast CRISPR off-target detection\\E$"}
+{"rule":"COMMA_PARENTHESIS_WHITESPACE","sentence":"^\\QIf you know how to code in Julia, you might make use of the whole framework using CHOPOFF as a package (see docs ).\\E$"}

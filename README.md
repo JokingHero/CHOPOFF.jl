@@ -58,6 +58,10 @@ EXAMPLE_GUIDES="./test/sample_data/guides.txt"
 CHOPOFF search --database phDB_16_3/ --guides "$EXAMPLE_GUIDES" --output out_dir/phDB_16_2.csv --distance 2 prefixHashDB
 ```
 
+## R integration with crisprVerse
+
+Visit [crisprCHOPOFF](https://github.com/JokingHero/crisprCHOPOFF) - R package that allows you to use CHOPOFF with crisprVerse.  
+
 
 ## Support
 
@@ -70,22 +74,9 @@ You can buy me a [coffee](https://www.buymeacoffee.com/kornellabun) to show some
 
 Copyright © 2024 Kornel Labun
 
-License for non-commercial applications is aGPL-3.0. 
-For commercial applications you should acquire permission or licensing contract.
 
-https://tldrlegal.com/license/gnu-affero-general-public-license-v3-(agpl-3.0)
+The software is provided under the following terms:
 
-This program is free software for non-commercial applications: 
-you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+1. Academic and Non-Commercial Use License: The software is licensed under the aGPL-3.0 License, attached here inside Non_Commercial_LICENSE file. If not, see <https://www.gnu.org/licenses/>. This license applies only to academic institutions and for non-commercial use. Users wishing to use the software for commercial purposes must obtain a separate license.
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program inside LICENSE file. 
-If not, see <https://www.gnu.org/licenses/>.
+2. Commercial Use License: Parties interested in using the software for commercial purposes are invited to contact Vestlandets Innovasjonsselskap AS (hei@visinnovasjon.no) for a commercial use license.
