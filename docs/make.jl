@@ -29,10 +29,10 @@ makedocs(
         ])
 
 # uncomment when repo becomes public
-#deploydocs(
-#    repo = "github.com/JokingHero/CHOPOFF.jl.git",
-#    target = "build",
-#    branch = "gh-pages",
-#    versions = nothing, # currently make things simple
-#    push_preview = true,
-#)
+deploydocs(
+    repo = "github.com/JokingHero/CHOPOFF.jl.git",
+    target = "build",
+    branch = "gh-pages",
+    versions = nothing, # currently make things simple
+    push_preview = true,
+)
