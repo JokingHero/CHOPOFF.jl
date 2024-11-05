@@ -52,7 +52,11 @@ julia> hamming(dna"ACGC", dna"AWRC")
 ```
 """
 function hamming(s1::T, s2::K, ismatch = iscompatible) where {T <: BioSequence, K <: BioSequence}
-    return count(!ismatch, s1, s2)
+    n = 0
+    for (i, j) in zip(s1, s2)
+        n += !ismatch(i, j)::Bool
+    end
+    return n
 end
 
 
