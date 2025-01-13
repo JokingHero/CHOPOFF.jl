@@ -1,6 +1,7 @@
 ![Tests](https://github.com/JokingHero/CHOPOFF.jl/actions/workflows/test.yml/badge.svg?branch=master) 
 ![Coverage is High](./coverage/coverage_fraction.svg) 
 [![](https://img.shields.io/badge/docs-latest-blue.svg)](https://jokinghero.github.io/CHOPOFF.jl/) 
+[![bioRxiv](https://img.shields.io/badge/bioRxiv-2025.01.06.603201v1-b31b1b.svg)](https://www.biorxiv.org/content/10.1101/2025.01.06.603201v1)
 
 # 
 
