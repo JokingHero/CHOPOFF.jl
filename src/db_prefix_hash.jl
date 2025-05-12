@@ -236,8 +236,8 @@ function build_prefixHashDB(
     paths = nothing
     if (reuse_saved && (motif.distance <= 4) && (hash_len <= 16))
         m2 = Motif("Cas9")
-        if (motif.fwd == m2.fwd && 
-            motif.rve == m2.rve &&
+        if (length_noPAM(motif) == length_noPAM(m2) && 
+            motif.extends5 == m2.extends5 && 
             motif.pam_loci_fwd == m2.pam_loci_fwd && 
             motif.pam_loci_rve == m2.pam_loci_rve)
 

@@ -108,7 +108,10 @@ function parse_commandline(args::Array{String})
             action = :command 
         "summarize", "U"
             help = "Summarize off-targets into table of counts by distance for each gRNA."
-            action = :command   
+            action = :command  
+        "list", "L"
+            help = "List all predefined motifs for `--motif` option."
+            action = :command 
     end
 
     @add_arg_table! s["build"] begin
@@ -150,7 +153,7 @@ function parse_commandline(args::Array{String})
             arg_type = String
             required = true
         "--genome"
-            help = "Path to the genome, either .fa or .2bit"
+            help = "Path to the genome, either .fa (also have .fai index) or .2bit"
             arg_type = String
             required = true
         "--output", "-o"
@@ -631,6 +634,12 @@ function main(args::Array{String})
         res = DataFrame(CSV.File(args["detail_file"]))
         res = summarize_offtargets(res)
         CSV.write(args["output"], res)
+
+    elseif args["%COMMAND%"] == "list"
+        for (motif_name, motif) in motif_db
+            display(motif)
+            print("\n")
+        end
     end
 end
 

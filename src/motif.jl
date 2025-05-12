@@ -60,13 +60,13 @@ Alignments will be performed from opposite to the extension direction (which is 
 ```jldoctest
 julia> Motif("Cas9")
 Alias: Cas9
-Maximum search distance: 3
+Maximum search distance: 4
 Number of allowed ambigous bp: 0
 20N-NGG
 
-julia> Motif("test name", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 3, true, 5)
+julia> Motif("test name", "NNNNNNNNNNNNNNNNNNNNXXX", "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 4, true, 5)
 Alias: test name
-Maximum search distance: 3
+Maximum search distance: 4
 Number of allowed ambigous bp: 5
 20N-NGG
 ```
@@ -125,7 +125,7 @@ end
 function Motif(alias::String,
     fwdmotif::String, fwdpam::String,
     forward_strand::Bool = true, reverse_strand::Bool = true,
-    distance::Int = 3, extends5::Bool = true, ambig_max::Int = 0)
+    distance::Int = 4, extends5::Bool = true, ambig_max::Int = 0)
     if length(fwdmotif) != length(fwdpam)
         throw("fwd_motif and fwd_pam have to have the same length!")
     end
@@ -197,7 +197,7 @@ Set the ambiguity (how many ambiguous bases are allowed, not counting PAM, not c
 ```jldoctest
 julia> setambig(Motif("Cas9"), 15)
 Alias: Cas9
-Maximum search distance: 3
+Maximum search distance: 4
 Number of allowed ambigous bp: 15
 20N-NGG
 ```
@@ -217,9 +217,9 @@ that are allowed during alignment.
 
 # Examples
 ```jldoctest
-julia> setdist(Motif("Cas9"), 15)
+julia> setdist(Motif("Cas9"), 2)
 Alias: Cas9
-Maximum search distance: 15
+Maximum search distance: 2
 Number of allowed ambigous bp: 0
 20N-NGG
 ```
@@ -237,17 +237,38 @@ const motif_db = Dict(
                     "XXXG", true, true, 2, true, 0),
     "Cas9" => Motif("Cas9",
                     "NNNNNNNNNNNNNNNNNNNNXXX",
-                    "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 3, true, 0),
+                    "XXXXXXXXXXXXXXXXXXXXNGG", true, true, 4, true, 0),
+    "Cas9_NNN" => Motif("Cas9_NNN",
+                    "NNNNNNNNNNNNNNNNNNNNXXX",
+                    "XXXXXXXXXXXXXXXXXXXXNNN", true, true, 4, true, 0),
+    "Cas9_NGA" => Motif("Cas9_NGA",
+                    "NNNNNNNNNNNNNNNNNNNNXXX",
+                    "XXXXXXXXXXXXXXXXXXXXNGA", true, true, 4, true, 0),
+    "Cas9_NAG" => Motif("Cas9_NAG",
+                    "NNNNNNNNNNNNNNNNNNNNXXX",
+                    "XXXXXXXXXXXXXXXXXXXXNAG", true, true, 4, true, 0),
+    "Cas9_NNGT" => Motif("Cas9_NNGT",
+                    "NNNNNNNNNNNNNNNNNNNNXXXX",
+                    "XXXXXXXXXXXXXXXXXXXXNNGT", true, true, 4, true, 0),
+    "Cas9_NNAGAA" => Motif("Cas9_NNAGAA",
+                    "NNNNNNNNNNNNNNNNNNNNXXXXXX",
+                    "XXXXXXXXXXXXXXXXXXXXNNAGAA", true, true, 4, true, 0),
+    "Cas9_NGGNG" => Motif("Cas9_NGGNG",
+                    "NNNNNNNNNNNNNNNNNNNNXXXXX",
+                    "XXXXXXXXXXXXXXXXXXXXNGGNG", true, true, 4, true, 0),
     "Cas12a" => Motif("Cas12a",
                     "XXXXNNNNNNNNNNNNNNNNNNNNN",
-                    "TTTVXXXXXXXXXXXXXXXXXXXXX", true, true, 3, false, 0),
+                    "TTTVXXXXXXXXXXXXXXXXXXXXX", true, true, 4, false, 0),
     "CasX" => Motif("CasX",
                     "XXXXNNNNNNNNNNNNNNNNNNNN",
-                    "TTCNXXXXXXXXXXXXXXXXXXXX", true, true, 3, false, 0)
+                    "TTCNXXXXXXXXXXXXXXXXXXXX", true, true, 4, false, 0),
+    "hfCas12Max" => Motif("hfCas12Max",
+                    "XXXNNNNNNNNNNNNNNNNNNNNNNN",
+                    "TNNXXXXXXXXXXXXXXXXXXXXXXX", true, true, 4, false, 0)
     )
 
 
-function Motif(alias::String; distance::Int = 3, ambig_max::Int = 0)
+function Motif(alias::String; distance::Int = 4, ambig_max::Int = 0)
     motif = motif_db[alias]
     return setambig(setdist(motif, distance), ambig_max)
 end

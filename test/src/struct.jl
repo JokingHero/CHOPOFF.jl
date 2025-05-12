@@ -27,7 +27,7 @@ using BioSequences
 
         @test isnothing(Base.show(cas9))
         @test isnothing(Base.print(cas9))
-        @test display_motif(cas9) == "Alias: Cas9\nMaximum search distance: 3\nNumber of allowed ambigous bp: 0\n20N-NGG"
+        @test display_motif(cas9) == "Alias: Cas9\nMaximum search distance: 4\nNumber of allowed ambigous bp: 0\n20N-NGG"
     end
 
 
