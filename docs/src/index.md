@@ -85,24 +85,17 @@ You can buy me a [coffee](https://www.buymeacoffee.com/kornellabun) to show some
 
 ## LICENSE
 
-Copyright © 2022 Kornel Labun
+Copyright © 2025 Kornel Labun
 
-License for non-commercial applications is aGPL-3.0. 
-For commercial applications you should acquire permission or licensing contract.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-<https://tldrlegal.com/license/gnu-affero-general-public-license-v3-(agpl-3.0)>
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This program is free software for non-commercial applications: 
-you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program inside LICENSE file. 
-If not, see <https://www.gnu.org/licenses/>.

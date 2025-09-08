@@ -75,7 +75,7 @@ You can buy me a [coffee](https://www.buymeacoffee.com/kornellabun) to show some
 
 ## License  
 
-Copyright © 2024 Kornel Labun
+Copyright © 2025 Kornel Labun
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
