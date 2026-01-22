@@ -59,6 +59,7 @@ include("db_fmi_helpers.jl")
 include("db_fmi.jl")
 include("db_fmi_seed.jl")
 include("db_fmi_bff.jl")
+include("sassy.jl")
 
 export Motif, length_noPAM, length, setambig, setdist # motif
 export save, load # persistence
@@ -79,6 +80,7 @@ export build_fmiDB, search_fmiDB
 export build_pamDB, search_fmiDB_seed
 export search_fmiDB_hash
 export build_binaryFuseFilterDB, search_binaryFuseFilterDB
+export search_sassy
 
 export build_dictDB, search_dictDB # db_sketch
 export build_prefixHashDB, search_prefixHashDB
@@ -342,6 +344,9 @@ function parse_commandline(args::Array{String})
         "bffDB"
             action = :command
             help = "Search FM-index using Binary Fuse Filter method."
+        "sassy"
+            action = :command
+            help = "Search directly using Sassy (Myers bit-parallel) algorithm."
         "--distance"
             help = "Maximum edit distance to analyze. Must be less or equal to the distance that was used when building db."
             arg_type = Int
@@ -419,6 +424,18 @@ function parse_commandline(args::Array{String})
             help = "Path to the folder with FM-index."
             arg_type = String
             required = true
+    end
+
+    @add_arg_table! s["search"]["sassy"] begin
+        "--genome"
+            help = "Path to the genome (fasta or 2bit)."
+            arg_type = String
+            required = true
+        "--early_stopping"
+            help = "Input a vector of length of distance + 1 with early stopping conditions. If not supplied we will look up to 1e6 OTs for each distance."
+            arg_type = Int
+            nargs = '*'
+            required = false
     end
 
     @add_arg_table! s["estimate"] begin
@@ -605,6 +622,28 @@ function main(args::Array{String})
         elseif args["%COMMAND%"] == "bffDB"
             search_binaryFuseFilterDB(args["database"], args["bffDB"]["fmiDB"], args["bffDB"]["genome"], guides, args["output"];
                 distance = args["distance"])
+        elseif args["%COMMAND%"] == "sassy"
+            if args["motif"] != ""
+                motif = Motif(args["motif"])
+                motif = setdist(motif, args["distance"])
+            else
+                 # Sassy needs full motif info for PAM
+                 motif = Motif(
+                    args["name"], args["fwd_motif"],
+                    args["fwd_pam"], !args["not_forward"], !args["not_reverse"],
+                    args["distance"], !args["extend3"], args["ambig_max"])
+            end
+
+            # Handle early_stopping
+            if length(args["sassy"]["early_stopping"]) != 0
+                search_sassy(guides, args["sassy"]["genome"], motif, args["output"];
+                    distance = args["distance"],
+                    early_stopping = args["sassy"]["early_stopping"])
+            else
+                search_sassy(guides, args["sassy"]["genome"], motif, args["output"];
+                    distance = args["distance"],
+                    early_stopping = repeat([1000000], args["distance"] + 1))
+            end
         else
             throw("Unsupported database type.")
         end

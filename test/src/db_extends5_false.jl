@@ -239,7 +239,7 @@ end
         mkpath(phdb_path)
         build_prefixHashDB("samirandom", genome, Motif("Cas12a"; distance = 2), phdb_path)
         detail_path = joinpath(phdb_path, "detail.csv")
-        
+
         for d in 1:2
             search_prefixHashDB(phdb_path, guides, detail_path; distance = d, early_stopping = repeat([300], d + 1))
             phdb = DataFrame(CSV.File(detail_path))
@@ -251,10 +251,36 @@ end
         end
 
         detail_path_es = joinpath(phdb_path, "detail_es.csv")
-        search_prefixHashDB(phdb_path, guides, 
+        search_prefixHashDB(phdb_path, guides,
             detail_path_es; distance = 2, early_stopping = repeat([0], 3))
         pdbes = DataFrame(CSV.File(detail_path_es))
         pdbes_res = summarize_offtargets(pdbes)
         @test nrow(pdbes) == 3 # I checked these results
+    end
+
+
+    @testset "linearDB vs sassy" begin
+        # Test sassy algorithm matches linearDB for Cas12a (extends5=false)
+        motif = Motif("Cas12a")
+        sassy_ldb_path = joinpath(tdir, "sassy_linearDB")
+        mkpath(sassy_ldb_path)
+        build_linearDB("samirandom_sassy", genome, motif, sassy_ldb_path, 7)
+        sassy_detail_path = joinpath(sassy_ldb_path, "detail.csv")
+
+        for d in 1:3
+            sassy_path = joinpath(tdir, "sassy_d$d.csv")
+            search_sassy(guides, genome, motif, sassy_path; distance = d)
+            sassy_df = DataFrame(CSV.File(sassy_path))
+
+            search_linearDB(sassy_ldb_path, guides, sassy_detail_path; distance = d)
+            ldb_df = DataFrame(CSV.File(sassy_detail_path))
+
+            # Compare detail results directly by all columns
+            failed = antijoin(ldb_df, sassy_df, on = [:guide, :distance, :chromosome, :start, :strand])
+            @test nrow(failed) == 0
+
+            failed2 = antijoin(sassy_df, ldb_df, on = [:guide, :distance, :chromosome, :start, :strand])
+            @test nrow(failed2) == 0
+        end
     end
 end

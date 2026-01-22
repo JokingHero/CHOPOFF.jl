@@ -386,17 +386,25 @@ end
         build_prefixHashDB("samirandom", genome, setdist(Motif("Cas9"), 3), phdb_path)
         detail_path_es = joinpath(phdb_path, "detail_es.csv")
 
-        search_prefixHashDB(phdb_path, guides, detail_path_es; distance = 3, 
+        search_prefixHashDB(phdb_path, guides, detail_path_es; distance = 3,
             early_stopping = [300, 300, 300, 300])
         pdbes = DataFrame(CSV.File(detail_path_es))
         failed = antijoin(ldb, pdbes, on = [:guide, :distance, :chromosome, :start, :strand])
         @test nrow(failed) == 0
-        
+
         # find all offtargets with es with overlap filtering - we dont support ambigous guides anymore
-        search_prefixHashDB(phdb_path, guides, 
+        search_prefixHashDB(phdb_path, guides,
             detail_path_es; distance = 0, early_stopping = [0])
         pdbes = DataFrame(CSV.File(detail_path_es))
         pdbes_res = summarize_offtargets(pdbes)
         @test nrow(pdbes) == 20
+    end
+
+
+    @testset "linearDB vs sassy" begin
+        # Test sassy algorithm matches linearDB for Cas9 (extends5=true)
+        # Note: sassy does not currently support extends5=true (Cas9)
+        # This test is marked as TODO pending implementation
+        @test_skip "Sassy support for Cas9 (extends5=true) pending implementation"
     end
 end

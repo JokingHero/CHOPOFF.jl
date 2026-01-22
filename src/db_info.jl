@@ -204,3 +204,7 @@ function insert_offtarget!(x::Vector{Offtarget}, offt::Offtarget, range::Int)
     insert!(x, idx, offt)
     return nothing, offt.dist
 end
+
+function insert_offtarget_sassy!(x::Vector{Offtarget}, offt::Offtarget, range::Int)
+    insert_offtarget!(x, offt, range)
+end
