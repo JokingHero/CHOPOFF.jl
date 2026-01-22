@@ -403,8 +403,26 @@ end
 
     @testset "linearDB vs sassy" begin
         # Test sassy algorithm matches linearDB for Cas9 (extends5=true)
-        # Note: sassy does not currently support extends5=true (Cas9)
-        # This test is marked as TODO pending implementation
-        @test_skip "Sassy support for Cas9 (extends5=true) pending implementation"
+        motif = Motif("Cas9")
+        sassy_ldb_path = joinpath(tdir, "sassy_linearDB")
+        mkpath(sassy_ldb_path)
+        build_linearDB("samirandom_sassy", genome, motif, sassy_ldb_path, 7)
+        sassy_detail_path = joinpath(sassy_ldb_path, "detail.csv")
+
+        for d in 1:3
+            sassy_path = joinpath(tdir, "sassy_d$d.csv")
+            search_sassy(guides, genome, motif, sassy_path; distance = d)
+            sassy_df = DataFrame(CSV.File(sassy_path))
+
+            search_linearDB(sassy_ldb_path, guides, sassy_detail_path; distance = d)
+            ldb_df = DataFrame(CSV.File(sassy_detail_path))
+
+            # Compare detail results directly by all columns
+            failed = antijoin(ldb_df, sassy_df, on = [:guide, :distance, :chromosome, :start, :strand])
+            @test nrow(failed) == 0
+
+            failed2 = antijoin(sassy_df, ldb_df, on = [:guide, :distance, :chromosome, :start, :strand])
+            @test nrow(failed2) == 0
+        end
     end
 end
