@@ -25,6 +25,7 @@ const TEST_DIR = @__DIR__
     genome_path = joinpath(TEST_DIR, "test_genome_sassy.fa")
     guide_path = joinpath(TEST_DIR, "test_guides_sassy.txt")
     output_path = joinpath(TEST_DIR, "sassy_results.csv")
+    output_path_avx512 = joinpath(TEST_DIR, "sassy_results_avx512.csv")
     
     # helper to clean up
     function cleanup()
@@ -32,6 +33,7 @@ const TEST_DIR = @__DIR__
         rm(genome_path * ".fai", force=true)
         rm(guide_path, force=true)
         rm(output_path, force=true)
+        rm(output_path_avx512, force=true)
     end
     
     # Clean up before test
@@ -79,6 +81,35 @@ const TEST_DIR = @__DIR__
         @test first_row.chromosome == "chr1"
         
         @info "Test passed: Match found with distance=$(first_row.distance)"
+
+        # Test AVX-512 Path (emulated on standard CPU via generic code, but logic is same)
+        @info "Running Sassy Search with distance=4 and use_avx512=true..."
+        CHOPOFF.search_sassy(guides, genome_path, motif, output_path_avx512; distance=4, use_avx512=true)
+        
+        @test isfile(output_path_avx512)
+        df_avx512 = CSV.read(output_path_avx512, DataFrame)
+        @info "AVX-512 Results:" df_avx512
+        @test nrow(df_avx512) > 0
+        
+        first_row_avx512 = df_avx512[1, :]
+        @test first_row_avx512.distance <= 4
+        @test first_row_avx512.chromosome == "chr1"
+        
+        # Results should be identical
+        @test df == df_avx512
+        @info "Test passed: AVX-512 results match standard results."
+
+        # Test Legacy NIBBLE_TABLE Path (force_safe_minima=true)
+        # Assumes current CPU might be fast, but we force the safe path.
+        output_path_legacy = joinpath(TEST_DIR, "sassy_results_legacy.csv")
+        CHOPOFF.search_sassy(guides, genome_path, motif, output_path_legacy; distance=4, force_safe_minima=true)
+        
+        @test isfile(output_path_legacy)
+        df_legacy = CSV.read(output_path_legacy, DataFrame)
+        @test nrow(df_legacy) > 0
+        @test df == df_legacy
+        @info "Test passed: Legacy NIBBLE_TABLE results match standard PEXT results."
+        rm(output_path_legacy, force=true)
 
     finally
         cleanup()

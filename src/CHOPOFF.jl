@@ -59,7 +59,8 @@ include("db_fmi_helpers.jl")
 include("db_fmi.jl")
 include("db_fmi_seed.jl")
 include("db_fmi_bff.jl")
-include("sassy.jl")
+include("sassy/sassy.jl")
+using .Sassy
 
 export Motif, length_noPAM, length, setambig, setdist # motif
 export save, load # persistence

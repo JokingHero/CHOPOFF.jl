@@ -1,7 +1,7 @@
 .vscode/settings.json
 *.ebwt
 *.zip
-*.bin
+
 build
 docs/build
 CHOPOFF.jl.code-workspace
