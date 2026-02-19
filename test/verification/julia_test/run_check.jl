@@ -17,18 +17,18 @@ println("Running Friction Test on compute_block...")
         # 1. Parse Inputs
         # JSON numbers are Int64 by default in Julia, we strictly cast to UInt64
         inp = case["input"]
-        hp_in = UInt64(inp["hp_in"])
-        hm_in = UInt64(inp["hm_in"])
-        vp    = UInt64(inp["vp"])
-        vm    = UInt64(inp["vm"])
-        eq    = UInt64(inp["eq"])
+        hp_in = reinterpret(UInt64, Int64(inp["hp_in"]))
+        hm_in = reinterpret(UInt64, Int64(inp["hm_in"]))
+        vp    = reinterpret(UInt64, Int64(inp["vp"]))
+        vm    = reinterpret(UInt64, Int64(inp["vm"]))
+        eq    = reinterpret(UInt64, Int64(inp["eq"]))
 
         # 2. Parse Expected Outputs
         out = case["output"]
-        exp_hp_out = UInt64(out["hp_out"])
-        exp_hm_out = UInt64(out["hm_out"])
-        exp_vp     = UInt64(out["vp"])
-        exp_vm     = UInt64(out["vm"])
+        exp_hp_out = reinterpret(UInt64, Int64(out["hp_out"]))
+        exp_hm_out = reinterpret(UInt64, Int64(out["hm_out"]))
+        exp_vp     = reinterpret(UInt64, Int64(out["vp"]))
+        exp_vm     = reinterpret(UInt64, Int64(out["vm"]))
 
         # 3. Run Julia Function
         (act_hp_out, act_hm_out, act_vp, act_vm) = compute_block(

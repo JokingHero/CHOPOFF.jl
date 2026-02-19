@@ -30,8 +30,9 @@ end
     ref::K,
     ismatch::Function = iscompatible) where {T <: BioSequence, K <: BioSequence}
     l = 0
-    for (i, g) in enumerate(guide)
-        !ismatch(g, ref[i]) && break
+    min_len = min(length(guide), length(ref))
+    for i in 1:min_len
+        !ismatch(guide[i], ref[i]) && break
         l += 1
     end
     return l
@@ -303,10 +304,7 @@ function align(
     p == len1 && return Aln(guide, ref[1:len1], 0)
     p_guide, p_ref = guide[p + 1:len1], ref[p + 1:len2]
     len1, len2 = len1 - p, len2 - p
-    if k > len1
-        k = len1
-    end
-
+    k = min(k, len1, len2)
     # we initialize all array with the top values
     v = Array(transpose(repeat(0:len1, 1, len2 + 1)))
     # when we are at the top right corner we have to go left
@@ -427,10 +425,7 @@ function prefix_align(
 
     guide_len, prefix_len = length(guide), length(prefix)
     ref_len = prefix_len + suffix_len 
-    if k > prefix_len
-        k = prefix_len
-    end
-
+    k = min(k, guide_len, prefix_len)
     # we initialize all array with the top values
     v = Array(transpose(repeat(0:guide_len, 1, ref_len + 1)))
     # when we are at the top right corner we have to go left
