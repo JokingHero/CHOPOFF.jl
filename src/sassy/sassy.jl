@@ -12,12 +12,17 @@ import ..CHOPOFF:
     DBInfo, 
     Offtarget, 
     Loc, 
+    Aln,
     align, 
+    prefix_align,
+    suffix_align,
     decode, 
     length_noPAM, 
     locate_telomeres, 
     getchromseq,
-    insert_offtarget!
+    insert_offtarget!,
+    getExt3,
+    getExt5
 
 # --- Sub-components ---
 # Order matters here due to internal dependencies.
@@ -48,7 +53,10 @@ export search_sassy_guide
 # You need these visible to run the JSON comparison tests.
 export compute_block
 export search_sassy_impl
+export TextBlockProfile
+export encode_text_block
 export encode_text_profile
 export encode_pattern_sassy
+export get_iupac_mask
 
 end 

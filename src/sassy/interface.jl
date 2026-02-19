@@ -5,6 +5,8 @@ struct SassyMatch
     aln_ref::String
 end
 
+const LINEAR_TRACE_PREFIX_LEN = 7
+
 function check_pam_match(ref_pam::AbstractString, guide_pam::AbstractString)
     Base.length(ref_pam) == Base.length(guide_pam) || return false
     for (r, g) in zip(ref_pam, guide_pam)
@@ -75,6 +77,27 @@ end
     return motif_start, motif_end, guide_start, guide_end
 end
 
+@inline function extends_right(motif::Motif, is_antisense::Bool)
+    # Mirrors CHOPOFF.add_extension dispatch.
+    return (motif.extends5 && is_antisense) || (!motif.extends5 && !is_antisense)
+end
+
+@inline function normalize_ref_for_linear(
+    seq::LongDNA{4},
+    motif::Motif,
+    is_antisense::Bool,
+)
+    if motif.extends5 && is_antisense
+        return complement(seq)
+    elseif motif.extends5 && !is_antisense
+        return reverse(seq)
+    elseif !motif.extends5 && is_antisense
+        return reverse_complement(seq)
+    else
+        return seq
+    end
+end
+
 function search_sassy_guide(
     guide_seq::LongDNA{4},
     genome_str::String,
@@ -115,10 +138,12 @@ function search_sassy_guide(
     (bases, pattern_indices) = encode_pattern_sassy(pattern_bytes)
 
     genome_bytes = Vector{UInt8}(genome_str)
+    genome_seq = LongDNA{4}(genome_str)
     n = Base.length(genome_bytes)
     pam_on_left = pam_at_start(motif, is_antisense)
     results = SassyMatch[]
     seen = Set{Tuple{Int, Int, String, String}}()
+    query_for_linear_aln = motif.extends5 ? reverse(guide_seq) : guide_seq
 
     # 3. Run Sassy Algorithm
     matches = impl_func(pattern_indices, genome_bytes, k, bases)
@@ -147,36 +172,67 @@ function search_sassy_guide(
                 continue
             end
 
-            align_start = trial_end - search_len + 1
-            if align_start < 1
-                continue
-            end
-
-            reverse_back = false
-            if pam_on_left
-                win_start = align_start
-                win_end = min(n, trial_end + k)
-                if win_start > win_end
-                    continue
+            aln_res = if strict_pam
+                guide_slice = LongDNA{4}(genome_seq[guide_start:guide_end])
+                if extends_right(motif, is_antisense)
+                    ext = getExt3(genome_seq, n, guide_end + 1, motif.distance)
+                    ref_with_ext = guide_slice * ext
+                else
+                    ext = getExt5(genome_seq, guide_start - 1, motif.distance)
+                    ref_with_ext = ext * guide_slice
                 end
-                ref_for_aln = LongDNA{4}(genome_str[win_start:win_end])
-                guide_for_aln = search_pattern
+                ref_for_aln = normalize_ref_for_linear(ref_with_ext, motif, is_antisense)
+                prefix_len = min(LINEAR_TRACE_PREFIX_LEN, Base.length(ref_for_aln))
+                prefix = ref_for_aln[1:prefix_len]
+                suffix = if prefix_len < Base.length(ref_for_aln)
+                    ref_for_aln[(prefix_len + 1):end]
+                else
+                    LongDNA{4}("")
+                end
+                pa = prefix_align(query_for_linear_aln, prefix, Base.length(suffix), k)
+                suffix_align(suffix, pa)
             else
-                win_start = max(1, align_start - k)
-                win_end = trial_end
-                if win_start > win_end
+                align_start = trial_end - search_len + 1
+                if align_start < 1
                     continue
                 end
-                ref_for_aln = reverse(LongDNA{4}(genome_str[win_start:win_end]))
-                guide_for_aln = reverse(search_pattern)
-                reverse_back = true
-            end
 
-            aln_res = align(guide_for_aln, ref_for_aln, k)
+                reverse_back = false
+                if pam_on_left
+                    win_start = align_start
+                    win_end = min(n, trial_end + k)
+                    if win_start > win_end
+                        continue
+                    end
+                    ref_for_aln = LongDNA{4}(genome_str[win_start:win_end])
+                    guide_for_aln = search_pattern
+                else
+                    win_start = max(1, align_start - k)
+                    win_end = trial_end
+                    if win_start > win_end
+                        continue
+                    end
+                    ref_for_aln = reverse(LongDNA{4}(genome_str[win_start:win_end]))
+                    guide_for_aln = reverse(search_pattern)
+                    reverse_back = true
+                end
+
+                aln_tmp = align(guide_for_aln, ref_for_aln, k)
+                if reverse_back
+                    Aln(reverse(aln_tmp.guide), reverse(aln_tmp.ref), aln_tmp.dist)
+                else
+                    aln_tmp
+                end
+            end
             
             if aln_res.dist <= k
-                aln_guide = reverse_back ? reverse(aln_res.guide) : aln_res.guide
-                aln_ref = reverse_back ? reverse(aln_res.ref) : aln_res.ref
+                aln_guide = aln_res.guide
+                aln_ref = aln_res.ref
+                if strict_pam && motif.extends5
+                    # Mirrors search_linearDB output rendering for extends5 motifs.
+                    aln_guide = reverse(aln_guide)
+                    aln_ref = reverse(aln_ref)
+                end
 
                 # Match linearDB location normalization (PAM-side anchor convention).
                 pos_local = (motif.extends5 == is_antisense) ? motif_start : motif_end

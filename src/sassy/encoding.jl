@@ -18,6 +18,10 @@ Test Summary:  | Pass  Total  Time
 Encoding Logic |    4      4  0.2s
 
 """
+struct TextBlockProfile
+    masks::Vector{UInt64}
+end
+
 function encode_text_profile(text::AbstractVector{UInt8}, bases::Vector{UInt8})
     n_bases = length(bases)
     masks = zeros(UInt64, n_bases)
@@ -36,6 +40,10 @@ function encode_text_profile(text::AbstractVector{UInt8}, bases::Vector{UInt8})
         masks[j] = result
     end
     return masks
+end
+
+@inline function encode_text_block(text::AbstractVector{UInt8}, bases::Vector{UInt8})
+    return TextBlockProfile(encode_text_profile(text, bases))
 end
 
 # --- Pattern Encoding ---
