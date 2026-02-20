@@ -264,8 +264,8 @@ function search_sassy(
 )
     # Dispatch Logic based on flags
     # We create a function barrier or closure to avoid dynamic dispatch in the loop
-    # Determine PEXT usage (Default: true, unless forced safe)
-    use_pext = !force_safe_minima
+    # Default to PEXT on BMI2-capable x86; otherwise use safe minima scanning.
+    use_pext = !force_safe_minima && can_use_bmi2_pext()
     
     _search_impl = if use_avx512
         (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(8), Val(use_pext))

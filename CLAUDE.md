@@ -28,6 +28,27 @@ julia --project=. -e 'include("test/src/utils.jl")'
 ./compute_coverage.sh
 ```
 
+### Speed Benchmark (Sassy vs prefixHashDB)
+
+```bash
+# Runs both thread modes:
+#   1) single-thread (JULIA_NUM_THREADS=1)
+#   2) current environment thread count
+julia --project=. scripts/benchmark_sassy_vs_prefixhash.jl
+
+# Optional controls
+CHOPOFF_BENCH_RUNS=11 JULIA_NUM_THREADS=8 julia --project=. scripts/benchmark_sassy_vs_prefixhash.jl
+CHOPOFF_BENCH_MODE=single julia --project=. scripts/benchmark_sassy_vs_prefixhash.jl
+CHOPOFF_BENCH_OUT=/tmp/chopoff_speed_summary.csv julia --project=. scripts/benchmark_sassy_vs_prefixhash.jl
+```
+
+Environment variables used by the benchmark:
+- `CHOPOFF_BENCH_RUNS` (default `7`) - timed repetitions per algorithm
+- `CHOPOFF_BENCH_DISTANCE` (default `3`) - search distance
+- `CHOPOFF_BENCH_MODE` (`both`, `single`, `env`; default `both`)
+- `CHOPOFF_BENCH_OUT` - path to write combined summary CSV
+- `CHOPOFF_BENCH_KEEP_TMP` (`0`/`1`) - keep temp benchmark artifacts
+
 ### Standalone Binary Usage (after build)
 
 ```bash

@@ -432,6 +432,9 @@ function parse_commandline(args::Array{String})
             help = "Path to the genome (fasta or 2bit)."
             arg_type = String
             required = true
+        "--force_safe_minima"
+            help = "Disable BMI2/PEXT minima scanning and force legacy safe minima path."
+            action = :store_true
         "--early_stopping"
             help = "Input a vector of length of distance + 1 with early stopping conditions. If not supplied we will look up to 1e6 OTs for each distance."
             arg_type = Int
@@ -639,10 +642,12 @@ function main(args::Array{String})
             if length(args["sassy"]["early_stopping"]) != 0
                 search_sassy(guides, args["sassy"]["genome"], motif, args["output"];
                     distance = args["distance"],
+                    force_safe_minima = args["sassy"]["force_safe_minima"],
                     early_stopping = args["sassy"]["early_stopping"])
             else
                 search_sassy(guides, args["sassy"]["genome"], motif, args["output"];
                     distance = args["distance"],
+                    force_safe_minima = args["sassy"]["force_safe_minima"],
                     early_stopping = repeat([1000000], args["distance"] + 1))
             end
         else

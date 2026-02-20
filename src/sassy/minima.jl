@@ -3,6 +3,25 @@
 
 # --- BMI2 PEXT Support (Fast Path for Intel/Modern AMD) ---
 
+# From Julia's generated `features_h.jl`: JL_X86_bmi2 = 32 * 2 + 8.
+const JL_X86_BMI2_FEATURE_ID = UInt32(72)
+const BMI2_CACHE = Ref{Union{Nothing, Bool}}(nothing)
+
+@inline function can_use_bmi2_pext()
+    cached = BMI2_CACHE[]
+    if cached !== nothing
+        return cached::Bool
+    end
+
+    enabled = false
+    if Sys.ARCH === :x86_64 || Sys.ARCH === :i686
+        enabled = ccall(:jl_test_cpu_feature, Bool, (UInt32,), JL_X86_BMI2_FEATURE_ID)
+    end
+
+    BMI2_CACHE[] = enabled
+    return enabled
+end
+
 """
     pext_u64(val::UInt64, mask::UInt64) -> UInt64
 
@@ -147,17 +166,97 @@ end
     ::Val{true},
     all_minima::Bool = false
 )
-    # Keep both paths behavior-equivalent while the BMI2 fast path is validated.
-    scan_block_minima(
-        vp_mask,
-        vm_mask,
-        start_cost,
-        k,
-        block_start_pos,
-        text_len,
-        matches_out,
-        lane_state,
-        Val(false),
-        all_minima,
-    )
+    if all_minima
+        # Keep the exact per-position semantics for exhaustive mode.
+        scan_block_minima(
+            vp_mask,
+            vm_mask,
+            start_cost,
+            k,
+            block_start_pos,
+            text_len,
+            matches_out,
+            lane_state,
+            Val(false),
+            all_minima,
+        )
+        return
+    end
+
+    cost = start_cost
+    prev_cost = start_cost
+    prev_pos = block_start_pos
+
+    if block_start_pos >= text_len
+        return
+    end
+
+    bits_to_scan = min(64, text_len - block_start_pos)
+    if bits_to_scan <= 0
+        return
+    end
+
+    valid_mask = bits_to_scan == 64 ? typemax(UInt64) : ((UInt64(1) << bits_to_scan) - UInt64(1))
+    vp_valid = vp_mask & valid_mask
+    vm_valid = vm_mask & valid_mask
+    active_mask = vp_valid | vm_valid
+
+    if active_mask == 0
+        prev_pos += bits_to_scan
+        if prev_pos == text_len && lane_state.decreasing && prev_cost <= k
+            push!(matches_out, (prev_pos, max(0, prev_cost)))
+        end
+        return
+    end
+
+    # Compress delta-sign bits only at positions where cost changes.
+    # `active_mask` marks non-zero deltas; packed bits preserve bit-order.
+    packed_pos = pext_u64(vp_valid, active_mask)
+    packed_neg = pext_u64(vm_valid, active_mask)
+
+    bit_idx = 0
+    event_idx = 0
+
+    while bit_idx < bits_to_scan
+        shifted = active_mask >> bit_idx
+        if shifted == 0
+            prev_pos += bits_to_scan - bit_idx
+            bit_idx = bits_to_scan
+            break
+        end
+
+        zeros_until_event = trailing_zeros(shifted)
+        if zeros_until_event > 0
+            run_len = min(zeros_until_event, bits_to_scan - bit_idx)
+            prev_pos += run_len
+            bit_idx += run_len
+            if bit_idx >= bits_to_scan
+                break
+            end
+        end
+
+        pos = block_start_pos + bit_idx + 1
+        pbit = Int((packed_pos >> event_idx) & UInt64(1))
+        nbit = Int((packed_neg >> event_idx) & UInt64(1))
+        cost += pbit - nbit
+
+        costs_are_equal = cost == prev_cost
+        costs_are_increasing = cost > prev_cost
+        costs_are_decreasing = cost < prev_cost
+
+        if lane_state.decreasing && costs_are_increasing && prev_cost <= k
+            push!(matches_out, (prev_pos, max(0, prev_cost)))
+        end
+
+        lane_state.decreasing = costs_are_decreasing || (lane_state.decreasing && costs_are_equal)
+
+        prev_cost = cost
+        prev_pos = pos
+        bit_idx += 1
+        event_idx += 1
+    end
+
+    if prev_pos == text_len && lane_state.decreasing && prev_cost <= k
+        push!(matches_out, (prev_pos, max(0, prev_cost)))
+    end
 end

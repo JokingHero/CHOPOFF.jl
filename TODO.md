@@ -32,6 +32,16 @@ Make `CHOPOFF.Sassy` both:
 - Alignment-path differences are now treated as diagnostics (non-blocking), not correctness failures.
 - Added first-mismatch isolation helper:
   - `scripts/debug_sassy_mismatch.jl --motif Cas9|Cas12a --distance 1|2|3`
+- BMI2/PEXT minima fast path reactivated with runtime feature gating.
+  - Auto mode: PEXT on BMI2 x86 hosts, safe minima fallback otherwise.
+  - User override retained via `force_safe_minima` (API) and `--force_safe_minima` (CLI).
+- PEXT-vs-safe identity checks strengthened.
+  - `test/src/test_sassy_correctness.jl` now asserts full tuple identity on
+    `guide, alignment_guide, alignment_reference, distance, chromosome, start, strand`
+    across mixed-distance, boundary, and no-hit fixtures.
+- Minima backend benchmark/report script added.
+  - `scripts/benchmark_sassy_minima_backend.jl`
+  - Current host report: no regression (`auto` median <= `safe` median).
 
 ### Still Failing
 - No known parity failures in current Sassy verification suite.
@@ -83,17 +93,18 @@ Add/keep explicit tests for:
 Acceptance gate:
 - `test/src/test_sassy_correctness.jl` passes with strict PAM default and CHOPOFF coordinate conventions.
 
-### M5. PEXT Fast Path Re-activation (after integration parity)
+### M5. PEXT Fast Path Re-activation (completed)
 Target file:
 - `src/sassy/minima.jl`
 
 Actions:
-- Keep nibble path as correctness baseline.
-- Reintroduce true BMI2/PEXT acceleration only after proving equivalence to nibble path.
-- Feature-gate cleanly and preserve `force_safe_minima` behavior.
+- Kept nibble path as correctness baseline.
+- Reintroduced BMI2/PEXT minima scan path.
+- Added runtime CPU gating (`bmi2`) with safe fallback and preserved `force_safe_minima`.
+- Extended equivalence tests to enforce tuple identity between backends.
 
 Acceptance gate:
-- `PEXT` and nibble outputs identical on regression corpus.
+- `PEXT` and nibble outputs are identical on regression corpus (pass).
 
 ### M6. Performance Hardening (final)
 Actions:
@@ -114,8 +125,24 @@ It runs:
 3. search parity
 4. AVX-512 path parity
 
+## Speed Benchmark Workflow
+Use:
+- `julia --project=. scripts/benchmark_sassy_vs_prefixhash.jl`
+
+What it runs by default:
+1. `sassy` vs `prefixHashDB` search-only timings.
+2. Two thread modes: single-thread (`JULIA_NUM_THREADS=1`) and current env-thread mode.
+3. Cas9 + Cas12a fixtures at distance 3.
+4. Core tuple parity checks on `guide, distance, chromosome, start, strand`.
+
+Useful options:
+- `CHOPOFF_BENCH_RUNS=11` (more timing repetitions)
+- `CHOPOFF_BENCH_MODE=single|env|both` (default `both`)
+- `CHOPOFF_BENCH_OUT=/tmp/chopoff_speed_summary.csv` (write combined summary)
+- `CHOPOFF_BENCH_KEEP_TMP=1` (keep temporary artifacts for debugging)
+
 ## Immediate Next Fixes (ordered)
-1. Re-activate true BMI2/PEXT path in `src/sassy/minima.jl` with nibble-equivalence gates.
-2. Profile `search_sassy` and reduce allocation pressure in alignment-heavy sections.
-3. Expand parity checks to additional motifs/datasets beyond semirandom fixture.
-4. Add optional post-check to bound/monitor alignment-path divergence rates for QA visibility.
+1. Profile `search_sassy` and reduce allocation pressure in alignment-heavy sections.
+2. Expand parity checks to additional motifs/datasets beyond semirandom fixture.
+3. Add optional post-check to bound/monitor alignment-path divergence rates for QA visibility.
+4. Optionally promote benchmark no-regression gate into CI (`SASSY_BENCH_ENFORCE_NO_REGRESSION=1`).

@@ -74,6 +74,35 @@ function run_sassy(guide_str::String, genome_path::String, motif::Motif;
     return DataFrame()
 end
 
+const PARITY_COLS = [
+    :guide,
+    :alignment_guide,
+    :alignment_reference,
+    :distance,
+    :chromosome,
+    :start,
+    :strand,
+]
+
+function assert_minima_backend_identity(
+    guide::String,
+    genome_seq::String,
+    motif::Motif;
+    distance::Int,
+    tag::String,
+)
+    gpath = build_genome(genome_seq; tag = tag)
+    df_auto = run_sassy(guide, gpath, motif; distance = distance, force_safe_minima = false)
+    df_safe = run_sassy(guide, gpath, motif; distance = distance, force_safe_minima = true)
+
+    @test nrow(df_auto) == nrow(df_safe)
+    if nrow(df_auto) > 0
+        lhs = sort(select(df_auto, PARITY_COLS), PARITY_COLS)
+        rhs = sort(select(df_safe, PARITY_COLS), PARITY_COLS)
+        @test lhs == rhs
+    end
+end
+
 
 # ─── Padding constant (enough to avoid boundary effects) ─────────────────────
 
@@ -205,30 +234,53 @@ end
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEST 5 — PEXT vs NIBBLE_TABLE Equivalence
 #
-# Both scan paths must give the same results. Currently PEXT is stubbed to
-# call NIBBLE, so this trivially passes — when PEXT is truly activated, this
-# test becomes a real regression gate.
+# Both scan paths must produce identical off-target tuples.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @testset "PEXT vs NIBBLE Equivalence" begin
-    guide = "TTTTTTTTTTTTTTTTTTTT"
-    # Two targets: distance-0 and distance-1
-    target_d0 = guide * "AGG"
-    target_d1 = "ATTTTTTTTTTTTTTTTTTT" * "AGG"  # 1 mismatch at pos 1
-    genome_seq = PAD * target_d0 * PAD * target_d1 * PAD
-    gpath = build_genome(genome_seq; tag = "pext")
-    motif = Motif("Cas9"; distance = 2)
+    @test CHOPOFF.Sassy.can_use_bmi2_pext() isa Bool
 
-    df_pext   = run_sassy(guide, gpath, motif; distance = 2, force_safe_minima = false)
-    df_nibble = run_sassy(guide, gpath, motif; distance = 2, force_safe_minima = true)
+    @testset "Mixed distances in one genome" begin
+        guide = "TTTTTTTTTTTTTTTTTTTT"
+        target_d0 = guide * "AGG"
+        target_d1 = "ATTTTTTTTTTTTTTTTTTT" * "AGG"  # 1 mismatch at position 1
+        genome_seq = PAD * target_d0 * PAD * target_d1 * PAD
+        motif = Motif("Cas9"; distance = 2)
+        assert_minima_backend_identity(
+            guide,
+            genome_seq,
+            motif;
+            distance = 2,
+            tag = "pext_mixed",
+        )
+    end
 
-    @test nrow(df_pext) == nrow(df_nibble)
-    if nrow(df_pext) > 0 && nrow(df_nibble) > 0
-        sort!(df_pext, :start)
-        sort!(df_nibble, :start)
-        @test df_pext.distance == df_nibble.distance
-        @test df_pext.start    == df_nibble.start
-        @test df_pext.strand   == df_nibble.strand
+    @testset "Boundary around 64bp blocks" begin
+        guide = "ACGTACGTACGTACGTACGT"
+        target = guide * "AGG"
+        # End positions 64 and 65 exercise block-boundary transitions.
+        genome_seq = repeat("A", 41) * target * "T" * target * PAD
+        motif = Motif("Cas9"; distance = 1)
+        assert_minima_backend_identity(
+            guide,
+            genome_seq,
+            motif;
+            distance = 1,
+            tag = "pext_boundary",
+        )
+    end
+
+    @testset "No-hit fixture remains identical" begin
+        guide = "ACGTACGTACGTACGTACGT"
+        genome_seq = repeat("T", 220)
+        motif = Motif("Cas9"; distance = 3)
+        assert_minima_backend_identity(
+            guide,
+            genome_seq,
+            motif;
+            distance = 3,
+            tag = "pext_nohit",
+        )
     end
 end
 
