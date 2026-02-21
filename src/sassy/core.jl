@@ -56,7 +56,7 @@ function search_sassy_impl(
     # Match Rust chunking for single-text/single-pattern mode.
     blocks_in_text = cld(text_len, BLOCK_SIZE)
     max_overlap_blocks = cld(m + k, BLOCK_SIZE)
-    blocks_per_chunk = cld(max(blocks_in_text - max_overlap_blocks, 0), LANES)
+    blocks_per_chunk = max(1, cld(max(blocks_in_text - max_overlap_blocks, 0), LANES))
     lane_chunk_offsets = [(l - 1) * blocks_per_chunk * BLOCK_SIZE for l in 1:LANES]
 
     VecL = Vec{LANES, UInt64}

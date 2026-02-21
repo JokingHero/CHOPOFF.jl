@@ -120,10 +120,29 @@ end
         push!(matches_out, (prev_pos, max(0, cost)))
     end
 
-    for bit in 1:64
+    bit = 1
+    while bit <= 64
         pos = block_start_pos + bit
         if pos > text_len
             break
+        end
+
+        if bit <= 61 && !all_minima
+            nibble_p = (vp_mask >> (bit - 1)) & 15
+            nibble_m = (vm_mask >> (bit - 1)) & 15
+            byte = nibble_p | (nibble_m << 4)
+            min_cost, end_cost = NIBBLE_TABLE[byte + 1]
+
+            can_skip = (cost + min_cost > k) && !(lane_state.decreasing && prev_cost <= k)
+            if can_skip
+                cost += end_cost
+                prev_cost = cost
+                delta4 = Int((nibble_p >> 3) & 1) - Int((nibble_m >> 3) & 1)
+                lane_state.decreasing = (delta4 <= 0)
+                prev_pos = pos + 3
+                bit += 4
+                continue
+            end
         end
 
         cost += Int((vp_mask >> (bit - 1)) & 0x1)
@@ -147,6 +166,7 @@ end
 
         prev_cost = cost
         prev_pos = pos
+        bit += 1
     end
 
     if !all_minima && prev_pos == text_len && lane_state.decreasing && prev_cost <= k

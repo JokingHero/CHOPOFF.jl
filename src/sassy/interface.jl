@@ -106,9 +106,9 @@ function search_sassy_guide(
     dbi::DBInfo,
     is_antisense::Bool,
     telomere_offset::Int = 0,
-    impl_func::Function = (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(true));
+    impl_func::F = (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(true));
     strict_pam::Bool = true,
-)
+) where {F <: Function}
     # 1. Prepare guide orientation and PAM pattern for this strand.
     guide_pattern = is_antisense ? reverse_complement(guide_seq) : guide_seq
     pam_str = ""
@@ -137,7 +137,7 @@ function search_sassy_guide(
     pam_len = Base.length(pam_str)
     (bases, pattern_indices) = encode_pattern_sassy(pattern_bytes)
 
-    genome_bytes = Vector{UInt8}(genome_str)
+    genome_bytes = codeunits(genome_str)
     genome_seq = LongDNA{4}(genome_str)
     n = Base.length(genome_bytes)
     pam_on_left = pam_at_start(motif, is_antisense)
@@ -291,7 +291,6 @@ function search_sassy(
     is_es = falses(g_count)
     es_accumulator = zeros(Int, g_count, distance + 1)
     all_offt = [Vector{Offtarget}() for _ in 1:g_count]
-    all_offt_lock = ReentrantLock()
 
     for (chrom_idx, chrom) in enumerate(dbi.gi.chrom)
         seq = getchromseq(dbi.gi.is_fa, reader[chrom])
@@ -310,15 +309,13 @@ function search_sassy(
                     loc = Loc(dbi.gi.chrom_type(chrom_idx), dbi.gi.pos_type(r.pos), is_plus)
                     offt = Offtarget(loc, r.dist, r.aln_guide, r.aln_ref)
 
-                    # Keep all valid alignments (linearDB parity), only lock for shared state.
-                    lock(all_offt_lock) do
-                        push!(all_offt[guide_idx], offt)
+                    # Keep all valid alignments (linearDB parity). Lock removed because ThreadsX loops over guide_idx.
+                    push!(all_offt[guide_idx], offt)
 
-                        if use_es
-                            es_accumulator[guide_idx, offt.dist + 1] += 1
-                            if es_accumulator[guide_idx, offt.dist + 1] >= es_limits[offt.dist + 1]
-                                is_es[guide_idx] = true
-                            end
+                    if use_es
+                        es_accumulator[guide_idx, offt.dist + 1] += 1
+                        if es_accumulator[guide_idx, offt.dist + 1] >= es_limits[offt.dist + 1]
+                            is_es[guide_idx] = true
                         end
                     end
                 end
@@ -350,9 +347,7 @@ function search_sassy(
             aln_guide = offt.aln_guide
             aln_ref = offt.aln_ref
 
-            noloc = string(guides[i]) * "," * aln_guide * "," *
-                    aln_ref * "," * string(offt.dist) * ","
-            write(outfile, noloc * decode(offt.loc, dbi) * "\n")
+            print(outfile, guides[i], ",", aln_guide, ",", aln_ref, ",", offt.dist, ",", decode(offt.loc, dbi), "\n")
         end
     end
 
