@@ -27,6 +27,9 @@ const FULL_PARITY_COLS = [
     :strand,
 ]
 
+const TRACEBACK_BACKENDS = get(ENV, "CHOPOFF_VERIFY_TRACEBACK_BACKENDS", "0") == "1" ?
+    (:custom, :align) : (:custom,)
+
 function print_mismatch_context(
     prefix::String,
     failed::DataFrame,
@@ -72,41 +75,67 @@ function verify_lineardb_vs_sassy(
         build_linearDB("semirandom_sassy_$label", genome, motif, sassy_ldb_path, 7)
         sassy_detail_path = joinpath(sassy_ldb_path, "detail.csv")
 
-        for d in 1:3
-            sassy_path = joinpath(tdir, "sassy_$(label)_d$d.csv")
-            search_sassy(guides, genome, motif, sassy_path; distance = d)
-            sassy_df = DataFrame(CSV.File(sassy_path))
-
-            search_linearDB(sassy_ldb_path, guides, sassy_detail_path; distance = d)
-            ldb_df = DataFrame(CSV.File(sassy_detail_path))
-
-            failed = antijoin(sassy_df, ldb_df, on = REQUIRED_PARITY_COLS)
-            if nrow(failed) > 0
-                println("Sassy matches not in LinearDB ($label, d=$d): n=$(nrow(failed))")
-                println(first(failed, min(40, nrow(failed))))
-                print_mismatch_context("Sassy -> LinearDB ($label, d=$d).", failed, sassy_df, ldb_df)
-            end
-            @test nrow(failed) == 0
-
-            failed2 = antijoin(ldb_df, sassy_df, on = REQUIRED_PARITY_COLS)
-            if nrow(failed2) > 0
-                println("LinearDB matches not in Sassy ($label, d=$d): n=$(nrow(failed2))")
-                println(first(failed2, min(40, nrow(failed2))))
-                print_mismatch_context("LinearDB -> Sassy ($label, d=$d).", failed2, ldb_df, sassy_df)
-            end
-            @test nrow(failed2) == 0
-
-            # Informational only: alignment path strings may differ even when
-            # distance/start/strand/chromosome parity is exact.
-            path_delta_sassy = antijoin(sassy_df, ldb_df, on = FULL_PARITY_COLS)
-            path_delta_ldb = antijoin(ldb_df, sassy_df, on = FULL_PARITY_COLS)
-            if nrow(path_delta_sassy) > 0 || nrow(path_delta_ldb) > 0
-                println(
-                    "Alignment-path deltas ($label, d=$d): ",
-                    "sassy-only=", nrow(path_delta_sassy),
-                    ", linearDB-only=", nrow(path_delta_ldb),
-                    " (non-failing diagnostic)"
+        for traceback_backend in TRACEBACK_BACKENDS
+            for d in 1:3
+                sassy_path = joinpath(tdir, "sassy_$(label)_d$(d)_$(traceback_backend).csv")
+                search_sassy(
+                    guides,
+                    genome,
+                    motif,
+                    sassy_path;
+                    distance = d,
+                    traceback_backend = traceback_backend,
                 )
+                sassy_df = DataFrame(CSV.File(sassy_path))
+
+                search_linearDB(sassy_ldb_path, guides, sassy_detail_path; distance = d)
+                ldb_df = DataFrame(CSV.File(sassy_detail_path))
+
+                failed = antijoin(sassy_df, ldb_df, on = REQUIRED_PARITY_COLS)
+                if nrow(failed) > 0
+                    println(
+                        "Sassy matches not in LinearDB ",
+                        "($label, backend=$(traceback_backend), d=$d): n=$(nrow(failed))",
+                    )
+                    println(first(failed, min(40, nrow(failed))))
+                    print_mismatch_context(
+                        "Sassy -> LinearDB ($label, backend=$(traceback_backend), d=$d).",
+                        failed,
+                        sassy_df,
+                        ldb_df,
+                    )
+                end
+                @test nrow(failed) == 0
+
+                failed2 = antijoin(ldb_df, sassy_df, on = REQUIRED_PARITY_COLS)
+                if nrow(failed2) > 0
+                    println(
+                        "LinearDB matches not in Sassy ",
+                        "($label, backend=$(traceback_backend), d=$d): n=$(nrow(failed2))",
+                    )
+                    println(first(failed2, min(40, nrow(failed2))))
+                    print_mismatch_context(
+                        "LinearDB -> Sassy ($label, backend=$(traceback_backend), d=$d).",
+                        failed2,
+                        ldb_df,
+                        sassy_df,
+                    )
+                end
+                @test nrow(failed2) == 0
+
+                # Informational only: alignment path strings may differ even when
+                # distance/start/strand/chromosome parity is exact.
+                path_delta_sassy = antijoin(sassy_df, ldb_df, on = FULL_PARITY_COLS)
+                path_delta_ldb = antijoin(ldb_df, sassy_df, on = FULL_PARITY_COLS)
+                if nrow(path_delta_sassy) > 0 || nrow(path_delta_ldb) > 0
+                    println(
+                        "Alignment-path deltas ",
+                        "($label, backend=$(traceback_backend), d=$d): ",
+                        "sassy-only=", nrow(path_delta_sassy),
+                        ", linearDB-only=", nrow(path_delta_ldb),
+                        " (non-failing diagnostic)"
+                    )
+                end
             end
         end
     end

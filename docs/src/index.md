@@ -66,6 +66,7 @@ For search of off-targets you have a couple of options:
 - [treeDB](@ref "search_treeDB") - will work best for longer gRNAs, uses vantage point for filteirng
 - [fmiDB](@ref "search_fmiDB") - the smallest file size, very fast, but only for distances ≤ 2
 - [binaryFuseFilterDB](@ref "search_binaryFuseFilterDB") - uses hashing on top of FM-index
+- [Sassy search](sassy_search.md) - direct genome search with SIMD minima and DP traceback (no prebuilt CHOPOFF DB)
 
 If you would like to **filter** or **rank** gRNAs to only those that are most likely off-target free you want to use [hashDB](@ref "search_hashDB") or
 slower and much larger, but less probabilistic [dictDB](@ref "search_dictDB").
@@ -98,4 +99,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-

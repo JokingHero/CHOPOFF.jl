@@ -43,6 +43,12 @@ build_binaryFuseFilterDB
 search_binaryFuseFilterDB
 ```
 
+## Sassy direct genome search
+
+Sassy is a direct search mode (no prebuilt CHOPOFF DB needed) that combines SIMD
+candidate generation with DP traceback for full alignments. See
+[Sassy search](sassy_search.md) for algorithm and usage details.
+
 ## VCF
 
 ```@docs

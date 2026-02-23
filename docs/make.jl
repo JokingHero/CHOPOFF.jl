@@ -25,6 +25,7 @@ makedocs(
             "Align gRNA and off-target" => "align_gRNA.md",
             "Alignment-free filters for gRNAs" => "alignment_free.md",
             "Find all off-targets" => "find_ot.md",
+            "Sassy search" => "sassy_search.md",
             "Utils" => "utils.md"],
         ])
 
