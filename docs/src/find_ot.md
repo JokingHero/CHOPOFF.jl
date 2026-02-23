@@ -29,18 +29,10 @@ inspect_treeDB
 search_treeDB
 ```
 
-## Experiments with FM-index
+## Path templates
 
 ```@docs
 build_PathTemplates
-build_fmiDB
-search_fmiDB
-
-build_pamDB
-search_fmiDB_seed
-
-build_binaryFuseFilterDB
-search_binaryFuseFilterDB
 ```
 
 ## Sassy direct genome search

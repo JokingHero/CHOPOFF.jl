@@ -35,9 +35,6 @@ using InlineStrings # MIT
 include("example_doc.jl")
 include("utils.jl")
 
-include("FMidx/FMindexes.jl") 
-using .FMIndexes # MIT
-
 include("persistence.jl")
 include("distance_metrics.jl")
 include("motif.jl")
@@ -54,11 +51,6 @@ include("db_prefix_hash.jl")
 include("db_hash.jl")
 include("db_dict.jl")
 include("db_vcf.jl")
-
-include("db_fmi_helpers.jl")
-include("db_fmi.jl")
-include("db_fmi_seed.jl")
-include("db_fmi_bff.jl")
 include("sassy/sassy.jl")
 using .Sassy
 
@@ -77,10 +69,6 @@ export build_motifDB, search_motifDB
 
 export build_PathTemplates
 
-export build_fmiDB, search_fmiDB
-export build_pamDB, search_fmiDB_seed
-export search_fmiDB_hash
-export build_binaryFuseFilterDB, search_binaryFuseFilterDB
 export search_sassy
 
 export build_dictDB, search_dictDB # db_sketch
@@ -139,15 +127,6 @@ function parse_commandline(args::Array{String})
         "vcfDB"
             action = :command
             help = "vcfDB is a specialized database to handle .vcf files and personalized off-target search."
-        "fmi"
-            action = :command
-            help = "Build FM-index of a genome"
-        "pamDB"
-            action = :command
-            help = "Build DB of PAMs of a genome"
-        "bffDB"
-            action = :command
-            help = "Build DB of BFFs of a genome"
         "template"
             action = :command
             help = "Build templates with specific Motif."
@@ -263,29 +242,6 @@ function parse_commandline(args::Array{String})
             default = "UInt16"
     end
 
-    @add_arg_table! s["build"]["bffDB"] begin
-        "--max_iterations"
-            help = "How many iterations to try before quitting the building of the DB."
-            arg_type = Int
-            default = 10
-        "--seed"
-            help = "Initial seed for database build."
-            arg_type = UInt64
-            default = UInt64(0x726b2b9d438b9d4d)
-        "--precision"
-            help = "Whether to use UInt8, UInt16 or UInt32 to store the keys."
-            arg_type = String
-            range_tester = (
-                x -> x == "UInt8" || 
-                x == "UInt16" ||
-                x == "UInt32")
-            default = "UInt16"
-        "--restrict_to_len" 
-            help = "To which length should the seed be restricted to. Default 0 means the restriction will become length_noPAM(motif) - distance"
-            arg_type = Int
-            default = 0
-    end
-
     @add_arg_table! s["build"]["dictDB"] begin
         "--max_count"
             help = "Maximum count value for given off-target sequence. " * 
@@ -313,13 +269,6 @@ function parse_commandline(args::Array{String})
             action = :store_true
     end
 
-    @add_arg_table! s["build"]["pamDB"] begin
-        "--fmidir"
-            help = "Path to the fmi directory. "
-            arg_type = String
-            required = true
-    end
-
     @add_arg_table! s["search"] begin
         "treeDB"
             action = :command
@@ -336,15 +285,6 @@ function parse_commandline(args::Array{String})
         "vcfDB"
             action = :command
             help = "vcfDB is a specialized database to handle .vcf files and personalized off-target search."
-        "fmi"
-            action = :command
-            help = "Search fmi index using brute force method."
-        "fmi_seed"
-            action = :command
-            help = "Search fmi index using lossless 01*0 seed method."
-        "bffDB"
-            action = :command
-            help = "Search FM-index using Binary Fuse Filter method."
         "sassy"
             action = :command
             help = "Search directly using Sassy (Myers bit-parallel) algorithm."
@@ -353,7 +293,7 @@ function parse_commandline(args::Array{String})
             arg_type = Int
             default = 3
         "--database"
-            help = "Path to THE FOLDER where the database is stored. Same as used when building. For FM-index based solutions this should be path to the FM-index folder."
+            help = "Path to THE FOLDER where the database is stored. Same as used when building."
             arg_type = String
             required = true
         "--guides"
@@ -396,35 +336,6 @@ function parse_commandline(args::Array{String})
             arg_type = Int
             nargs = '*'
             required = false
-    end
-
-    @add_arg_table! s["search"]["fmi"] begin
-        "--template"
-            help = "Path to the table with the template. You can build a template with 'build  template'."
-            arg_type = String
-            required = true
-    end
-
-    @add_arg_table! s["search"]["fmi_seed"] begin
-        "--genome"
-            help = "Path to the genome."
-            arg_type = String
-            required = true
-        "--pamDB"
-            help = "Path to the file with pamDB."
-            arg_type = String
-            required = true
-    end
-
-    @add_arg_table! s["search"]["bffDB"] begin
-        "--genome"
-            help = "Path to the genome."
-            arg_type = String
-            required = true
-        "--fmiDB"
-            help = "Path to the folder with FM-index."
-            arg_type = String
-            required = true
     end
 
     @add_arg_table! s["search"]["sassy"] begin
@@ -501,17 +412,15 @@ function main(args::Array{String})
     if args["%COMMAND%"] == "build"
         args = args["build"]
 
-        if args["%COMMAND%"] != "fmi"
-            if args["motif"] != ""
-                motif = Motif(args["motif"])
-                motif = setdist(motif, args["distance"])
-                motif = setambig(motif, args["ambig_max"])
-            else
-                motif = Motif(
-                    args["name"], args["fwd_motif"], 
-                    args["fwd_pam"], !args["not_forward"], !args["not_reverse"],
-                    args["distance"], !args["extend3"], args["ambig_max"])
-            end
+        if args["motif"] != ""
+            motif = Motif(args["motif"])
+            motif = setdist(motif, args["distance"])
+            motif = setambig(motif, args["ambig_max"])
+        else
+            motif = Motif(
+                args["name"], args["fwd_motif"], 
+                args["fwd_pam"], !args["not_forward"], !args["not_reverse"],
+                args["distance"], !args["extend3"], args["ambig_max"])
         end
 
         if args["%COMMAND%"] == "treeDB"
@@ -558,21 +467,6 @@ function main(args::Array{String})
             build_vcfDB(args["name"], args["genome"], args["vcfDB"]["vcf"], motif, args["output"], hash_len;
                 reuse_saved = !args["vcfDB"]["reuse_saved_not"],
                 variant_overlaps = args["vcfDB"]["variant_overlaps"])
-        elseif args["%COMMAND%"] == "fmi"
-            build_fmiDB(args["genome"], args["output"])
-        elseif args["%COMMAND%"] == "pamDB"
-            build_pamDB(args["pamDB"]["fmidir"], motif; storage_path = args["output"])
-        elseif args["%COMMAND%"] == "bffDB"
-            prec = UInt32
-            if args["bffDB"]["precision"] == "UInt8"
-                prec = UInt8
-            elseif args["bffDB"]["precision"] == "UInt16"
-                prec = UInt16
-            end
-            restrict_to_len = args["bffDB"]["restrict_to_len"] == 0 ? (length_noPAM(motif) - motif.distance) : args["bffDB"]["restrict_to_len"]
-            build_binaryFuseFilterDB(args["name"], args["genome"], motif, args["output"];
-                seed = args["bffDB"]["seed"], max_iterations = args["bffDB"]["max_iterations"], precision = prec,
-                restrict_to_len = restrict_to_len)
         else
             throw("Unsupported database type.")
         end
@@ -615,17 +509,6 @@ function main(args::Array{String})
                     distance = args["distance"],
                     early_stopping = repeat([1000000], args["distance"] + 1))
             end
-        elseif args["%COMMAND%"] == "fmi"
-            template = load(args["fmi"]["template"])
-            search_fmiDB(guides, template, args["database"], args["output"];
-                distance = args["distance"])
-        elseif args["%COMMAND%"] == "fmi_seed"
-            pamDB = load(args["fmi_seed"]["pamDB"])
-            search_fmiDB_seed(guides, args["database"], args["fmi_seed"]["genome"], pamDB, args["output"];
-                distance = args["distance"])
-        elseif args["%COMMAND%"] == "bffDB"
-            search_binaryFuseFilterDB(args["database"], args["bffDB"]["fmiDB"], args["bffDB"]["genome"], guides, args["output"];
-                distance = args["distance"])
         elseif args["%COMMAND%"] == "sassy"
             if args["motif"] != ""
                 motif = Motif(args["motif"])

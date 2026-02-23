@@ -2,7 +2,7 @@
 
 julia_version = "1.10.10"
 manifest_format = "2.0"
-project_hash = "d57ca03b7004d9ef1dac4d95c61b73c54c2437b7"
+project_hash = "4569ea50402f9327864188e182450fb2462c7dca"
 
 [[deps.ANSIColoredPrinters]]
 git-tree-sha1 = "574baf8110975760d391c710b6341da1afa48d8c"
@@ -341,12 +341,6 @@ git-tree-sha1 = "b6d6bfdd7ce25b0f9b2f6b3dd56b2673a66c8770"
 uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
 version = "0.2.5"
 
-[[deps.IndexableBitVectors]]
-deps = ["Random", "Test"]
-git-tree-sha1 = "b7f5e42dc867b8a8654a5f899064632dac05bc82"
-uuid = "1cb3b9ac-1ffd-5777-9e6b-a3d42300664d"
-version = "1.0.0"
-
 [[deps.InitialValues]]
 git-tree-sha1 = "4da0f88e9a39111c2fa3add390ab15f3a44f3ca3"
 uuid = "22cec73e-a1b8-11e9-2c92-598750a2cf9c"
@@ -364,12 +358,6 @@ version = "1.4.5"
     [deps.InlineStrings.weakdeps]
     ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
     Parsers = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
-
-[[deps.IntArrays]]
-deps = ["Mmap", "Random", "Test"]
-git-tree-sha1 = "dee0d841f11db7d54d87c12804d28a40db4e0749"
-uuid = "45d23951-e9a5-545c-8049-e4c4887f5525"
-version = "0.2.0"
 
 [[deps.InteractiveUtils]]
 deps = ["Markdown"]
@@ -753,11 +741,6 @@ version = "0.4.2"
 git-tree-sha1 = "f2dcb92855b31ad92fe8f079d4f75ac57c93e4b8"
 uuid = "354b36f9-a18e-4713-926e-db85100087ba"
 version = "1.3.7"
-
-[[deps.SuffixArrays]]
-git-tree-sha1 = "d7c29668b00abd0ee5f28180a10b7fe8b8cd8155"
-uuid = "24f65c1e-0a10-5d3d-8a1f-a83399f3fced"
-version = "1.0.0"
 
 [[deps.SuiteSparse_jll]]
 deps = ["Artifacts", "Libdl", "libblastrampoline_jll"]

@@ -73,7 +73,6 @@ CHOPOFF filter --detail_file results.csv --output filtered.csv --distance 3
 ### Module Structure (`src/CHOPOFF.jl`)
 
 Core modules are loaded in order:
-- `FMidx/FMindexes.jl` - FM-index implementation
 - `persistence.jl` - save/load functionality
 - `distance_metrics.jl` - Hamming, Levenshtein distances
 - `motif.jl` - Motif definition and handling
@@ -97,7 +96,6 @@ Each database has `build_*DB` and `search_*DB` functions:
 | hashDB | `build_hashDB` | `search_hashDB` | Distance=1 only, estimation |
 | dictDB | `build_dictDB` | `search_dictDB` | Simple dictionary of unique guides |
 | vcfDB | `build_vcfDB` | `search_vcfDB` | VCF/personalized search |
-| fmiDB | `build_fmiDB` | `search_fmiDB` | FM-index based |
 | sassy | N/A (direct search) | `search_sassy` | SIMD-optimized |
 
 ### Key Data Structures

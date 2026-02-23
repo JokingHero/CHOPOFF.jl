@@ -7,10 +7,6 @@ Pkg.test("CHOPOFF"; coverage = true)
 
 exclude = [
     "src/CHOPOFF.jl", # contains hard to test command line interface
-    "src/FMidx/saca.jl", # FMidx stuff is tested, but this package is not base CHOPOFF
-    "src/FMidx/WaveletMatrices.jl",
-    "src/FMidx/FMindexes.jl",
-    "src/db_fmi_seed.jl", # methods using FM-index and are edge experimental
     "src/db_hash.jl", # experimental
     "src/example_doc.jl"] # docs
 
