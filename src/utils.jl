@@ -145,6 +145,8 @@ function Base.convert(T::Type{<:Unsigned}, x::LongDNA{4})
         throw("Sequence too long to save as " * string(T))
     end
 
+    # BioSequences.twobitnucs was removed; use explicit DNA{2} encoding.
+    dna2_alphabet = BioSequences.DNAAlphabet{2}()
     y = zero(T)
     for c in x
         nt = convert(DNA, c)
@@ -153,7 +155,7 @@ function Base.convert(T::Type{<:Unsigned}, x::LongDNA{4})
         elseif isgap(nt)
             throw(ArgumentError("Gaps are not allowed."))
         end
-        y = (y << 2) | convert(T, BioSequences.twobitnucs[reinterpret(UInt8, nt) + 0x01])
+        y = (y << 2) | convert(T, BioSequences.tryencode(dna2_alphabet, nt))
     end
 
     mask = (one(T) << (2 * length(x))) - one(T)
