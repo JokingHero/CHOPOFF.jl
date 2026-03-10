@@ -53,7 +53,6 @@ function search_sassy_impl(
         return Tuple{Int, Int}[]
     end
 
-    # Match Rust chunking for single-text/single-pattern mode.
     blocks_in_text = cld(text_len, BLOCK_SIZE)
     max_overlap_blocks = cld(m + k, BLOCK_SIZE)
     blocks_per_chunk = max(1, cld(max(blocks_in_text - max_overlap_blocks, 0), LANES))
@@ -62,67 +61,91 @@ function search_sassy_impl(
     VecL = Vec{LANES, UInt64}
     hp_store = fill(VecL(1), m)
     hm_store = fill(VecL(0), m)
-    lane_states = [LaneMinimaState(true) for _ in 1:LANES]
+    
+    # Primitives and Arrays preallocated
+    lane_states_decreasing = fill(true, LANES)
     lane_matches = [Tuple{Int, Int}[] for _ in 1:LANES]
     lane_end = zeros(Int, LANES)
 
-    # Outer loop over 64bp blocks for each lane/chunk.
+    n_bases = length(bases)
+    bases_masks = [get_iupac_mask(b) for b in bases]
+    
+    current_lane_profiles = zeros(UInt64, LANES, n_bases)
+    eq_store = Vector{VecL}(undef, m)
+
     for i in 0:(blocks_per_chunk + max_overlap_blocks - 1)
         vp = VecL(0)
         vm = VecL(0)
         dist_to_start = VecL(0)
 
-        # Prepare lane profiles for this block.
-        current_lane_profiles = Vector{Vector{UInt64}}(undef, LANES)
+        # 1. Direct mask generation mapping (zero allocs)
         for lane in 1:LANES
             lane_end[lane] = lane_chunk_offsets[lane] + (i + 1) * BLOCK_SIZE
             start_pos = lane_chunk_offsets[lane] + i * BLOCK_SIZE + 1
-            padded = fill(UInt8('X'), BLOCK_SIZE)
-            if start_pos <= text_len
-                end_pos = min(start_pos + BLOCK_SIZE - 1, text_len)
-                span = end_pos - start_pos + 1
-                @inbounds padded[1:span] .= text[start_pos:end_pos]
+            
+            for j in 1:n_bases
+                current_lane_profiles[lane, j] = 0
             end
-            current_lane_profiles[lane] = encode_text_profile(padded, bases)
+
+            limit = min(64, text_len - start_pos + 1)
+            if limit > 0
+                for bit in 0:(limit - 1)
+                    pos = start_pos + bit
+                    @inbounds c_mask = get_iupac_mask(text[pos])
+                    if c_mask != 0
+                        bit_mask = UInt64(1) << bit
+                        for j in 1:n_bases
+                            if (@inbounds bases_masks[j] & c_mask) != 0
+                                @inbounds current_lane_profiles[lane, j] |= bit_mask
+                            end
+                        end
+                    end
+                end
+            end
         end
 
-        # Pattern loop (rows of DP matrix).
+        # 2. Precompute SIMD vectors for pattern sequence beforehand
         for j in 1:m
-            hp_in = hp_store[j]
-            hm_in = hm_store[j]
+            @inbounds pat_idx = pattern_indices[j]
+            @inbounds eq_store[j] = VecL(ntuple(l -> current_lane_profiles[l, pat_idx], Val(LANES)))
+        end
+
+        # 3. Inner DP rows processing
+        for j in 1:m
+            @inbounds hp_in = hp_store[j]
+            @inbounds hm_in = hm_store[j]
             dist_to_start += hp_in
             dist_to_start -= hm_in
 
-            pat_idx = pattern_indices[j]
-            eq = VecL(ntuple(l -> current_lane_profiles[l][pat_idx], Val(LANES)))
+            @inbounds eq = eq_store[j]
             (hp_out, hm_out, vp, vm, _, _) = compute_block(hp_in, hm_in, vp, vm, eq)
-            hp_store[j] = hp_out
-            hm_store[j] = hm_out
+            @inbounds hp_store[j] = hp_out
+            @inbounds hm_store[j] = hm_out
         end
 
-        dist_arr = Tuple(dist_to_start)
-        vp_arr = Tuple(vp)
-        vm_arr = Tuple(vm)
+        # 4. Extract candidates using fast direct index SIMD.Vec
         for lane in 1:LANES
             block_abs_start = lane_chunk_offsets[lane] + i * BLOCK_SIZE
             if block_abs_start >= text_len
                 continue
             end
-            scan_block_minima(
-                vp_arr[lane],
-                vm_arr[lane],
-                Int(dist_arr[lane]),
+            
+            @inbounds state_dec = lane_states_decreasing[lane]
+            new_dec = scan_block_minima(
+                vp[lane],
+                vm[lane],
+                Int(dist_to_start[lane]),
                 k,
                 block_abs_start,
                 text_len,
                 lane_matches[lane],
-                lane_states[lane],
+                state_dec,
                 Val(USE_PEXT)
             )
+            @inbounds lane_states_decreasing[lane] = new_dec
         end
     end
 
-    # Prune overlapped chunk outputs to mirror Rust `prune_lane_overlaps`.
     if !isempty(lane_matches)
         lane1_end = lane_end[1]
         filter!(x -> x[1] < lane1_end, lane_matches[1])

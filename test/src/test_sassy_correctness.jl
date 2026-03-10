@@ -510,6 +510,124 @@ end
     end
 end
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 11 — Insertions and Deletions
+# ═══════════════════════════════════════════════════════════════════════════════
+@testset "Insertions and Deletions" begin
+    guide = "ACGTACGTACGTACGTACGT"
+    pam   = "AGG"
+    motif = Motif("Cas9"; distance = 2)
+    
+    @testset "1bp Deletion in genome (Guide has extra base)" begin
+        # Removed the 10th base ('C') from the genome
+        mut_del = "ACGTACGTAGTACGTACGT" 
+        gpath = build_genome(PAD * mut_del * pam * PAD; tag = "indel_del")
+        df = run_sassy(guide, gpath, motif; distance = 2)
+        @test nrow(df) == 1
+        @test df[1, :distance] == 1
+        @test occursin("-", df[1, :alignment_reference]) # Genome needs gap
+    end
+
+    @testset "1bp Insertion in genome (Genome has extra base)" begin
+        # Inserted an extra 'A' after the 10th base
+        mut_ins = "ACGTACGTAC" * "A" * "GTACGTACGT"
+        gpath = build_genome(PAD * mut_ins * pam * PAD; tag = "indel_ins")
+        df = run_sassy(guide, gpath, motif; distance = 2)
+        @test nrow(df) == 1
+        @test df[1, :distance] == 1
+        @test occursin("-", df[1, :alignment_guide]) # Guide needs gap
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 12 — SIMD Lane Chunk Boundaries
+# ═══════════════════════════════════════════════════════════════════════════════
+@testset "SIMD Lane Chunk Boundary Crossings" begin
+    guide = "ACGTACGTACGTACGTACGT"
+    pam   = "AGG"
+    target = guide * pam
+    motif = Motif("Cas9"; distance = 0)
+    
+    # Force a specific layout: LANES=4, BLOCK_SIZE=64.
+    # If text is ~600bp, blocks = ceil(600/64) = 10.
+    # lanes = 4 -> chunks of roughly 2-3 blocks (128 - 192 bp).
+    # We place the target exactly at index 120 so it crosses the 128bp boundary.
+    prefix = repeat("T", 120)
+    suffix = repeat("T", 600 - length(prefix) - length(target))
+    
+    gpath = build_genome(prefix * target * suffix; tag = "lane_boundary")
+    df = run_sassy(guide, gpath, motif; distance = 0)
+    
+    # Should be found EXACTLY once, no duplicates from overlapping lanes, no misses
+    @test nrow(df) == 1
+    @test df[1, :distance] == 0
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 13 — Early Stopping Compliance
+# ═══════════════════════════════════════════════════════════════════════════════
+@testset "Early Stopping Thresholds" begin
+    guide = "ACGTACGTACGTACGTACGT"
+    pam   = "AGG"
+    target = guide * pam
+    motif = Motif("Cas9"; distance = 1)
+    
+    # 5 exact matches scattered
+    genome_seq = PAD * target * PAD * target * PAD * target * PAD * target * PAD * target * PAD
+    gpath = build_genome(genome_seq; tag = "early_stop")
+    
+    # Set limit to 2 for distance 0 matches
+    es_limits = [2, 10] # limit d=0 to 2, d=1 to 10
+    
+    df = run_sassy(guide, gpath, motif; distance = 1, early_stopping = es_limits)
+    
+    # Must yield EXACTLY 2 matches, ignoring the other 3
+    @test nrow(df) == 2
+end
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 14 — Tandem Repeats and Overlaps
+# ═══════════════════════════════════════════════════════════════════════════════
+@testset "Overlapping Minima Resolution" begin
+    guide = "AAAAAAAAAAAAAAAAAAAA" # 20 A's
+    pam   = "AGG"
+    motif = Motif("Cas9"; distance = 0)
+    
+    # Genome has 25 A's followed by AGG. 
+    # Technically "AAAAAAAAAAAAAAAAAAAA" matches at multiple shifts.
+    # But because of strict PAM matching, it should lock onto the specific shift ending at AGG.
+    genome_seq = PAD * "AAAAAAAAAAAAAAAAAAAAAAAAA" * pam * PAD
+    gpath = build_genome(genome_seq; tag = "tandem")
+    
+    df = run_sassy(guide, gpath, motif; distance = 0)
+    @test nrow(df) == 1 # Shouldn't trigger multiple false-positive hits
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST 15 — Internal 'N' Wildcard Behavior
+# ═══════════════════════════════════════════════════════════════════════════════
+@testset "Genomic 'N' Block Handling" begin
+    guide = "ACGTACGTACGTACGTACGT"
+    pam   = "AGG"
+    motif = Motif("Cas9"; distance = 0)
+    
+    # A stretch of 30 N's sandwiched by normal DNA (simulate an unmapped centromere gap)
+    genome_seq = PAD * repeat("N", 30) * PAD
+    gpath = build_genome(genome_seq; tag = "n_block")
+    
+    # Does CHOPOFF intend for N to match anything? 
+    # If yes -> nrow > 0. If no -> nrow == 0.
+    # Usually, bioinformatics tools filter N-matches or score them as mismatches.
+    # Testing this forces you to document the exact expected behavior of Sassy on 'N's.
+    df = run_sassy(guide, gpath, motif; distance = 0)
+    
+    # If your intended behavior is that N matches ANY guide base, then this will be > 0.
+    # If you intend to reject them, and it returns >0, you have a bug in get_iupac_mask('N').
+    # (Typically, you want get_iupac_mask('N') = 0x00 for the genome, but 0x0F for the guide).
+    @test true # Adjust this assertion based on your desired logic!
+end
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Cleanup

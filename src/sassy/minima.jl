@@ -89,9 +89,6 @@ const NIBBLE_TABLE = let
     table
 end
 
-mutable struct LaneMinimaState
-    decreasing::Bool
-end
 
 """
     scan_block_minima(vp_mask, vm_mask, start_cost, k, block_start_pos, text_len, matches_out, lane_state, ::Val{USE_PEXT}, all_minima=false)
@@ -104,16 +101,16 @@ end
     block_start_pos::Int,
     text_len::Int,
     matches_out::Vector{Tuple{Int, Int}},
-    lane_state::LaneMinimaState,
+    decreasing::Bool, # Replaced Object param
     ::Val{false},
     all_minima::Bool = false
-)
+)::Bool # Add return type
     cost = start_cost
     prev_cost = start_cost
     prev_pos = block_start_pos
 
     if block_start_pos >= text_len
-        return
+        return decreasing
     end
 
     if all_minima && cost <= k && prev_pos == 0
@@ -133,12 +130,12 @@ end
             byte = nibble_p | (nibble_m << 4)
             min_cost, end_cost = NIBBLE_TABLE[byte + 1]
 
-            can_skip = (cost + min_cost > k) && !(lane_state.decreasing && prev_cost <= k)
+            can_skip = (cost + min_cost > k) && !(decreasing && prev_cost <= k)
             if can_skip
                 cost += end_cost
                 prev_cost = cost
                 delta4 = Int((nibble_p >> 3) & 1) - Int((nibble_m >> 3) & 1)
-                lane_state.decreasing = (delta4 <= 0)
+                decreasing = (delta4 <= 0)
                 prev_pos = pos + 3
                 bit += 4
                 continue
@@ -157,11 +154,11 @@ end
             costs_are_increasing = cost > prev_cost
             costs_are_decreasing = cost < prev_cost
 
-            if lane_state.decreasing && costs_are_increasing && prev_cost <= k
+            if decreasing && costs_are_increasing && prev_cost <= k
                 push!(matches_out, (prev_pos, max(0, prev_cost)))
             end
 
-            lane_state.decreasing = costs_are_decreasing || (lane_state.decreasing && costs_are_equal)
+            decreasing = costs_are_decreasing || (decreasing && costs_are_equal)
         end
 
         prev_cost = cost
@@ -169,9 +166,11 @@ end
         bit += 1
     end
 
-    if !all_minima && prev_pos == text_len && lane_state.decreasing && prev_cost <= k
+    if !all_minima && prev_pos == text_len && decreasing && prev_cost <= k
         push!(matches_out, (prev_pos, max(0, prev_cost)))
     end
+    
+    return decreasing
 end
 
 @inline function scan_block_minima(
@@ -182,25 +181,15 @@ end
     block_start_pos::Int,
     text_len::Int,
     matches_out::Vector{Tuple{Int, Int}},
-    lane_state::LaneMinimaState,
+    decreasing::Bool,
     ::Val{true},
     all_minima::Bool = false
-)
+)::Bool
     if all_minima
-        # Keep the exact per-position semantics for exhaustive mode.
-        scan_block_minima(
-            vp_mask,
-            vm_mask,
-            start_cost,
-            k,
-            block_start_pos,
-            text_len,
-            matches_out,
-            lane_state,
-            Val(false),
-            all_minima,
+        return scan_block_minima(
+            vp_mask, vm_mask, start_cost, k, block_start_pos, text_len,
+            matches_out, decreasing, Val(false), all_minima
         )
-        return
     end
 
     cost = start_cost
@@ -208,12 +197,12 @@ end
     prev_pos = block_start_pos
 
     if block_start_pos >= text_len
-        return
+        return decreasing
     end
 
     bits_to_scan = min(64, text_len - block_start_pos)
     if bits_to_scan <= 0
-        return
+        return decreasing
     end
 
     valid_mask = bits_to_scan == 64 ? typemax(UInt64) : ((UInt64(1) << bits_to_scan) - UInt64(1))
@@ -223,14 +212,12 @@ end
 
     if active_mask == 0
         prev_pos += bits_to_scan
-        if prev_pos == text_len && lane_state.decreasing && prev_cost <= k
+        if prev_pos == text_len && decreasing && prev_cost <= k
             push!(matches_out, (prev_pos, max(0, prev_cost)))
         end
-        return
+        return decreasing
     end
 
-    # Compress delta-sign bits only at positions where cost changes.
-    # `active_mask` marks non-zero deltas; packed bits preserve bit-order.
     packed_pos = pext_u64(vp_valid, active_mask)
     packed_neg = pext_u64(vm_valid, active_mask)
 
@@ -264,11 +251,11 @@ end
         costs_are_increasing = cost > prev_cost
         costs_are_decreasing = cost < prev_cost
 
-        if lane_state.decreasing && costs_are_increasing && prev_cost <= k
+        if decreasing && costs_are_increasing && prev_cost <= k
             push!(matches_out, (prev_pos, max(0, prev_cost)))
         end
 
-        lane_state.decreasing = costs_are_decreasing || (lane_state.decreasing && costs_are_equal)
+        decreasing = costs_are_decreasing || (decreasing && costs_are_equal)
 
         prev_cost = cost
         prev_pos = pos
@@ -276,7 +263,9 @@ end
         event_idx += 1
     end
 
-    if prev_pos == text_len && lane_state.decreasing && prev_cost <= k
+    if prev_pos == text_len && decreasing && prev_cost <= k
         push!(matches_out, (prev_pos, max(0, prev_cost)))
     end
+    
+    return decreasing
 end

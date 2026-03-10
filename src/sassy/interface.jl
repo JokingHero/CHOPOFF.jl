@@ -496,9 +496,17 @@ function search_sassy(
     use_pext = !force_safe_minima && can_use_bmi2_pext()
     
     _search_impl = if use_avx512
-        (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(8), Val(use_pext))
+        if use_pext
+            (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(8), Val(true))
+        else
+            (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(8), Val(false))
+        end
     else
-        (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(use_pext))
+        if use_pext
+            (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(true))
+        else
+            (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(false))
+        end
     end
     dbi = DBInfo(genome_path, "sassy_search", motif)
     if any(length_noPAM(motif) .!= length.(guides))
@@ -516,7 +524,7 @@ function search_sassy(
     reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
 
     g_count = Base.length(guides)
-    is_es = falses(g_count)
+    is_es = fill(false, g_count)
     es_accumulator = zeros(Int, g_count, distance + 1)
     all_offt = [Vector{Offtarget}() for _ in 1:g_count]
 

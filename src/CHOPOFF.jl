@@ -351,6 +351,35 @@ function parse_commandline(args::Array{String})
             arg_type = Int
             nargs = '*'
             required = false
+        "--motif"
+            help = "Will try to get the Motif template based on the standard name e.g. Cas9 or Cas12a"
+            arg_type = String
+            default = ""
+        "--name"
+            help = "Short name for custom motif."
+            arg_type = String
+            default = "sassy_motif"
+        "--fwd_motif"
+            help = "Motif that indicates where is PAM inside `fwdpam`."
+            arg_type = String
+            default = ""
+        "--fwd_pam"
+            help = "Motif in 5'-3' that will be matched on the reference."
+            arg_type = String
+            default = ""
+        "--not_forward"
+            help = "If used will not match to the forward reference strand."
+            action = :store_true
+        "--not_reverse"
+            help = "If used will not match to the reverse reference strand."
+            action = :store_true
+        "--extend3" 
+            help = "Whether to extend in the 5' and 3' direction."
+            action = :store_true
+        "--ambig_max"
+            help = "How many ambiguous bases are allowed inside the guide?"
+            arg_type = Int
+            default = 0
     end
 
     @add_arg_table! s["estimate"] begin
@@ -510,27 +539,30 @@ function main(args::Array{String})
                     early_stopping = repeat([1000000], args["distance"] + 1))
             end
         elseif args["%COMMAND%"] == "sassy"
-            if args["motif"] != ""
-                motif = Motif(args["motif"])
+            sassy_args = args["sassy"]
+            
+            if sassy_args["motif"] != ""
+                motif = Motif(sassy_args["motif"])
                 motif = setdist(motif, args["distance"])
+                motif = setambig(motif, sassy_args["ambig_max"])
             else
                  # Sassy needs full motif info for PAM
                  motif = Motif(
-                    args["name"], args["fwd_motif"],
-                    args["fwd_pam"], !args["not_forward"], !args["not_reverse"],
-                    args["distance"], !args["extend3"], args["ambig_max"])
+                    sassy_args["name"], sassy_args["fwd_motif"],
+                    sassy_args["fwd_pam"], !sassy_args["not_forward"], !sassy_args["not_reverse"],
+                    args["distance"], !sassy_args["extend3"], sassy_args["ambig_max"])
             end
 
             # Handle early_stopping
-            if length(args["sassy"]["early_stopping"]) != 0
-                search_sassy(guides, args["sassy"]["genome"], motif, args["output"];
+            if length(sassy_args["early_stopping"]) != 0
+                search_sassy(guides, sassy_args["genome"], motif, args["output"];
                     distance = args["distance"],
-                    force_safe_minima = args["sassy"]["force_safe_minima"],
-                    early_stopping = args["sassy"]["early_stopping"])
+                    force_safe_minima = sassy_args["force_safe_minima"],
+                    early_stopping = sassy_args["early_stopping"])
             else
-                search_sassy(guides, args["sassy"]["genome"], motif, args["output"];
+                search_sassy(guides, sassy_args["genome"], motif, args["output"];
                     distance = args["distance"],
-                    force_safe_minima = args["sassy"]["force_safe_minima"],
+                    force_safe_minima = sassy_args["force_safe_minima"],
                     early_stopping = repeat([1000000], args["distance"] + 1))
             end
         else

@@ -2,14 +2,13 @@
 const LANES = 4
 const BLOCK_SIZE = 64
 
-# IUPAC encoding (Matches Rust sassy/profiles/iupac.rs)
+# IUPAC encoding 
 const IUPAC_SASSY = let
     enc = zeros(UInt8, 32)
     A = UInt8(1 << 0)
     C = UInt8(1 << 1)
     T = UInt8(1 << 2)
     G = UInt8(1 << 3)
-    # ASCII & 0x1F gives 1-based index (A=1, C=3, etc.)
     enc[Int('A') & 0x1F + 1] = A
     enc[Int('C') & 0x1F + 1] = C
     enc[Int('T') & 0x1F + 1] = T
@@ -30,11 +29,18 @@ const IUPAC_SASSY = let
     enc
 end
 
-@inline function get_iupac_mask(c::UInt8)
-    # Ensure only letters are mapped to IUPAC (ASCII 65-90, 97-122)
-    # This prevents non-letters like '-' from colliding with IUPAC codes.
-    if (UInt8('A') <= c <= UInt8('Z')) || (UInt8('a') <= c <= UInt8('z'))
-        return @inbounds IUPAC_SASSY[(c & 0x1F) + 1]
+# 256-element Branchless LUT
+const IUPAC_TABLE = let
+    t = zeros(UInt8, 256)
+    for i in 0:255
+        c = UInt8(i)
+        if (UInt8('A') <= c <= UInt8('Z')) || (UInt8('a') <= c <= UInt8('z'))
+            t[i+1] = IUPAC_SASSY[(c & 0x1F) + 1]
+        end
     end
-    return UInt8(0)
+    t
+end
+
+@inline function get_iupac_mask(c::UInt8)
+    return @inbounds IUPAC_TABLE[c + 1]
 end
