@@ -33,6 +33,9 @@ Vectorized to process L lanes simultaneously.
     return (hp_out, hm_out, vp_new, vm_new, hp_shifted, hm_shifted)
 end
 
+# Minimum rows to process before early termination check kicks in
+const CHECK_AT_LEAST_ROWS = 8
+
 """
     search_sassy_impl(pattern_indices, text, k, bases, ::Val{LANES}, ::Val{USE_PEXT})
 
@@ -73,10 +76,18 @@ function search_sassy_impl(
     current_lane_profiles = zeros(UInt64, LANES, n_bases)
     eq_store = Vector{VecL}(undef, m)
 
+    # Early termination state (mirrors Rust search.rs dist_to_end / end_last_below)
+    dist_to_end = zeros(Int, LANES)
+    prev_end_last_below = 0
+    prev_max_j = 0
+
     for i in 0:(blocks_per_chunk + max_overlap_blocks - 1)
         vp = VecL(0)
         vm = VecL(0)
         dist_to_start = VecL(0)
+        fill!(dist_to_end, 0)
+        cur_end_last_below = 0
+        skip_block = false
 
         # 1. Direct mask generation mapping (zero allocs)
         for lane in 1:LANES
@@ -110,7 +121,7 @@ function search_sassy_impl(
             @inbounds eq_store[j] = VecL(ntuple(l -> current_lane_profiles[l, pat_idx], Val(LANES)))
         end
 
-        # 3. Inner DP rows processing
+        # 3. Inner DP rows processing with early termination
         for j in 1:m
             @inbounds hp_in = hp_store[j]
             @inbounds hm_in = hm_store[j]
@@ -121,6 +132,48 @@ function search_sassy_impl(
             (hp_out, hm_out, vp, vm, _, _) = compute_block(hp_in, hm_in, vp, vm, eq)
             @inbounds hp_store[j] = hp_out
             @inbounds hm_store[j] = hm_out
+
+            # --- Early termination (mirrors Rust search.rs:1013-1046) ---
+            for l in 1:LANES
+                @inbounds dist_to_end[l] += Int(hp_out[l]) - Int(hm_out[l])
+            end
+
+            # Track highest row where any lane has cost ≤ k
+            for l in 1:LANES
+                if @inbounds dist_to_end[l] <= k
+                    cur_end_last_below = j
+                    break
+                end
+            end
+
+            # Check early termination only past the last promising row
+            if j > prev_end_last_below
+                promising = false
+                for l in 1:LANES
+                    pmin, _ = prefix_min_val(vp[l], vm[l], Val(USE_PEXT))
+                    if Int(pmin) + Int(dist_to_start[l]) <= k
+                        rows_needed = k - (Int(pmin) + Int(dist_to_start[l]))
+                        prev_end_last_below = j + max(CHECK_AT_LEAST_ROWS, rows_needed)
+                        promising = true
+                        break
+                    end
+                end
+                if !promising
+                    # Reset hp/hm for skipped rows to initial state
+                    for j2 in (j+1):prev_max_j
+                        @inbounds hp_store[j2] = VecL(1)
+                        @inbounds hm_store[j2] = VecL(0)
+                    end
+                    prev_end_last_below = max(cur_end_last_below, CHECK_AT_LEAST_ROWS)
+                    prev_max_j = j
+                    skip_block = true
+                    break
+                end
+            end
+        end
+
+        if skip_block
+            continue
         end
 
         # 4. Extract candidates using fast direct index SIMD.Vec
@@ -129,7 +182,13 @@ function search_sassy_impl(
             if block_abs_start >= text_len
                 continue
             end
-            
+
+            # Skip lane if no position can have cost ≤ k
+            pmin, _ = prefix_min_val(vp[lane], vm[lane], Val(USE_PEXT))
+            if Int(pmin) + Int(dist_to_start[lane]) > k
+                continue
+            end
+
             @inbounds state_dec = lane_states_decreasing[lane]
             new_dec = scan_block_minima(
                 vp[lane],
@@ -144,6 +203,10 @@ function search_sassy_impl(
             )
             @inbounds lane_states_decreasing[lane] = new_dec
         end
+
+        # Bookkeeping for next block's early termination
+        prev_end_last_below = max(cur_end_last_below, CHECK_AT_LEAST_ROWS)
+        prev_max_j = m
     end
 
     if !isempty(lane_matches)

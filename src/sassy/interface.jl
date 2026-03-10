@@ -346,7 +346,7 @@ function search_sassy_guide(
         end
     end
 
-    search_pattern = strict_pam ? guide_pattern : full_pattern_seq
+    search_pattern = full_pattern_seq
     pattern_bytes = Vector{UInt8}(String(search_pattern))
     search_len = Base.length(pattern_bytes)
     guide_len = Base.length(guide_pattern)
@@ -378,7 +378,7 @@ function search_sassy_guide(
                 guide_len,
                 pam_len,
                 pam_on_left,
-                strict_pam,
+                false,
             )
             if motif_start < 1 || motif_end > n || guide_start < 1 || guide_end > n
                 continue
@@ -545,15 +545,18 @@ function search_sassy(
                     loc = Loc(dbi.gi.chrom_type(chrom_idx), dbi.gi.pos_type(r.pos), is_plus)
                     offt = Offtarget(loc, r.dist, r.aln_guide, r.aln_ref)
 
-                    # Keep all valid alignments (linearDB parity). Lock removed because ThreadsX loops over guide_idx.
-                    push!(all_offt[guide_idx], offt)
-
                     if use_es
-                        es_accumulator[guide_idx, offt.dist + 1] += 1
-                        if es_accumulator[guide_idx, offt.dist + 1] >= es_limits[offt.dist + 1]
+                        dist_idx = offt.dist + 1
+                        if es_accumulator[guide_idx, dist_idx] >= es_limits[dist_idx]
+                            continue  # skip — limit already reached for this distance
+                        end
+                        es_accumulator[guide_idx, dist_idx] += 1
+                        if es_accumulator[guide_idx, dist_idx] >= es_limits[dist_idx]
                             is_es[guide_idx] = true
                         end
                     end
+
+                    push!(all_offt[guide_idx], offt)
                 end
             end
 

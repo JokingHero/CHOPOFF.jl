@@ -91,6 +91,39 @@ end
 
 
 """
+    prefix_min_val(vp, vm, ::Val{USE_PEXT}) -> (min_val, end_val)
+
+Compute the minimum prefix cost over a 64-bit vp/vm pair.
+Returns (min_val, end_val) where min_val is the minimum cumulative delta
+and end_val is the total cumulative delta across all 64 bits.
+Used for early termination: if start_cost + min_val > k, no position in
+this block can have cost ≤ k.
+"""
+@inline function prefix_min_val(vp::UInt64, vm::UInt64, ::Val{true})::Tuple{Int8, Int8}
+    delta = vp | vm
+    deltas = pext_u64(vm, delta)
+    min_val = Int8(0); cur = Int8(0)
+    for i in 0:7
+        byte = UInt8((deltas >> (i * 8)) & 0xFF)
+        @inbounds tmin, tend = PACKED_TABLE[byte + 1]
+        min_val = min(min_val, cur + tmin)
+        cur += tend
+    end
+    return (min_val, Int8(count_ones(vp)) - Int8(count_ones(vm)))
+end
+
+@inline function prefix_min_val(vp::UInt64, vm::UInt64, ::Val{false})::Tuple{Int8, Int8}
+    min_val = Int8(0); cur = Int8(0)
+    for i in 0:15
+        byte = UInt8(((vp >> (i*4)) & 0xF) | (((vm >> (i*4)) & 0xF) << 4))
+        @inbounds tmin, tend = NIBBLE_TABLE[byte + 1]
+        min_val = min(min_val, cur + tmin)
+        cur += tend
+    end
+    return (min_val, cur)
+end
+
+"""
     scan_block_minima(vp_mask, vm_mask, start_cost, k, block_start_pos, text_len, matches_out, lane_state, ::Val{USE_PEXT}, all_minima=false)
 """
 @inline function scan_block_minima(
