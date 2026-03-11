@@ -2,17 +2,17 @@
 
 ## Executive Summary
 
-Comparing Julia `src/sassy/` against the reference Rust `sassy/src/`, five architectural gaps explain the observed performance difference. Two dominant issues — early termination and text encoding — have been fixed. The remaining gaps are smaller and compound multiplicatively.
+Comparing Julia `src/sassy/` against the reference Rust `sassy/src/`, five architectural gaps explain the observed performance difference. Three dominant issues — early termination, text encoding, and per-call allocations — have been fixed. The remaining gaps are small.
 
 | # | Bottleneck | Est. Impact | Status |
 |---|-----------|-------------|--------|
 | 1 | Missing early termination | 2–4x | **Fixed** |
 | 2 | Scalar text encoding (no SIMD) | 2–3x | **Fixed** (3-tier: AVX2 / scalar-fast / generic) |
-| 3 | Per-call heap allocations | 1.3–1.5x | Open |
+| 3 | Per-call heap allocations | 1.3–1.5x | **Fixed** (SassyWorkspace reuse) |
 | 4 | Genome string copies | 1.1–1.2x | Open |
 | 5 | Dedup/sort/shift overhead | 1.05–1.1x | Open |
 
-Remaining theoretical gap after fixes 1+2: **~1.5–2x** (bottlenecks 3-5 combined).
+Remaining theoretical gap after fixes 1–3: **~1.15–1.3x** (bottlenecks 4-5 combined).
 
 ---
 
@@ -74,11 +74,11 @@ For patterns with IUPAC ambiguity (n_bases > 4), or non-AVX2 partial blocks:
 
 - **Bottleneck 3 (allocations)**: No change. The encoding uses pre-existing `current_lane_profiles` matrix — zero new allocations.
 - **Bottleneck 4 (genome copies)**: No change. AVX2 path uses `vload` from the same `text::AbstractVector{UInt8}`. Eliminating copies would still help by reducing memory pressure / cache pollution.
-- **ntuple closure in eq_store**: Still present (`core.jl:136`). Now that encoding is fast, this closure allocation may become a larger relative cost. Prioritize fixing.
+- **ntuple closure in eq_store**: Investigated — confirmed **no heap allocation**. Julia unrolls `ntuple` with `Val(LANES)` at compile time.
 
 ---
 
-## Bottleneck 3: Per-Call Heap Allocations (1.3–1.5x)
+## Bottleneck 3: Per-Call Heap Allocations — FIXED
 
 ### What Rust does (`search.rs:221-247`)
 
@@ -93,54 +93,42 @@ pub struct Searcher<P: Profile> {
 }
 ```
 
-### What Julia does (`core.jl:62-74`)
+### What was done
 
-Fresh allocations every call to `search_sassy_impl`:
+Introduced `SassyWorkspace{L}` — an immutable struct holding pre-allocated mutable buffers. All ~9 per-call heap allocations (`hp_store`, `hm_store`, `eq_store`, `current_lane_profiles`, `lane_matches`, `lane_end`, `dist_to_end`, plus result-collection vectors `matches_all`, `unique_matches`, `seen_pos`) are now allocated once and reused via `reset!`.
 
-```julia
-hp_store = fill(VecL(1), m)                          # heap alloc
-hm_store = fill(VecL(0), m)                          # heap alloc
-lane_states_decreasing = fill(true, LANES)            # heap alloc
-lane_matches = [Tuple{Int,Int}[] for _ in 1:LANES]    # heap alloc × LANES
-lane_end = zeros(Int, LANES)                          # heap alloc
-current_lane_profiles = zeros(UInt64, LANES, n_bases)  # heap alloc
-eq_store = Vector{VecL}(undef, m)                     # heap alloc
-```
-
-Called per guide × strand × chromosome. For 100 guides, 25 chroms, 2 strands = **5,000 calls → ~35,000 allocations** + GC pressure.
-
-### Fix
-
-Create a reusable workspace struct:
+One workspace per guide, created before the chromosome loop in `search_sassy`, reused for all chromosomes + both strands. Thread-safe: each guide gets its own workspace indexed by `guide_idx` in the `ThreadsX.foreach` closure.
 
 ```julia
-mutable struct SassyWorkspace{VecL}
-    hp_store::Vector{VecL}
-    hm_store::Vector{VecL}
-    eq_store::Vector{VecL}
-    lane_matches::Vector{Vector{Tuple{Int,Int}}}
-    current_lane_profiles::Matrix{UInt64}
+struct SassyWorkspace{L}
+    hp_store::Vector{Vec{L, UInt64}}
+    hm_store::Vector{Vec{L, UInt64}}
+    eq_store::Vector{Vec{L, UInt64}}
+    current_lane_profiles::Matrix{UInt64}   # (L, max_bases=16)
     lane_states_decreasing::Vector{Bool}
+    lane_matches::Vector{Vector{Tuple{Int,Int}}}
     lane_end::Vector{Int}
     dist_to_end::Vector{Int}
-end
-
-function reset!(ws::SassyWorkspace{VecL}, m::Int) where VecL
-    resize!(ws.hp_store, m); fill!(ws.hp_store, VecL(1))
-    resize!(ws.hm_store, m); fill!(ws.hm_store, VecL(0))
-    resize!(ws.eq_store, m)
-    for v in ws.lane_matches; empty!(v); end
-    fill!(ws.lane_states_decreasing, true)
-    fill!(ws.lane_end, 0)
-    fill!(ws.current_lane_profiles, UInt64(0))
+    matches_all::Vector{Tuple{Int,Int}}
+    unique_matches::Vector{Tuple{Int,Int}}
+    seen_pos::Set{Int}
 end
 ```
 
-Allocate once in `search_sassy`, pass to all calls. Thread-local copies for threaded search.
+`search_sassy_impl` accepts an optional `workspace` kwarg. When `nothing` (default), allocates fresh buffers for backward compatibility with tests. When provided, calls `reset!` and reuses buffers — `resize!` is effectively a no-op after the first call since all guides share the same `m`.
 
-### Priority after encoding fix: **HIGH**
+### Files changed
 
-Now that encoding is fast, allocation/GC overhead is a larger fraction of total time. This is the next bottleneck to address.
+| File | Change |
+|------|--------|
+| `src/sassy/core.jl` | Added `SassyWorkspace{L}`, constructor, `reset!`; `search_sassy_impl` accepts `workspace` kwarg |
+| `src/sassy/interface.jl` | `_search_impl` closures forward `workspace`; pre-allocates `workspaces` array; `search_sassy_guide` accepts and passes `workspace` |
+| `src/sassy/sassy.jl` | Added `SassyWorkspace` export |
+
+### Design notes
+
+- Return value safety: `search_sassy_guide` iterates `ws.unique_matches` immediately in a `for` loop, extracting value-type `(Int, Int)` tuples. No reference escapes before next `reset!`.
+- `ntuple` closure in eq_store construction (`core.jl:189`) was investigated and confirmed to **NOT allocate** — Julia unrolls `ntuple` with `Val(LANES)` at compile time. Left as-is.
 
 ---
 
@@ -226,15 +214,13 @@ Small absolute impact, but becomes easier once Bottleneck 3 (workspace struct) i
 
 ## Additional Observations
 
-### `ntuple` closure in eq_store construction
+### ~~`ntuple` closure in eq_store construction~~ — NOT AN ISSUE
 
 ```julia
 eq_store[j] = VecL(ntuple(l -> current_lane_profiles[l, pat_idx], Val(LANES)))
 ```
 
-This creates a closure capturing `current_lane_profiles` and `pat_idx` on every iteration. With m=20 and ~46M blocks = **~920M closure allocations**. Should be replaced with direct construction or a helper that avoids the closure.
-
-**Priority after encoding fix: HIGH** — this is now one of the top remaining per-block costs.
+Investigated: Julia unrolls `ntuple` with `Val(LANES)` at compile time. The closure is never heap-allocated — it's inlined by the compiler. No action needed.
 
 ### Shift loop in `search_sassy_guide`
 
@@ -270,13 +256,12 @@ f(a, b) = a + b
 - **Expected gain**: 2–3x (AVX2 path matches Rust encode_ref)
 - **Files**: `simd_encoding.jl` (new), `constants.jl`, `core.jl`, `sassy.jl`
 
-### Phase 3: Allocation Reuse ← NEXT
-- **Files**: `src/sassy/core.jl`, `src/sassy/interface.jl`
+### ~~Phase 3: Allocation Reuse~~ — DONE
 - **Expected gain**: 1.3–1.5x
-- **Risk**: Low — structural refactor, no algorithm change
-- **Includes**: Fix ntuple closure in eq_store (same refactor)
+- **Files**: `src/sassy/core.jl`, `src/sassy/interface.jl`, `src/sassy/sassy.jl`
+- `ntuple` closure in eq_store confirmed to NOT allocate — no fix needed
 
-### Phase 4: Genome Copy Elimination
+### Phase 4: Genome Copy Elimination ← NEXT
 - **Files**: `src/sassy/interface.jl`
 - **Expected gain**: 1.1–1.2x
 - **Risk**: Low
@@ -295,4 +280,4 @@ After each phase:
 2. `julia --project=. -e 'include("test/src/verify_sassy_core.jl")'` — linearDB parity
 3. `CHOPOFF_BENCH_RUNS=7 julia --project=. scripts/benchmark_sassy_vs_prefixhash.jl` — benchmark
 
-Target: bring Julia sassy within **1.5–2x** of Rust reference performance (from current ~10x gap, with phases 1+2 already closing ~4–8x).
+Target: bring Julia sassy within **1.5–2x** of Rust reference performance (from current ~10x gap, with phases 1–3 already closing the majority of the gap).
