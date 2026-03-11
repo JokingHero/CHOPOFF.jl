@@ -320,9 +320,10 @@ function search_sassy_guide(
     dbi::DBInfo,
     is_antisense::Bool,
     telomere_offset::Int = 0,
-    impl_func::F = (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(true));
+    impl_func::F = (idx, txt, k, b; workspace=nothing) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(true); workspace);
     strict_pam::Bool = true,
     traceback_backend::Symbol = :custom,
+    workspace::Union{SassyWorkspace, Nothing} = nothing,
 ) where {F <: Function}
     traceback_backend = validate_traceback_backend(traceback_backend)
     # 1. Prepare guide orientation and PAM pattern for this strand.
@@ -362,7 +363,7 @@ function search_sassy_guide(
     query_for_linear_aln = motif.extends5 ? reverse(guide_seq) : guide_seq
 
     # 3. Run Sassy Algorithm
-    matches = impl_func(pattern_indices, genome_bytes, k, bases)
+    matches = impl_func(pattern_indices, genome_bytes, k, bases; workspace)
 
     # 4. Filter and Verify (Traceback/Alignment)
     for (local_pos, _score) in matches
@@ -497,15 +498,15 @@ function search_sassy(
     
     _search_impl = if use_avx512
         if use_pext
-            (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(8), Val(true))
+            (idx, txt, k, b; workspace=nothing) -> search_sassy_impl(idx, txt, k, b, Val(8), Val(true); workspace)
         else
-            (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(8), Val(false))
+            (idx, txt, k, b; workspace=nothing) -> search_sassy_impl(idx, txt, k, b, Val(8), Val(false); workspace)
         end
     else
         if use_pext
-            (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(true))
+            (idx, txt, k, b; workspace=nothing) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(true); workspace)
         else
-            (idx, txt, k, b) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(false))
+            (idx, txt, k, b; workspace=nothing) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(false); workspace)
         end
     end
     dbi = DBInfo(genome_path, "sassy_search", motif)
@@ -528,6 +529,11 @@ function search_sassy(
     es_accumulator = zeros(Int, g_count, distance + 1)
     all_offt = [Vector{Offtarget}() for _ in 1:g_count]
 
+    # Pre-allocate one workspace per guide (reused across chromosomes)
+    m_hint = Base.length(String(motif.fwd))
+    lanes_val = use_avx512 ? Val(8) : Val(4)
+    workspaces = [SassyWorkspace(m_hint, lanes_val) for _ in 1:g_count]
+
     for (chrom_idx, chrom) in enumerate(dbi.gi.chrom)
         seq = getchromseq(dbi.gi.is_fa, reader[chrom])
         (seq_start, seq_stop) = locate_telomeres(seq)
@@ -536,6 +542,7 @@ function search_sassy(
 
         ThreadsX.foreach(enumerate(guides)) do (guide_idx, guide)
             if is_es[guide_idx]; return; end
+            ws = workspaces[guide_idx]
 
             guide_offtargets = Vector{Offtarget}()
 
@@ -565,6 +572,7 @@ function search_sassy(
                 guide, seq_str, distance, motif, dbi, false, seq_start - 1, _search_impl;
                 strict_pam = strict_pam,
                 traceback_backend = traceback_backend,
+                workspace = ws,
             )
             process_results!(results_fwd, true)
 
@@ -574,6 +582,7 @@ function search_sassy(
                     guide, seq_str, distance, motif, dbi, true, seq_start - 1, _search_impl;
                     strict_pam = strict_pam,
                     traceback_backend = traceback_backend,
+                    workspace = ws,
                 )
                 process_results!(results_rc, false)
             end

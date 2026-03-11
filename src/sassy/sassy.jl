@@ -55,6 +55,7 @@ export search_sassy_guide
 # You need these visible to run the JSON comparison tests.
 export compute_block
 export search_sassy_impl
+export SassyWorkspace
 export TextBlockProfile
 export encode_text_block
 export encode_text_profile

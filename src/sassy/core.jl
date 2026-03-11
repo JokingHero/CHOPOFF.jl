@@ -35,6 +35,51 @@ end
 # Minimum rows to process before early termination check kicks in
 const CHECK_AT_LEAST_ROWS = 8
 
+struct SassyWorkspace{L}
+    hp_store::Vector{Vec{L, UInt64}}
+    hm_store::Vector{Vec{L, UInt64}}
+    eq_store::Vector{Vec{L, UInt64}}
+    current_lane_profiles::Matrix{UInt64}
+    lane_states_decreasing::Vector{Bool}
+    lane_matches::Vector{Vector{Tuple{Int,Int}}}
+    lane_end::Vector{Int}
+    dist_to_end::Vector{Int}
+    matches_all::Vector{Tuple{Int,Int}}
+    unique_matches::Vector{Tuple{Int,Int}}
+    seen_pos::Set{Int}
+end
+
+function SassyWorkspace(m::Int, ::Val{L}; max_bases::Int = 16) where L
+    VecL = Vec{L, UInt64}
+    SassyWorkspace{L}(
+        fill(VecL(1), m),
+        fill(VecL(0), m),
+        Vector{VecL}(undef, m),
+        zeros(UInt64, L, max_bases),
+        fill(true, L),
+        [Tuple{Int,Int}[] for _ in 1:L],
+        zeros(Int, L),
+        zeros(Int, L),
+        Tuple{Int,Int}[],
+        Tuple{Int,Int}[],
+        Set{Int}(),
+    )
+end
+
+function reset!(ws::SassyWorkspace{L}, m::Int) where L
+    VecL = Vec{L, UInt64}
+    resize!(ws.hp_store, m); fill!(ws.hp_store, VecL(1))
+    resize!(ws.hm_store, m); fill!(ws.hm_store, VecL(0))
+    resize!(ws.eq_store, m)
+    fill!(ws.lane_states_decreasing, true)
+    for v in ws.lane_matches; empty!(v) end
+    fill!(ws.lane_end, 0)
+    fill!(ws.dist_to_end, 0)
+    empty!(ws.matches_all)
+    empty!(ws.unique_matches)
+    empty!(ws.seen_pos)
+end
+
 """
     search_sassy_impl(pattern_indices, text, k, bases, ::Val{LANES}, ::Val{USE_PEXT})
 
@@ -47,7 +92,8 @@ function search_sassy_impl(
     k::Int,
     bases::Vector{UInt8},
     ::Val{LANES} = Val(4),
-    ::Val{USE_PEXT} = Val(true)
+    ::Val{USE_PEXT} = Val(true);
+    workspace::Union{SassyWorkspace{LANES}, Nothing} = nothing
 ) where {LANES, USE_PEXT}
     m = Base.length(pattern_indices)
     text_len = Base.length(text)
@@ -61,22 +107,27 @@ function search_sassy_impl(
     lane_chunk_offsets = [(l - 1) * blocks_per_chunk * BLOCK_SIZE for l in 1:LANES]
 
     VecL = Vec{LANES, UInt64}
-    hp_store = fill(VecL(1), m)
-    hm_store = fill(VecL(0), m)
-    
-    # Primitives and Arrays preallocated
-    lane_states_decreasing = fill(true, LANES)
-    lane_matches = [Tuple{Int, Int}[] for _ in 1:LANES]
-    lane_end = zeros(Int, LANES)
+
+    # Use provided workspace or allocate fresh (backward compat)
+    ws = if workspace !== nothing
+        reset!(workspace, m)
+        workspace
+    else
+        SassyWorkspace(m, Val(LANES))
+    end
+
+    hp_store = ws.hp_store
+    hm_store = ws.hm_store
+    eq_store = ws.eq_store
+    current_lane_profiles = ws.current_lane_profiles
+    lane_states_decreasing = ws.lane_states_decreasing
+    lane_matches = ws.lane_matches
+    lane_end = ws.lane_end
+    dist_to_end = ws.dist_to_end
 
     n_bases = length(bases)
     bases_masks = [get_iupac_mask(b) for b in bases]
-    
-    current_lane_profiles = zeros(UInt64, LANES, n_bases)
-    eq_store = Vector{VecL}(undef, m)
 
-    # Early termination state (mirrors Rust search.rs dist_to_end / end_last_below)
-    dist_to_end = zeros(Int, LANES)
     prev_end_last_below = 0
     prev_max_j = 0
     use_avx2 = can_use_avx2()
@@ -240,13 +291,16 @@ function search_sassy_impl(
         end
     end
 
-    matches_all = Tuple{Int, Int}[]
+    matches_all = ws.matches_all
+    empty!(matches_all)
     for lane in 1:LANES
         append!(matches_all, lane_matches[lane])
     end
 
-    unique_matches = Tuple{Int, Int}[]
-    seen_pos = Set{Int}()
+    unique_matches = ws.unique_matches
+    seen_pos = ws.seen_pos
+    empty!(unique_matches)
+    empty!(seen_pos)
     sort!(matches_all, by = x -> (x[1], x[2]))
     for mt in matches_all
         if !(mt[1] in seen_pos)
