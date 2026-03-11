@@ -44,3 +44,17 @@ end
 @inline function get_iupac_mask(c::UInt8)
     return @inbounds IUPAC_TABLE[c + 1]
 end
+
+# Pre-expanded per-byte → per-base match LUT (256 × 4 UInt8)
+# Avoids repeated get_iupac_mask + bitwise AND in the 4-base fast path.
+const BASE_MATCH = let
+    t = zeros(UInt8, 256, 4)
+    masks = (UInt8(0x01), UInt8(0x02), UInt8(0x04), UInt8(0x08))  # A, C, T, G
+    for i in 0:255
+        m = IUPAC_TABLE[i + 1]
+        for j in 1:4
+            t[i + 1, j] = UInt8((m & masks[j]) != 0)
+        end
+    end
+    t
+end

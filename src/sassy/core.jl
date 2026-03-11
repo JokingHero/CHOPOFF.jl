@@ -1,4 +1,3 @@
-using SIMD
 include("minima.jl")
 
 """
@@ -80,6 +79,7 @@ function search_sassy_impl(
     dist_to_end = zeros(Int, LANES)
     prev_end_last_below = 0
     prev_max_j = 0
+    use_avx2 = can_use_avx2()
 
     for i in 0:(blocks_per_chunk + max_overlap_blocks - 1)
         vp = VecL(0)
@@ -89,28 +89,45 @@ function search_sassy_impl(
         cur_end_last_below = 0
         skip_block = false
 
-        # 1. Direct mask generation mapping (zero allocs)
+        # 1. Text block encoding: convert 64-byte blocks to per-base UInt64 bitmasks
         for lane in 1:LANES
             lane_end[lane] = lane_chunk_offsets[lane] + (i + 1) * BLOCK_SIZE
             start_pos = lane_chunk_offsets[lane] + i * BLOCK_SIZE + 1
-            
-            for j in 1:n_bases
-                current_lane_profiles[lane, j] = 0
+            limit = min(BLOCK_SIZE, text_len - start_pos + 1)
+
+            if limit <= 0
+                for j in 1:n_bases
+                    @inbounds current_lane_profiles[lane, j] = zero(UInt64)
+                end
+                continue
             end
 
-            limit = min(64, text_len - start_pos + 1)
-            if limit > 0
+            if use_avx2 && limit == BLOCK_SIZE
+                # AVX2 path: vpshufb parallel IUPAC lookup on 2x32 bytes
+                encode_block_avx2!(current_lane_profiles, lane, text, start_pos, n_bases, bases)
+            elseif n_bases == 4
+                # Scalar fast path: 4 register-local accumulators, single LUT read per position
+                m1 = m2 = m3 = m4 = zero(UInt64)
                 for bit in 0:(limit - 1)
-                    pos = start_pos + bit
-                    @inbounds c_mask = get_iupac_mask(text[pos])
-                    if c_mask != 0
-                        bit_mask = UInt64(1) << bit
-                        for j in 1:n_bases
-                            if (@inbounds bases_masks[j] & c_mask) != 0
-                                @inbounds current_lane_profiles[lane, j] |= bit_mask
-                            end
-                        end
+                    @inbounds byte = text[start_pos + bit]
+                    @inbounds m1 |= UInt64(BASE_MATCH[byte + 1, 1]) << bit
+                    @inbounds m2 |= UInt64(BASE_MATCH[byte + 1, 2]) << bit
+                    @inbounds m3 |= UInt64(BASE_MATCH[byte + 1, 3]) << bit
+                    @inbounds m4 |= UInt64(BASE_MATCH[byte + 1, 4]) << bit
+                end
+                @inbounds current_lane_profiles[lane, 1] = m1
+                @inbounds current_lane_profiles[lane, 2] = m2
+                @inbounds current_lane_profiles[lane, 3] = m3
+                @inbounds current_lane_profiles[lane, 4] = m4
+            else
+                # Generic scalar path: any n_bases (IUPAC ambiguity in pattern)
+                for j in 1:n_bases
+                    mask = zero(UInt64)
+                    @inbounds bm = bases_masks[j]
+                    for bit in 0:(limit - 1)
+                        @inbounds mask |= UInt64((get_iupac_mask(text[start_pos + bit]) & bm) != 0) << bit
                     end
+                    @inbounds current_lane_profiles[lane, j] = mask
                 end
             end
         end

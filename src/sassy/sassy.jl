@@ -32,7 +32,10 @@ include("constants.jl")
 # 2. Encoding: Logic to convert DNA/Text to bitmasks
 include("encoding.jl")
 
-# 3. Core: The pure Myers logic and the scalar-emulated SIMD loop
+# 3. SIMD Encoding: AVX2-accelerated text block encoding (optional fast path)
+include("simd_encoding.jl")
+
+# 4. Core: The pure Myers logic and the scalar-emulated SIMD loop
 #    (This is the file you will fuzz-test against Rust)
 include("core.jl")
 
