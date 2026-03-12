@@ -9,10 +9,10 @@ Comparing Julia `src/sassy/` against the reference Rust `sassy/src/`, five archi
 | 1 | Missing early termination | 2–4x | **Fixed** |
 | 2 | Scalar text encoding (no SIMD) | 2–3x | **Fixed** (3-tier: AVX2 / scalar-fast / generic) |
 | 3 | Per-call heap allocations | 1.3–1.5x | **Fixed** (SassyWorkspace reuse) |
-| 4 | Genome string copies | 1.1–1.2x | Open |
+| 4 | Genome string copies | 1.1–1.2x | **Fixed** (seq_to_bytes! + LongDNA pass-through) |
 | 5 | Dedup/sort/shift overhead | 1.05–1.1x | Open |
 
-Remaining theoretical gap after fixes 1–3: **~1.15–1.3x** (bottlenecks 4-5 combined).
+Remaining theoretical gap after fixes 1–4: **~1.05–1.1x** (bottleneck 5).
 
 ---
 
@@ -132,35 +132,37 @@ end
 
 ---
 
-## Bottleneck 4: Genome String Copies (1.1–1.2x)
+## Bottleneck 4: Genome String Copies — FIXED
 
-### What happens (`interface.jl:535,356-357`)
+### What was happening (`interface.jl`)
 
 ```julia
 seq_str = String(seq)                    # copy 1: LongDNA → String (~250MB for chr1)
-# Then inside search_sassy_guide:
+# Then inside search_sassy_guide (per guide × per strand):
 genome_bytes = codeunits(genome_str)     # view (ok)
 genome_seq = LongDNA{4}(genome_str)      # copy 2: String → LongDNA (~250MB)
 ```
 
-Two full copies of each chromosome. For hg38 (3.1GB), that's ~6.2GB of extra allocation.
+Two full copies of each chromosome. Copy 2 was per-guide × per-strand. For 100 guides × 2 strands × 250MB × 24 chroms = catastrophic allocation.
 
-### Fix
+### What was done
 
-```julia
-# In search_sassy: pass seq directly, avoid String conversion
-seq_bytes = Vector{UInt8}(String(seq))  # single copy, reuse everywhere
+1. **Added `NIBBLE_TO_ASCII` LUT** (`constants.jl`): 16-entry lookup from BioSequences DNAAlphabet{4} 4-bit encoding to ASCII bytes. Maps the nibble values (A=0x01, C=0x02, G=0x04, T=0x08, plus all IUPAC ambiguity combinations) directly to their ASCII character codes.
 
-# In search_sassy_guide: accept bytes + original seq
-function search_sassy_guide(guide_seq, genome_bytes::Vector{UInt8},
-                            genome_seq::LongDNA{4}, ...)
-```
+2. **Added `seq_to_bytes!`** (`interface.jl`): Converts `LongDNA{4}` → `Vector{UInt8}` in-place using `BioSequences.extract_encoded_element` (stable API, no `.data` field access). ~4x faster than `String(seq)` and reuses a pre-allocated buffer.
 
-Or better — investigate if BioSequences provides direct byte access via `unsafe_wrap` or similar.
+3. **Changed `search_sassy_guide` signature**: `genome_str::String` → `genome_bytes::Vector{UInt8}` + `genome_seq::LongDNA{4}`. Removed the two copy lines (`codeunits` + `LongDNA{4}(genome_str)`) from inside the function.
 
-### Priority: MEDIUM
+4. **Updated `search_sassy` outer loop**: Added reusable `genome_buf = Vector{UInt8}(undef, 0)` before the chromosome loop. Each chromosome calls `seq_to_bytes!(genome_buf, seq)` once, then passes `genome_buf` and `seq` directly to `search_sassy_guide`. Thread-safe: `genome_buf` and `seq` are written in the sequential chrom loop, read-only inside `ThreadsX.foreach`.
 
-Memory bandwidth matters more now that CPU is less bottlenecked by encoding. Reducing copies improves cache utilization for the AVX2 encoding path.
+5. **Non-strict PAM path**: `LongDNA{4}(genome_str[win_start:win_end])` → `genome_seq[win_start:win_end]`. LongDNA slicing returns LongDNA{4} directly — no String intermediate.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `src/sassy/constants.jl` | Added `NIBBLE_TO_ASCII` LUT (16 entries) |
+| `src/sassy/interface.jl` | Added `seq_to_bytes!`; changed `search_sassy_guide` signature; removed copy lines; updated non-strict PAM path; updated outer loop with reusable buffer |
 
 ---
 
@@ -261,12 +263,13 @@ f(a, b) = a + b
 - **Files**: `src/sassy/core.jl`, `src/sassy/interface.jl`, `src/sassy/sassy.jl`
 - `ntuple` closure in eq_store confirmed to NOT allocate — no fix needed
 
-### Phase 4: Genome Copy Elimination ← NEXT
-- **Files**: `src/sassy/interface.jl`
+### ~~Phase 4: Genome Copy Elimination~~ — DONE
 - **Expected gain**: 1.1–1.2x
-- **Risk**: Low
+- **Files**: `src/sassy/constants.jl`, `src/sassy/interface.jl`
+- Eliminated both genome copies: `String(seq)` (once per chrom) and `LongDNA{4}(genome_str)` (per guide × per strand)
+- Uses `seq_to_bytes!` with `BioSequences.extract_encoded_element` (stable API) + reusable buffer
 
-### Phase 5: Post-processing Cleanup
+### Phase 5: Post-processing Cleanup ← NEXT
 - **Files**: `src/sassy/core.jl`, `src/sassy/interface.jl`
 - **Expected gain**: 1.05–1.1x
 - **Risk**: Low

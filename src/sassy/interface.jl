@@ -1,3 +1,13 @@
+function seq_to_bytes!(buf::Vector{UInt8}, seq::LongDNA{4})
+    n = length(seq)
+    resize!(buf, n)
+    @inbounds for i in 1:n
+        nibble = BioSequences.extract_encoded_element(seq, i)
+        buf[i] = NIBBLE_TO_ASCII[nibble + 1]
+    end
+    return buf
+end
+
 struct SassyMatch
     pos::Int
     dist::Int
@@ -314,7 +324,8 @@ end
 
 function search_sassy_guide(
     guide_seq::LongDNA{4},
-    genome_str::String,
+    genome_bytes::Vector{UInt8},
+    genome_seq::LongDNA{4},
     k::Int,
     motif::Motif,
     dbi::DBInfo,
@@ -354,8 +365,6 @@ function search_sassy_guide(
     pam_len = Base.length(pam_str)
     (bases, pattern_indices) = encode_pattern_sassy(pattern_bytes)
 
-    genome_bytes = codeunits(genome_str)
-    genome_seq = LongDNA{4}(genome_str)
     n = Base.length(genome_bytes)
     pam_on_left = pam_at_start(motif, is_antisense)
     results = SassyMatch[]
@@ -413,7 +422,7 @@ function search_sassy_guide(
                     if win_start > win_end
                         continue
                     end
-                    ref_for_aln = LongDNA{4}(genome_str[win_start:win_end])
+                    ref_for_aln = genome_seq[win_start:win_end]
                     guide_for_aln = search_pattern
                 else
                     win_start = max(1, align_start - k)
@@ -421,7 +430,7 @@ function search_sassy_guide(
                     if win_start > win_end
                         continue
                     end
-                    ref_for_aln = reverse(LongDNA{4}(genome_str[win_start:win_end]))
+                    ref_for_aln = reverse(genome_seq[win_start:win_end])
                     guide_for_aln = reverse(search_pattern)
                     reverse_back = true
                 end
@@ -534,11 +543,13 @@ function search_sassy(
     lanes_val = use_avx512 ? Val(8) : Val(4)
     workspaces = [SassyWorkspace(m_hint, lanes_val) for _ in 1:g_count]
 
+    genome_buf = Vector{UInt8}(undef, 0)
+
     for (chrom_idx, chrom) in enumerate(dbi.gi.chrom)
         seq = getchromseq(dbi.gi.is_fa, reader[chrom])
         (seq_start, seq_stop) = locate_telomeres(seq)
         seq = seq[seq_start:seq_stop]
-        seq_str = String(seq)
+        seq_to_bytes!(genome_buf, seq)
 
         ThreadsX.foreach(enumerate(guides)) do (guide_idx, guide)
             if is_es[guide_idx]; return; end
@@ -569,7 +580,7 @@ function search_sassy(
 
             # Forward Search
             results_fwd = search_sassy_guide(
-                guide, seq_str, distance, motif, dbi, false, seq_start - 1, _search_impl;
+                guide, genome_buf, seq, distance, motif, dbi, false, seq_start - 1, _search_impl;
                 strict_pam = strict_pam,
                 traceback_backend = traceback_backend,
                 workspace = ws,
@@ -579,7 +590,7 @@ function search_sassy(
             # Reverse Complement Search (only if not early stopped)
             if !is_es[guide_idx]
                 results_rc = search_sassy_guide(
-                    guide, seq_str, distance, motif, dbi, true, seq_start - 1, _search_impl;
+                    guide, genome_buf, seq, distance, motif, dbi, true, seq_start - 1, _search_impl;
                     strict_pam = strict_pam,
                     traceback_backend = traceback_backend,
                     workspace = ws,

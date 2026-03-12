@@ -58,3 +58,24 @@ const BASE_MATCH = let
     end
     t
 end
+
+# BioSequences DNAAlphabet{4} nibble → ASCII lookup
+# BioSymbols encoding: A=0x01, C=0x02, G=0x04, T=0x08
+const NIBBLE_TO_ASCII = UInt8[
+    UInt8('-'),  # 0x00 gap
+    UInt8('A'),  # 0x01
+    UInt8('C'),  # 0x02
+    UInt8('M'),  # 0x03 A|C
+    UInt8('G'),  # 0x04
+    UInt8('R'),  # 0x05 A|G
+    UInt8('S'),  # 0x06 C|G
+    UInt8('V'),  # 0x07 A|C|G
+    UInt8('T'),  # 0x08
+    UInt8('W'),  # 0x09 A|T
+    UInt8('Y'),  # 0x0A C|T
+    UInt8('H'),  # 0x0B A|C|T
+    UInt8('K'),  # 0x0C G|T
+    UInt8('D'),  # 0x0D A|G|T
+    UInt8('B'),  # 0x0E C|G|T
+    UInt8('N'),  # 0x0F A|C|G|T
+]
