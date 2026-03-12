@@ -10,9 +10,9 @@ Comparing Julia `src/sassy/` against the reference Rust `sassy/src/`, five archi
 | 2 | Scalar text encoding (no SIMD) | 2–3x | **Fixed** (3-tier: AVX2 / scalar-fast / generic) |
 | 3 | Per-call heap allocations | 1.3–1.5x | **Fixed** (SassyWorkspace reuse) |
 | 4 | Genome string copies | 1.1–1.2x | **Fixed** (seq_to_bytes! + LongDNA pass-through) |
-| 5 | Dedup/sort/shift overhead | 1.05–1.1x | Open |
+| 5 | Dedup/sort/shift overhead | 1.05–1.1x | **Fixed** (redundant sort + Set removed) |
 
-Remaining theoretical gap after fixes 1–4: **~1.05–1.1x** (bottleneck 5).
+All five identified bottlenecks have been addressed.
 
 ---
 
@@ -95,7 +95,7 @@ pub struct Searcher<P: Profile> {
 
 ### What was done
 
-Introduced `SassyWorkspace{L}` — an immutable struct holding pre-allocated mutable buffers. All ~9 per-call heap allocations (`hp_store`, `hm_store`, `eq_store`, `current_lane_profiles`, `lane_matches`, `lane_end`, `dist_to_end`, plus result-collection vectors `matches_all`, `unique_matches`, `seen_pos`) are now allocated once and reused via `reset!`.
+Introduced `SassyWorkspace{L}` — an immutable struct holding pre-allocated mutable buffers. All per-call heap allocations (`hp_store`, `hm_store`, `eq_store`, `current_lane_profiles`, `lane_matches`, `lane_end`, `dist_to_end`, `matches_all`) are now allocated once and reused via `reset!`.
 
 One workspace per guide, created before the chromosome loop in `search_sassy`, reused for all chromosomes + both strands. Thread-safe: each guide gets its own workspace indexed by `guide_idx` in the `ThreadsX.foreach` closure.
 
@@ -110,8 +110,6 @@ struct SassyWorkspace{L}
     lane_end::Vector{Int}
     dist_to_end::Vector{Int}
     matches_all::Vector{Tuple{Int,Int}}
-    unique_matches::Vector{Tuple{Int,Int}}
-    seen_pos::Set{Int}
 end
 ```
 
@@ -127,7 +125,7 @@ end
 
 ### Design notes
 
-- Return value safety: `search_sassy_guide` iterates `ws.unique_matches` immediately in a `for` loop, extracting value-type `(Int, Int)` tuples. No reference escapes before next `reset!`.
+- Return value safety: `search_sassy_guide` iterates `ws.matches_all` immediately in a `for` loop, extracting value-type `(Int, Int)` tuples. No reference escapes before next `reset!`.
 - `ntuple` closure in eq_store construction (`core.jl:189`) was investigated and confirmed to **NOT allocate** — Julia unrolls `ntuple` with `Val(LANES)` at compile time. Left as-is.
 
 ---
@@ -166,19 +164,15 @@ Two full copies of each chromosome. Copy 2 was per-guide × per-strand. For 100 
 
 ---
 
-## Bottleneck 5: Deduplication & Post-Processing (1.05–1.1x)
+## Bottleneck 5: Deduplication & Post-Processing — FIXED
 
-### Current (`core.jl:163-177`)
+### What was happening (`core.jl`)
+
+After per-lane boundary filtering (which produces disjoint, sorted ranges), the code redundantly sorted and deduplicated:
 
 ```julia
-matches_all = Tuple{Int, Int}[]
-for lane in 1:LANES
-    append!(matches_all, lane_matches[lane])
-end
-unique_matches = Tuple{Int, Int}[]
-seen_pos = Set{Int}()
-sort!(matches_all, by = x -> (x[1], x[2]))
-for mt in matches_all
+sort!(matches_all, by = x -> (x[1], x[2]))   # no-op: already sorted
+for mt in matches_all                          # no-op: no duplicates possible
     if !(mt[1] in seen_pos)
         push!(unique_matches, mt)
         push!(seen_pos, mt[1])
@@ -186,31 +180,19 @@ for mt in matches_all
 end
 ```
 
-### Rust approach (`search.rs:1086-1123`)
+### Why sort + dedup were redundant
 
-In-place `retain()` on each lane's matches — no sort, no Set, no concatenation:
+After per-lane boundary filtering, lane ranges are disjoint (lane 1: `pos < lane1_end`, lane k: `prev_end <= pos < cur_end`). Within each lane, `scan_block_minima` processes positions left-to-right (bit 1..64, blocks in order) — each position visited exactly once. Appending lanes 1..LANES in order produces a globally sorted, duplicate-free list.
 
-```rust
-self.lanes[0].matches.retain(|&(end_pos, _)| end_pos < cur_lane_end);
-for lane in 1..LANES {
-    self.lanes[lane].matches.retain(|&(end_pos, _)| {
-        end_pos >= prev_lane_end && (lane == LANES-1 || end_pos < cur_lane_end)
-    });
-}
-```
+### What was done
 
-### Fix
+Removed `unique_matches` and `seen_pos` fields from `SassyWorkspace`, constructor, and `reset!`. Eliminated the `sort!` call and Set-based dedup loop. `search_sassy_impl` now returns `matches_all` directly after the lane-append loop.
 
-Replace with in-place filtering + direct iteration:
+### Files changed
 
-```julia
-# Filter each lane in-place (already done in lines 149-161, but then re-collected)
-# Just iterate lane_matches directly instead of creating matches_all + unique_matches
-```
-
-### Priority: LOW
-
-Small absolute impact, but becomes easier once Bottleneck 3 (workspace struct) is done.
+| File | Change |
+|------|--------|
+| `src/sassy/core.jl` | Removed `unique_matches`, `seen_pos` from struct/constructor/reset!; replaced sort+dedup with direct `return matches_all` |
 
 ---
 
@@ -224,7 +206,7 @@ eq_store[j] = VecL(ntuple(l -> current_lane_profiles[l, pat_idx], Val(LANES)))
 
 Investigated: Julia unrolls `ntuple` with `Val(LANES)` at compile time. The closure is never heap-allocated — it's inlined by the compiler. No action needed.
 
-### Shift loop in `search_sassy_guide`
+### Shift loop in `search_sassy_guide` — DEFERRED (potential Phase 6)
 
 ```julia
 for shift in -k:k  # 2k+1 iterations per match
@@ -233,19 +215,17 @@ for shift in -k:k  # 2k+1 iterations per match
 end
 ```
 
-Rust integrates PAM filtering into the search via `filter_fn`, avoiding this post-hoc window scan. This is a correctness-sensitive area — the shift compensates for approximate position reporting from sassy. Consider whether better position tracking inside sassy could eliminate this loop.
+Rust integrates PAM filtering into the search via `filter_fn`, avoiding this post-hoc window scan. The shift compensates for inherent position ambiguity in semi-global edit distance — the actual alignment endpoint can differ from the DP minimum position by up to k.
+
+Eliminating the shift loop requires either:
+- Tracking exact alignment endpoints during `scan_block_minima` (changes core algorithm)
+- Passing motif/PAM information into `core.jl` (breaks algorithm/integration separation)
+
+Both are high-risk for correctness regressions. Deferred as potential Phase 6.
 
 ### SIMD.jl Vec verification
 
-Need to verify with `@code_llvm` that `Vec{4, UInt64}` operations in `compute_block` actually emit AVX2 instructions (`vpaddq`, `vpand`, `vpor`, etc.) rather than scalar fallbacks. If LLVM isn't vectorizing, the inner DP loop itself could be 4x slower than expected.
-
-```julia
-# Quick check:
-using SIMD
-f(a, b) = a + b
-@code_llvm f(Vec{4, UInt64}((1,2,3,4)), Vec{4, UInt64}((5,6,7,8)))
-# Should show: <4 x i64> add instruction
-```
+Diagnostic script added: `scripts/verify_simd_codegen.jl`. Checks `@code_llvm` output for `compute_block` with `Vec{4, UInt64}` args. Verifies `<4 x i64>` vector instructions appear rather than scalar fallbacks. If scalar fallback detected, the inner DP loop could be 4x slower than expected — would be a separate high-impact optimization opportunity.
 
 ---
 
@@ -269,10 +249,12 @@ f(a, b) = a + b
 - Eliminated both genome copies: `String(seq)` (once per chrom) and `LongDNA{4}(genome_str)` (per guide × per strand)
 - Uses `seq_to_bytes!` with `BioSequences.extract_encoded_element` (stable API) + reusable buffer
 
-### Phase 5: Post-processing Cleanup ← NEXT
-- **Files**: `src/sassy/core.jl`, `src/sassy/interface.jl`
+### ~~Phase 5: Post-processing Cleanup~~ — DONE
 - **Expected gain**: 1.05–1.1x
-- **Risk**: Low
+- **Files**: `src/sassy/core.jl`
+- Removed redundant `sort!` + `Set` dedup (proven unnecessary after per-lane boundary filtering)
+- Removed `unique_matches`, `seen_pos` fields from `SassyWorkspace`
+- Shift loop deferred as potential Phase 6 (correctness-sensitive, requires architectural restructuring)
 
 ---
 

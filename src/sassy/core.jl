@@ -45,8 +45,6 @@ struct SassyWorkspace{L}
     lane_end::Vector{Int}
     dist_to_end::Vector{Int}
     matches_all::Vector{Tuple{Int,Int}}
-    unique_matches::Vector{Tuple{Int,Int}}
-    seen_pos::Set{Int}
 end
 
 function SassyWorkspace(m::Int, ::Val{L}; max_bases::Int = 16) where L
@@ -61,8 +59,6 @@ function SassyWorkspace(m::Int, ::Val{L}; max_bases::Int = 16) where L
         zeros(Int, L),
         zeros(Int, L),
         Tuple{Int,Int}[],
-        Tuple{Int,Int}[],
-        Set{Int}(),
     )
 end
 
@@ -76,8 +72,6 @@ function reset!(ws::SassyWorkspace{L}, m::Int) where L
     fill!(ws.lane_end, 0)
     fill!(ws.dist_to_end, 0)
     empty!(ws.matches_all)
-    empty!(ws.unique_matches)
-    empty!(ws.seen_pos)
 end
 
 """
@@ -296,17 +290,5 @@ function search_sassy_impl(
     for lane in 1:LANES
         append!(matches_all, lane_matches[lane])
     end
-
-    unique_matches = ws.unique_matches
-    seen_pos = ws.seen_pos
-    empty!(unique_matches)
-    empty!(seen_pos)
-    sort!(matches_all, by = x -> (x[1], x[2]))
-    for mt in matches_all
-        if !(mt[1] in seen_pos)
-            push!(unique_matches, mt)
-            push!(seen_pos, mt[1])
-        end
-    end
-    return unique_matches
+    return matches_all
 end
