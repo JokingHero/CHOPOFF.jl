@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Large Language Models when working with code in this repository.
 
 ## Project Overview
 
@@ -8,16 +8,35 @@ CHOPOFF.jl is a Julia package for **sensitive and fast CRISPR off-target detecti
 
 **Minimum Julia version:** 1.10.10
 
+## Local Environment
+
+This workspace uses a full Julia install outside the repo:
+
+```bash
+export JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot:
+JULIA=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia
+```
+
+Do not use `build/bin/julia` for development. It belongs to the standalone app output and is missing files needed by `Pkg`.
+
+If Git reports dubious ownership, use a process-local override or configure this repo as safe:
+
+```bash
+git config --global --add safe.directory /home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl
+```
+
 ## Common Commands
 
 ### Development
 
 ```bash
-# Run all tests
-julia --project=. test/runtests.jl
+# Run all tests (test runner assumes cwd=test)
+(cd test && JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
+  /home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=.. runtests.jl)
 
 # Run specific test file
-julia --project=. -e 'include("test/src/utils.jl")'
+JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
+  /home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. -e 'include("test/src/utils.jl")'
 
 # Build standalone application
 ./build_standalone.sh
