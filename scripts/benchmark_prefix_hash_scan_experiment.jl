@@ -124,6 +124,8 @@ function main()
                             distance_calls = stats.distance_calls,
                             traceback_calls = stats.traceback_calls,
                             query_build_s = Float64(stats.query_build_ns) / 1e9,
+                            record_io_s = Float64(stats.record_io_ns) / 1e9,
+                            sequence_convert_s = Float64(stats.sequence_convert_ns) / 1e9,
                             chromosome_load_s = Float64(stats.chrom_load_ns) / 1e9,
                             materialize_s = Float64(stats.candidate_materialize_ns) / 1e9,
                             verify_s = Float64(stats.verify_ns) / 1e9,

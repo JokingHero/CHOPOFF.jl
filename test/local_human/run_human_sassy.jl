@@ -397,6 +397,8 @@ function main()
     scan_traceback_calls = missing
     scan_query_build_s = missing
     scan_path_load_s = missing
+    scan_record_io_s = missing
+    scan_sequence_convert_s = missing
     scan_scan_s = missing
     scan_findguides_s = missing
     scan_candidate_hash_s = missing
@@ -457,6 +459,8 @@ function main()
         scan_traceback_calls = scan_stats.traceback_calls
         scan_query_build_s = scan_stats.query_build_ns / 1e9
         scan_path_load_s = scan_stats.path_load_ns / 1e9
+        scan_record_io_s = scan_stats.record_io_ns / 1e9
+        scan_sequence_convert_s = scan_stats.sequence_convert_ns / 1e9
         scan_scan_s = scan_stats.scan_ns / 1e9
         scan_findguides_s = scan_stats.findguides_ns / 1e9
         scan_candidate_hash_s = scan_stats.candidate_hash_ns / 1e9
@@ -510,6 +514,8 @@ function main()
         scan_traceback_calls = scan_traceback_calls,
         scan_query_build_s = scan_query_build_s,
         scan_path_load_s = scan_path_load_s,
+        scan_record_io_s = scan_record_io_s,
+        scan_sequence_convert_s = scan_sequence_convert_s,
         scan_scan_s = scan_scan_s,
         scan_findguides_s = scan_findguides_s,
         scan_candidate_hash_s = scan_candidate_hash_s,
@@ -544,10 +550,12 @@ function main()
             scan_traceback_calls,
         )
         @printf(
-            "prefixHashScan timers: query_build=%.3fs | path_load=%.3fs | scan=%.3fs | findguides=%.3fs | candidate_hash=%.3fs | align=%.3fs
+            "prefixHashScan timers: query_build=%.3fs | path_load=%.3fs | record_io=%.3fs | sequence_convert=%.3fs | scan=%.3fs | findguides=%.3fs | candidate_hash=%.3fs | align=%.3fs
 ",
             scan_query_build_s,
             scan_path_load_s,
+            scan_record_io_s,
+            scan_sequence_convert_s,
             scan_scan_s,
             scan_findguides_s,
             scan_candidate_hash_s,

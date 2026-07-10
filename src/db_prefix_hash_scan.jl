@@ -19,6 +19,8 @@ mutable struct PrefixHashScanStats
     query_insert_ns::UInt64
     query_lookup_ns::UInt64
     chrom_load_ns::UInt64
+    record_io_ns::UInt64
+    sequence_convert_ns::UInt64
     findguides_ns::UInt64
     candidate_prefix_ns::UInt64
     candidate_hash_ns::UInt64
@@ -31,7 +33,7 @@ mutable struct PrefixHashScanStats
     query_variant::Symbol
 end
 
-PrefixHashScanStats() = PrefixHashScanStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, :none, :none)
+PrefixHashScanStats() = PrefixHashScanStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, :none, :none)
 
 function reset!(stats::PrefixHashScanStats)
     stats.motif_candidates = 0
@@ -54,6 +56,8 @@ function reset!(stats::PrefixHashScanStats)
     stats.query_insert_ns = 0
     stats.query_lookup_ns = 0
     stats.chrom_load_ns = 0
+    stats.record_io_ns = 0
+    stats.sequence_convert_ns = 0
     stats.findguides_ns = 0
     stats.candidate_prefix_ns = 0
     stats.candidate_hash_ns = 0
@@ -142,6 +146,55 @@ end
 struct PrefixHashScanHit
     start::Int
     mask::UInt64
+end
+
+struct PrefixHashScanFASTARecords{R, C}
+    reader::R
+    chrom::C
+end
+
+struct PrefixHashScanIndexedRecords{R, C}
+    reader::R
+    chrom::C
+end
+
+function Base.iterate(records::PrefixHashScanFASTARecords)
+    load_start = time_ns()
+    next = iterate(records.reader)
+    load_ns = time_ns() - load_start
+    next === nothing && return nothing
+    record, reader_state = next
+    isempty(records.chrom) && error("FASTA contains records absent from GenomeInfo.")
+    chrom_name = records.chrom[1]
+    FASTA.identifier(record) == chrom_name || error("FASTA record order differs from GenomeInfo.")
+    return (chrom_name, record, load_ns), (reader_state, 2)
+end
+
+function Base.iterate(records::PrefixHashScanFASTARecords, state)
+    reader_state, chrom_idx = state
+    load_start = time_ns()
+    next = iterate(records.reader, reader_state)
+    load_ns = time_ns() - load_start
+    if next === nothing
+        chrom_idx == length(records.chrom) + 1 ||
+            error("FASTA contains fewer records than GenomeInfo.")
+        return nothing
+    end
+    chrom_idx <= length(records.chrom) ||
+        error("FASTA contains more records than GenomeInfo.")
+    record, next_reader_state = next
+    chrom_name = records.chrom[chrom_idx]
+    FASTA.identifier(record) == chrom_name || error("FASTA record order differs from GenomeInfo.")
+    return (chrom_name, record, load_ns), (next_reader_state, chrom_idx + 1)
+end
+
+function Base.iterate(records::PrefixHashScanIndexedRecords, chrom_idx::Int = 1)
+    chrom_idx > length(records.chrom) && return nothing
+    chrom_name = records.chrom[chrom_idx]
+    load_start = time_ns()
+    record = records.reader[chrom_name]
+    load_ns = time_ns() - load_start
+    return (chrom_name, record, load_ns), chrom_idx + 1
 end
 
 function resolve_prefix_hash_scan_query_variant(query_variant::Symbol, nguides::Int = 0)
@@ -646,6 +699,38 @@ function scan_cas9_prefix_hits(
     return plus_hits, minus_hits
 end
 
+function materialize_normalized_candidate_cas9(
+    chrom_seq::LongDNA{4},
+    candidate_start::Int,
+    dbi::DBInfo,
+    is_antisense::Bool)
+
+    distance = dbi.motif.distance
+    if is_antisense
+        guide_start = candidate_start + 3
+        extension_end = candidate_start + 22 + distance
+        if extension_end <= length(chrom_seq)
+            ot = complement(chrom_seq[guide_start:extension_end])
+        else
+            guide = chrom_seq[guide_start:(candidate_start + 22)]
+            extension = getExt3(
+                chrom_seq, length(chrom_seq), candidate_start + 23, distance)
+            ot = complement(guide * extension)
+        end
+        return ot, candidate_start
+    end
+
+    extension_start = candidate_start - distance
+    if extension_start >= 1
+        ot = reverse(chrom_seq[extension_start:(candidate_start + 19)])
+    else
+        extension = getExt5(chrom_seq, candidate_start - 1, distance)
+        guide = chrom_seq[candidate_start:(candidate_start + 19)]
+        ot = reverse(extension * guide)
+    end
+    return ot, candidate_start + 22
+end
+
 function verify_prefix_hash_scan_bitmask_candidate!(
     out,
     chrom_seq::LongDNA{4},
@@ -665,7 +750,8 @@ function verify_prefix_hash_scan_bitmask_candidate!(
     distance_first::Bool = false)
 
     materialize_start = time_ns()
-    ot, pos = materialize_normalized_candidate(chrom_seq, candidate_range, dbi, is_antisense)
+    ot, pos = materialize_normalized_candidate_cas9(
+        chrom_seq, first(candidate_range), dbi, is_antisense)
     if stats !== nothing
         stats.candidate_materialize_ns += time_ns() - materialize_start
     end
@@ -831,33 +917,38 @@ function search_prefixHashScan(
     use_fused_scan = resolved_scan_backend in (:fused_dict, :fused_directory)
     use_distance_first = verify_variant == :distance_first ||
         (verify_variant == :auto && use_fused_scan)
-
     mkpath(dirname(output_file))
     open(output_file, "w") do out
         write(out, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
 
         ref = open(dbi.gi.filepath, "r")
         try
-            reader = dbi.gi.is_fa ? FASTA.Reader(ref, index = dbi.gi.filepath * ".fai") : TwoBit.Reader(ref)
+            reader = dbi.gi.is_fa ? FASTA.Reader(ref) : TwoBit.Reader(ref)
+            records = dbi.gi.is_fa ?
+                PrefixHashScanFASTARecords(reader, dbi.gi.chrom) :
+                PrefixHashScanIndexedRecords(reader, dbi.gi.chrom)
             scan_start = time_ns()
-            for chrom_name in dbi.gi.chrom
-                chrom_load_start = time_ns()
-                record = reader[chrom_name]
-                chrom_seq = dbi.gi.is_fa ? FASTA.sequence(LongDNA{4}, record) : TwoBit.sequence(LongDNA{4}, record)
+            for (chrom_name, record, record_io_ns) in records
+                convert_start = time_ns()
+                chrom_seq = dbi.gi.is_fa ?
+                    FASTA.sequence(LongDNA{4}, record) :
+                    TwoBit.sequence(LongDNA{4}, record)
+                sequence_convert_ns = time_ns() - convert_start
                 if stats !== nothing
-                    stats.chrom_load_ns += time_ns() - chrom_load_start
+                    stats.record_io_ns += record_io_ns
+                    stats.sequence_convert_ns += sequence_convert_ns
+                    stats.chrom_load_ns += record_io_ns + sequence_convert_ns
                 end
 
                 if use_fused_scan
                     plus_hits, minus_hits = scan_cas9_prefix_hits(
                         chrom_seq, dbi, query, hash_len, stats; scan_threads = scan_threads)
                     for (is_antisense, hits) in ((false, plus_hits), (true, minus_hits))
+                        if stats !== nothing
+                            stats.prefix_hits += length(hits)
+                            stats.guide_pairs += sum(hit -> count_ones(hit.mask), hits; init = 0)
+                        end
                         for hit in hits
-                            guide_count = count_ones(hit.mask)
-                            if stats !== nothing
-                                stats.prefix_hits += 1
-                                stats.guide_pairs += guide_count
-                            end
                             candidate_range = hit.start:(hit.start + 22)
                             verify_prefix_hash_scan_bitmask_candidate!(
                                 out,

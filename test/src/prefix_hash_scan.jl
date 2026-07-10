@@ -185,6 +185,34 @@ end
         check_prefix_helper_matches_materialized(tdir, repeat("A", 30) * "TTTA" * "TGCATGCATGCATGCATGCAT" * repeat("A", 30), Motif("Cas12a"; distance = 2), 8, "cas12a_helper")
     end
 
+    @testset "direct Cas9 materialization matches generic boundaries" begin
+        motif3 = Motif("Cas9"; distance = 3)
+        guide3 = "ACGTACGTACGTACGTACGT"
+        sequences = [
+            guide3 * "AGG",
+            "A" * guide3 * "AGG",
+            "AA" * guide3 * "AGG",
+            "CCA" * guide3,
+            "A" * "CCA" * guide3,
+            "AA" * "CCA" * guide3,
+        ]
+        for (seq_idx, seq) in enumerate(sequences)
+            genome = joinpath(tdir, "cas9_materialize_boundary_$(seq_idx).fa")
+            write_phs_fasta(genome, "chr1", seq)
+            chrom_seq = LongDNA{4}(seq)
+            dbi = DBInfo(genome, "cas9_materialize_boundary", motif3)
+            for is_antisense in (false, true)
+                for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
+                    expected = CHOPOFF.materialize_normalized_candidate(
+                        chrom_seq, candidate_range, dbi, is_antisense)
+                    observed = CHOPOFF.materialize_normalized_candidate_cas9(
+                        chrom_seq, first(candidate_range), dbi, is_antisense)
+                    @test observed == expected
+                end
+            end
+        end
+    end
+
     @testset "fused Cas9 scan and directory parity" begin
         motif3 = Motif("Cas9"; distance = 3)
         hash_len = 16
