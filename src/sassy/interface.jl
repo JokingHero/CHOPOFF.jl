@@ -275,6 +275,21 @@ function pam_matches_candidate(
     return true
 end
 
+@inline function ref_ambig_within_limit(
+    genome_bytes::AbstractVector{UInt8},
+    start_pos::Int,
+    end_pos::Int,
+    limit::Int,
+)
+    limit >= end_pos - start_pos + 1 && return true
+    n_ambig = 0
+    @inbounds for i in start_pos:end_pos
+        n_ambig += Sassy.REF_AMBIG_TABLE[genome_bytes[i] + 1]
+        n_ambig > limit && return false
+    end
+    return true
+end
+
 @inline function candidate_bounds(
     match_end::Int,
     guide_len::Int,
@@ -391,6 +406,10 @@ function search_sassy_guide(
                 false,
             )
             if motif_start < 1 || motif_end > n || guide_start < 1 || guide_end > n
+                continue
+            end
+
+            if !ref_ambig_within_limit(genome_bytes, motif_start, motif_end, motif.ambig_max)
                 continue
             end
 

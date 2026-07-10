@@ -45,6 +45,19 @@ end
     return @inbounds IUPAC_TABLE[c + 1]
 end
 
+const REF_AMBIG_TABLE = let
+    t = ones(UInt8, 256)
+    for c in (UInt8('A'), UInt8('C'), UInt8('G'), UInt8('T'),
+              UInt8('a'), UInt8('c'), UInt8('g'), UInt8('t'))
+        t[c + 1] = UInt8(0)
+    end
+    t
+end
+
+@inline function is_ref_ambig(c::UInt8)
+    return @inbounds REF_AMBIG_TABLE[c + 1] != 0
+end
+
 # Pre-expanded per-byte → per-base match LUT (256 × 4 UInt8)
 # Avoids repeated get_iupac_mask + bitwise AND in the 4-base fast path.
 const BASE_MATCH = let

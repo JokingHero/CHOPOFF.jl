@@ -54,6 +54,10 @@ In strict mode:
 
 - SASSY candidate generation is guide-centric.
 - PAM is validated at candidate coordinates before expensive traceback.
+- Reference ambiguity is limited by `motif.ambig_max` within the candidate
+  motif window (guide + PAM), before traceback.
+- Ambiguous guide bases are still supported through IUPAC pattern matching and
+  are not counted against `motif.ambig_max`.
 
 This is the default parity mode used for CHOPOFF SASSY verification.
 
@@ -112,3 +116,50 @@ julia --project=. scripts/benchmark_sassy_minima_backend.jl
 julia --project=. scripts/benchmark_sassy_traceback.jl
 julia --project=. scripts/benchmark_sassy_vs_prefixhash.jl
 ```
+
+
+## Human Profiling
+
+Human-scale SASSY profiling is kept local under `test/local_human/`. Profiling
+packages are installed outside this project in:
+
+```bash
+/home/rstudio/livemount/kornel_dev/temp_upload/profiletools
+```
+
+Installed tools: `PProf`, `StatProfilerHTML`, `BenchmarkTools`, `TimerOutputs`.
+They are loaded by `test/local_human/profile_human_sassy.jl`; CHOPOFF's
+`Project.toml` and `Manifest.toml` are not modified.
+
+Typical CPU profile:
+
+```bash
+CHOPOFF_PROFILE_MODE=cpu \
+CHOPOFF_PROFILE_USE_AVX512=1 \
+JULIA_NUM_THREADS=8 \
+JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
+/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
+  test/local_human/profile_human_sassy.jl
+```
+
+Useful modes:
+
+- `baseline`: timed SASSY run only.
+- `cpu`: stdlib `Profile` plus `PProf` and `StatProfilerHTML` output.
+- `allocs`: allocation profile via `Profile.Allocs` and `PProf.Allocs`.
+- `scaling`: launches baseline runs with multiple `JULIA_NUM_THREADS` values.
+
+Key outputs:
+
+- `profiles/cpu.pb.gz`
+- `profiles/cpu_flat.txt`
+- `profiles/cpu_top.txt`
+- `profiles/statprof/index.html`
+- `profiles/allocs.pb.gz`
+
+Current finding from the human profile: active CPU time is dominated by
+`search_sassy_impl`, especially text block encoding (`encode_block_avx2!`) and
+the Myers/minima loop. Traceback is not the main bottleneck after filtering
+ambiguous reference windows. The current implementation still scans the genome
+per guide/strand, so batching/pattern-tiling should be evaluated before small
+traceback optimizations.

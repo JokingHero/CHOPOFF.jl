@@ -1,6 +1,59 @@
 const LociRange = UnitRange{UInt32}
 
 
+
+function prefix_path_asset_name(motif::Motif, hash_len::Int)
+    hash_len <= 16 || return nothing
+    motif.distance <= 4 || return nothing
+    for name in ("Cas9", "Cas12a")
+        template = Motif(name)
+        if length_noPAM(motif) == length_noPAM(template) &&
+            motif.extends5 == template.extends5 &&
+            motif.pam_loci_fwd == template.pam_loci_fwd &&
+            motif.pam_loci_rve == template.pam_loci_rve
+            return name
+        end
+    end
+    return nothing
+end
+
+function load_precomputed_prefix_paths(
+    motif::Motif,
+    distance::Int,
+    hash_len::Int;
+    need_distances::Bool = true)
+
+    asset = prefix_path_asset_name(motif, hash_len)
+    asset === nothing && return nothing
+
+    dir = joinpath(dirname(pathof(CHOPOFF)), "..", "data")
+    exact_stem = "$(asset)_d$(distance)_p$(hash_len)"
+    exact_paths_file = joinpath(dir, exact_stem * "_paths.bin")
+    exact_distances_file = joinpath(dir, exact_stem * "_distances.bin")
+    if isfile(exact_paths_file) && (!need_distances || isfile(exact_distances_file))
+        paths = CHOPOFF.load(exact_paths_file)
+        distances = need_distances ? CHOPOFF.load(exact_distances_file) : nothing
+        return paths, distances, asset
+    end
+
+    stem = "$(asset)_d4_p16"
+    pfile1 = joinpath(dir, stem * "_paths_part1.bin")
+    pfile2 = joinpath(dir, stem * "_paths_part2.bin")
+    dfile = joinpath(dir, stem * "_distances.bin")
+    (isfile(pfile1) && isfile(pfile2) && isfile(dfile)) || return nothing
+
+    paths = vcat(CHOPOFF.load(pfile1), CHOPOFF.load(pfile2))
+    distances = CHOPOFF.load(dfile)
+    paths = paths[:, 1:hash_len]
+    not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto))))
+    not_over_dist = BitVector(distances .<= distance)
+    keep = not_dups .& not_over_dist
+    paths = paths[keep, :]
+    distances = distances[keep]
+    paths = convert.(smallestutype(maximum(paths)), paths)
+    return paths, need_distances ? distances : nothing, asset
+end
+
 function recalculate_ranges(x::Vector{LociRange})
     x = cumsum(length.(x))
     return LociRange.(vcat(1, x[1:end-1] .+ 1), x)

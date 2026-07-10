@@ -610,24 +610,39 @@ end
 @testset "Genomic 'N' Block Handling" begin
     guide = "ACGTACGTACGTACGTACGT"
     pam   = "AGG"
-    motif = Motif("Cas9"; distance = 0)
-    
-    # A stretch of 30 N's sandwiched by normal DNA (simulate an unmapped centromere gap)
-    genome_seq = PAD * repeat("N", 30) * PAD
-    gpath = build_genome(genome_seq; tag = "n_block")
-    
-    # Does CHOPOFF intend for N to match anything? 
-    # If yes -> nrow > 0. If no -> nrow == 0.
-    # Usually, bioinformatics tools filter N-matches or score them as mismatches.
-    # Testing this forces you to document the exact expected behavior of Sassy on 'N's.
-    df = run_sassy(guide, gpath, motif; distance = 0)
-    
-    # If your intended behavior is that N matches ANY guide base, then this will be > 0.
-    # If you intend to reject them, and it returns >0, you have a bug in get_iupac_mask('N').
-    # (Typically, you want get_iupac_mask('N') = 0x00 for the genome, but 0x0F for the guide).
-    @test true # Adjust this assertion based on your desired logic!
-end
 
+    @testset "ambig_max=0 rejects N-only reference windows" begin
+        motif = Motif("Cas9"; distance = 0, ambig_max = 0)
+        gpath = build_genome(PAD * repeat("N", 30) * PAD; tag = "n_block_reject")
+        df = run_sassy(guide, gpath, motif; distance = 0)
+        @test nrow(df) == 0
+    end
+
+    @testset "reference ambiguity count is limited in guide plus PAM only" begin
+        motif0 = Motif("Cas9"; distance = 0, ambig_max = 0)
+        motif1 = Motif("Cas9"; distance = 0, ambig_max = 1)
+        motif2 = Motif("Cas9"; distance = 0, ambig_max = 2)
+
+        one_n = guide[1:10] * "N" * guide[12:end] * pam
+        two_n = guide[1:10] * "N" * guide[12:15] * "N" * guide[17:end] * pam
+        pam_n = guide * "NGG"
+
+        @test nrow(run_sassy(guide, build_genome(PAD * one_n * PAD; tag = "n_one"), motif1; distance = 0)) == 1
+        @test nrow(run_sassy(guide, build_genome(PAD * one_n * PAD; tag = "n_one_reject"), motif0; distance = 0)) == 0
+        @test nrow(run_sassy(guide, build_genome(PAD * two_n * PAD; tag = "n_two_reject"), motif1; distance = 0)) == 0
+        @test nrow(run_sassy(guide, build_genome(PAD * two_n * PAD; tag = "n_two_accept"), motif2; distance = 0)) == 1
+        @test nrow(run_sassy(guide, build_genome(PAD * pam_n * PAD; tag = "n_pam"), motif1; distance = 0)) == 1
+    end
+
+    @testset "ambiguous guides remain supported" begin
+        motif = Motif("Cas9"; distance = 0, ambig_max = 0)
+        ambig_guide = "ACGTACGTACGTACGTACGN"
+        concrete_ref = "ACGTACGTACGTACGTACGA"
+        gpath = build_genome(PAD * concrete_ref * pam * PAD; tag = "ambig_guide")
+        df = run_sassy(ambig_guide, gpath, motif; distance = 0)
+        @test nrow(df) == 1
+    end
+end
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Cleanup

@@ -48,6 +48,7 @@ include("db_linear.jl")
 include("db_tree.jl")
 
 include("db_prefix_hash.jl")
+include("db_prefix_hash_scan.jl")
 include("db_hash.jl")
 include("db_dict.jl")
 include("db_vcf.jl")

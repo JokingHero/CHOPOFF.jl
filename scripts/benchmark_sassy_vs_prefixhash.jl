@@ -68,20 +68,26 @@ function load_benchmark_cases(distance::Int)
     cas12a_genome = require_file(joinpath(SAMPLE_DIR, "genome", "semirandom.2bit"))
     cas12a_guides = copy(CAS12A_GUIDES)
 
-    return [
-        (
+    selected = Set(split(lowercase(strip(get(ENV, "CHOPOFF_BENCH_CASES", "cas9,cas12a"))), ','))
+    cases = NamedTuple[]
+    if "cas9" in selected
+        push!(cases, (
             label = "Cas9",
             motif = Motif("Cas9"; distance = distance),
             genome = cas9_genome,
             guides = cas9_guides,
-        ),
-        (
+        ))
+    end
+    if "cas12a" in selected
+        push!(cases, (
             label = "Cas12a",
             motif = Motif("Cas12a"; distance = distance),
             genome = cas12a_genome,
             guides = cas12a_guides,
-        ),
-    ]
+        ))
+    end
+    isempty(cases) && error("No benchmark cases selected by CHOPOFF_BENCH_CASES.")
+    return cases
 end
 
 function read_result(path::String)
@@ -179,7 +185,73 @@ function summarize_times(times::Vector{Float64})
     )
 end
 
-function run_case(case, distance::Int, runs::Int, mode::AbstractString, tmp_root::String)
+
+function scan_stat_fields(stats)
+    if stats === nothing
+        return (
+            scan_motif_candidates = missing,
+            scan_ambiguous_prefixes = missing,
+            scan_prefix_hits = missing,
+            scan_guide_pairs = missing,
+            scan_alignment_calls = missing,
+            scan_emitted_rows = missing,
+            scan_path_rows = missing,
+            scan_query_hashes = missing,
+            scan_bruteforce_guide_pairs = missing,
+            scan_path_source = missing,
+            scan_query_variant = missing,
+            scan_query_build_s = missing,
+            scan_path_load_s = missing,
+            scan_query_hash_s = missing,
+            scan_query_format_s = missing,
+            scan_query_fold_s = missing,
+            scan_query_dedup_s = missing,
+            scan_query_insert_s = missing,
+            scan_query_lookup_s = missing,
+            scan_chrom_load_s = missing,
+            scan_findguides_s = missing,
+            scan_candidate_prefix_s = missing,
+            scan_candidate_hash_s = missing,
+            scan_candidate_materialize_s = missing,
+            scan_align_s = missing,
+            scan_emit_s = missing,
+            scan_scan_s = missing,
+            scan_verify_s = missing,
+        )
+    end
+    return (
+        scan_motif_candidates = stats.motif_candidates,
+        scan_ambiguous_prefixes = stats.ambiguous_prefixes,
+        scan_prefix_hits = stats.prefix_hits,
+        scan_guide_pairs = stats.guide_pairs,
+        scan_alignment_calls = stats.alignment_calls,
+        scan_emitted_rows = stats.emitted_rows,
+        scan_path_rows = stats.path_rows,
+        scan_query_hashes = stats.query_hashes,
+        scan_bruteforce_guide_pairs = stats.bruteforce_guide_pairs,
+        scan_path_source = string(stats.path_source),
+        scan_query_variant = string(stats.query_variant),
+        scan_query_build_s = Float64(stats.query_build_ns) / 1e9,
+        scan_path_load_s = Float64(stats.path_load_ns) / 1e9,
+        scan_query_hash_s = Float64(stats.query_hash_ns) / 1e9,
+        scan_query_format_s = Float64(stats.query_format_ns) / 1e9,
+        scan_query_fold_s = Float64(stats.query_fold_ns) / 1e9,
+        scan_query_dedup_s = Float64(stats.query_dedup_ns) / 1e9,
+        scan_query_insert_s = Float64(stats.query_insert_ns) / 1e9,
+        scan_query_lookup_s = Float64(stats.query_lookup_ns) / 1e9,
+        scan_chrom_load_s = Float64(stats.chrom_load_ns) / 1e9,
+        scan_findguides_s = Float64(stats.findguides_ns) / 1e9,
+        scan_candidate_prefix_s = Float64(stats.candidate_prefix_ns) / 1e9,
+        scan_candidate_hash_s = Float64(stats.candidate_hash_ns) / 1e9,
+        scan_candidate_materialize_s = Float64(stats.candidate_materialize_ns) / 1e9,
+        scan_align_s = Float64(stats.align_ns) / 1e9,
+        scan_emit_s = Float64(stats.emit_ns) / 1e9,
+        scan_scan_s = Float64(stats.scan_ns) / 1e9,
+        scan_verify_s = Float64(stats.verify_ns) / 1e9,
+    )
+end
+
+function run_case(case, distance::Int, runs::Int, mode::AbstractString, tmp_root::String, scan_enabled::Bool)
     println("\n=== Case: $(case.label) | distance=$distance | guides=$(length(case.guides)) ===")
 
     case_dir = joinpath(tmp_root, "$(case.label)_$mode")
@@ -193,6 +265,16 @@ function run_case(case, distance::Int, runs::Int, mode::AbstractString, tmp_root
     warm_prefix = joinpath(case_dir, "warmup_prefixhash.csv")
     search_sassy(case.guides, case.genome, case.motif, warm_sassy; distance = distance, early_stopping = es)
     search_prefixHashDB(db_dir, case.guides, warm_prefix; distance = distance, early_stopping = es)
+    if scan_enabled
+        warm_scan = joinpath(case_dir, "warmup_prefixhashscan.csv")
+        CHOPOFF.search_prefixHashScan(case.guides, case.genome, case.motif, warm_scan; distance = distance, early_stopping = es)
+        scan_warm_ok, scan_warm_lhs, scan_warm_rhs = check_core_parity(warm_scan, warm_prefix)
+        println("Warmup prefixHashScan parity: ", scan_warm_ok ? "PASS" : "FAIL")
+        if !scan_warm_ok
+            println("Warmup prefixHashScan-only tuples: ", nrow(scan_warm_lhs))
+            println("Warmup PrefixHashDB-only tuples: ", nrow(scan_warm_rhs))
+        end
+    end
     warm_ok, warm_lhs_only, warm_rhs_only = check_core_parity(warm_sassy, warm_prefix)
     println("Warmup parity: ", warm_ok ? "PASS" : "FAIL")
     if !warm_ok
@@ -202,11 +284,15 @@ function run_case(case, distance::Int, runs::Int, mode::AbstractString, tmp_root
 
     sassy_times = Float64[]
     prefix_times = Float64[]
+    scan_times = Float64[]
+    scan_stats_runs = CHOPOFF.PrefixHashScanStats[]
     parity_flags = Bool[]
+    scan_parity_flags = Bool[]
 
     for run_id in 1:runs
         sassy_out = joinpath(case_dir, "sassy_run_$(run_id).csv")
         prefix_out = joinpath(case_dir, "prefixhash_run_$(run_id).csv")
+        scan_out = joinpath(case_dir, "prefixhashscan_run_$(run_id).csv")
 
         sassy_elapsed = @elapsed search_sassy(
             case.guides,
@@ -223,20 +309,96 @@ function run_case(case, distance::Int, runs::Int, mode::AbstractString, tmp_root
             distance = distance,
             early_stopping = es,
         )
+        scan_elapsed = NaN
+        scan_parity_ok = true
+        if scan_enabled
+            scan_stats = CHOPOFF.PrefixHashScanStats()
+            scan_elapsed = @elapsed CHOPOFF.search_prefixHashScan(
+                case.guides,
+                case.genome,
+                case.motif,
+                scan_out;
+                distance = distance,
+                early_stopping = es,
+                stats = scan_stats,
+            )
+            scan_parity_ok, scan_lhs_only, scan_rhs_only = check_core_parity(scan_out, prefix_out)
+            push!(scan_times, scan_elapsed)
+            push!(scan_stats_runs, scan_stats)
+            push!(scan_parity_flags, scan_parity_ok)
+        end
 
         parity_ok, lhs_only, rhs_only = check_core_parity(sassy_out, prefix_out)
         push!(sassy_times, sassy_elapsed)
         push!(prefix_times, prefix_elapsed)
         push!(parity_flags, parity_ok)
 
-        @printf(
-            "run %d/%d | sassy=%.6fs | prefixHashDB=%.6fs | parity=%s\n",
-            run_id,
-            runs,
-            sassy_elapsed,
-            prefix_elapsed,
-            parity_ok ? "PASS" : "FAIL",
-        )
+        if scan_enabled
+            @printf(
+                "run %d/%d | sassy=%.6fs | prefixHashDB=%.6fs | prefixHashScan=%.6fs | parity=%s | scan_parity=%s\n",
+                run_id,
+                runs,
+                sassy_elapsed,
+                prefix_elapsed,
+                scan_elapsed,
+                parity_ok ? "PASS" : "FAIL",
+                scan_parity_ok ? "PASS" : "FAIL",
+            )
+        else
+            @printf(
+                "run %d/%d | sassy=%.6fs | prefixHashDB=%.6fs | parity=%s\n",
+                run_id,
+                runs,
+                sassy_elapsed,
+                prefix_elapsed,
+                parity_ok ? "PASS" : "FAIL",
+            )
+        end
+        if scan_enabled
+            @printf(
+                "  scan stats | source=%s | variant=%s | path_rows=%d | query_hashes=%d | brute_pairs=%d | candidates=%d | prefix_hits=%d | guide_pairs=%d | align_calls=%d | rows=%d | ambiguous_prefixes=%d | query=%.3fs | load=%.3fs | hash=%.3fs | format=%.3fs | fold=%.3fs | dedup=%.3fs | insert=%.3fs | lookup=%.3fs | chrom=%.3fs | find=%.3fs | prefix=%.3fs | cand_hash=%.3fs | materialize=%.3fs | align=%.3fs | emit=%.3fs | scan=%.3fs | verify=%.3fs\n",
+                string(scan_stats.path_source),
+                string(scan_stats.query_variant),
+                scan_stats.path_rows,
+                scan_stats.query_hashes,
+                scan_stats.bruteforce_guide_pairs,
+                scan_stats.motif_candidates,
+                scan_stats.prefix_hits,
+                scan_stats.guide_pairs,
+                scan_stats.alignment_calls,
+                scan_stats.emitted_rows,
+                scan_stats.ambiguous_prefixes,
+                Float64(scan_stats.query_build_ns) / 1e9,
+                Float64(scan_stats.path_load_ns) / 1e9,
+                Float64(scan_stats.query_hash_ns) / 1e9,
+                Float64(scan_stats.query_format_ns) / 1e9,
+                Float64(scan_stats.query_fold_ns) / 1e9,
+                Float64(scan_stats.query_dedup_ns) / 1e9,
+                Float64(scan_stats.query_insert_ns) / 1e9,
+                Float64(scan_stats.query_lookup_ns) / 1e9,
+                Float64(scan_stats.chrom_load_ns) / 1e9,
+                Float64(scan_stats.findguides_ns) / 1e9,
+                Float64(scan_stats.candidate_prefix_ns) / 1e9,
+                Float64(scan_stats.candidate_hash_ns) / 1e9,
+                Float64(scan_stats.candidate_materialize_ns) / 1e9,
+                Float64(scan_stats.align_ns) / 1e9,
+                Float64(scan_stats.emit_ns) / 1e9,
+                Float64(scan_stats.scan_ns) / 1e9,
+                Float64(scan_stats.verify_ns) / 1e9,
+            )
+        end
+
+        if scan_enabled && !scan_parity_ok
+            println("  prefixHashScan-only tuples: ", nrow(scan_lhs_only))
+            if nrow(scan_lhs_only) > 0
+                println(first(scan_lhs_only, min(nrow(scan_lhs_only), 5)))
+            end
+            println("  PrefixHashDB-only tuples vs scan: ", nrow(scan_rhs_only))
+            if nrow(scan_rhs_only) > 0
+                println(first(scan_rhs_only, min(nrow(scan_rhs_only), 5)))
+            end
+        end
+
         if !parity_ok
             println("  Sassy-only tuples: ", nrow(lhs_only))
             if nrow(lhs_only) > 0
@@ -254,7 +416,11 @@ function run_case(case, distance::Int, runs::Int, mode::AbstractString, tmp_root
     prefix_valid = prefix_times[valid_idx]
     sassy_stats = summarize_times(sassy_valid)
     prefix_stats = summarize_times(prefix_valid)
+    scan_valid_idx = findall(scan_parity_flags)
+    scan_stats = summarize_times(scan_times[scan_valid_idx])
+    scan_summary_stats = isempty(scan_valid_idx) ? nothing : scan_stats_runs[last(scan_valid_idx)]
     parity_ok = all(parity_flags)
+    scan_parity_ok = !scan_enabled || all(scan_parity_flags)
 
     ratio_prefix_over_sassy = (
         isfinite(prefix_stats.median) && isfinite(sassy_stats.median) && sassy_stats.median > 0
@@ -275,7 +441,7 @@ function run_case(case, distance::Int, runs::Int, mode::AbstractString, tmp_root
     )
 
     stamp = Dates.format(now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SS")
-    rows = [
+    rows = Any[
         (
             timestamp = stamp,
             motif = case.label,
@@ -292,6 +458,7 @@ function run_case(case, distance::Int, runs::Int, mode::AbstractString, tmp_root
             max_s = sassy_stats.max,
             parity_ok = parity_ok,
             ratio_vs_other = ratio_sassy_over_prefix,
+            scan_stat_fields(nothing)...,
         ),
         (
             timestamp = stamp,
@@ -309,8 +476,30 @@ function run_case(case, distance::Int, runs::Int, mode::AbstractString, tmp_root
             max_s = prefix_stats.max,
             parity_ok = parity_ok,
             ratio_vs_other = ratio_prefix_over_sassy,
+            scan_stat_fields(nothing)...,
         ),
     ]
+
+    if scan_enabled
+        push!(rows, (
+            timestamp = stamp,
+            motif = case.label,
+            distance = distance,
+            thread_mode = mode,
+            threads = Threads.nthreads(),
+            algorithm = "prefixHashScan",
+            runs_total = runs,
+            runs_valid = length(scan_valid_idx),
+            median_s = scan_stats.median,
+            mean_s = scan_stats.mean,
+            std_s = scan_stats.std,
+            min_s = scan_stats.min,
+            max_s = scan_stats.max,
+            parity_ok = scan_parity_ok,
+            ratio_vs_other = isfinite(scan_stats.median) && isfinite(prefix_stats.median) && prefix_stats.median > 0 ? scan_stats.median / prefix_stats.median : NaN,
+            scan_stat_fields(scan_summary_stats)...,
+        ))
+    end
     return rows
 end
 
@@ -318,6 +507,7 @@ function run_child()
     runs = parse_int_env("CHOPOFF_BENCH_RUNS", 7)
     distance = parse_int_env("CHOPOFF_BENCH_DISTANCE", 3)
     keep_tmp = parse_bool_env("CHOPOFF_BENCH_KEEP_TMP", false)
+    scan_enabled = parse_bool_env("CHOPOFF_BENCH_SCAN", false)
     mode = strip(get(ENV, "CHOPOFF_BENCH_CHILD_MODE", "env"))
     out_path = strip(get(ENV, "CHOPOFF_BENCH_OUT", ""))
     append_out = parse_bool_env("CHOPOFF_BENCH_APPEND", false)
@@ -329,12 +519,14 @@ function run_child()
     println("cpu: ", maybe_cpu_name())
     println("runs: $runs")
     println("distance: $distance")
+    println("scan_enabled: $scan_enabled")
+    println("cases: ", get(ENV, "CHOPOFF_BENCH_CASES", "cas9,cas12a"))
 
     cases = load_benchmark_cases(distance)
     tmp_root = mktempdir(prefix = "chopoff_speed_")
     rows = NamedTuple[]
     for case in cases
-        append!(rows, run_case(case, distance, runs, mode, tmp_root))
+        append!(rows, run_case(case, distance, runs, mode, tmp_root, scan_enabled))
     end
 
     summary = DataFrame(rows)

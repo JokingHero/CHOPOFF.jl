@@ -232,33 +232,13 @@ function build_prefixHashDB(
     isplus = BitVector(isplus[order])
 
     @info "Step 3: Constructing Paths for hashes"
-    # trying to preload paths for most common use case
+    # trying to preload paths for most common use cases
     paths = nothing
-    if (reuse_saved && (motif.distance <= 4) && (hash_len <= 16))
-        m2 = Motif("Cas9")
-        if (length_noPAM(motif) == length_noPAM(m2) && 
-            motif.extends5 == m2.extends5 && 
-            motif.pam_loci_fwd == m2.pam_loci_fwd && 
-            motif.pam_loci_rve == m2.pam_loci_rve)
-
-            dir = joinpath(dirname(pathof(CHOPOFF)), "..", "data")
-            pfile1 = joinpath(dir, "Cas9_d4_p16_paths_part1.bin")
-            pfile2 = joinpath(dir, "Cas9_d4_p16_paths_part2.bin")
-            dfile = joinpath(dir, "Cas9_d4_p16_distances.bin")
-            if (isfile(pfile1) && isfile(pfile2) && isfile(dfile))
-                @info "Reusing precomputed alignments."
-                paths = CHOPOFF.load(pfile1)
-                paths2 = CHOPOFF.load(pfile2)
-                paths = vcat(paths, paths2)
-                distances = CHOPOFF.load(joinpath(dir, "Cas9_d4_p16_distances.bin"))
-                paths = paths[:, 1:hash_len]
-                not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto))))
-                not_over_dist = BitVector(distances .<= motif.distance)
-                not = not_dups .& not_over_dist
-                paths = paths[not, :]
-                distances = distances[not]
-                paths = convert.(smallestutype(maximum(paths)), paths)
-            end
+    if reuse_saved
+        precomputed = load_precomputed_prefix_paths(motif, motif.distance, hash_len)
+        if precomputed !== nothing
+            @info "Reusing precomputed alignments."
+            paths, distances, _ = precomputed
         end
     end
 
