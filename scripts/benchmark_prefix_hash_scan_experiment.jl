@@ -41,9 +41,11 @@ function main()
     variants = parse_symbol_list("CHOPOFF_SCAN_EXPERIMENT_VARIANTS", "bitmask64")
     backends = parse_symbol_list(
         "CHOPOFF_SCAN_EXPERIMENT_BACKENDS",
-        "legacy,fused_dict,fused_directory",
+        "legacy,fused_dict,fused_directory,fused_fasta_simd",
     )
     bucket_bases = parse_int_list("CHOPOFF_SCAN_EXPERIMENT_BUCKET_BASES", "9,10,11")
+    prefilter_bits = parse_int_list(
+        "CHOPOFF_SCAN_EXPERIMENT_PREFILTER_BITS", "26")
     verify_variants = parse_symbol_list(
         "CHOPOFF_SCAN_EXPERIMENT_VERIFY",
         "align,distance_first",
@@ -70,10 +72,13 @@ function main()
                 supported_backends = distance == 3 && variant == :bitmask64 ?
                     backends : [:legacy]
                 for backend in supported_backends
-                    buckets = backend == :fused_directory ? bucket_bases : [first(bucket_bases)]
+                    buckets = backend in (:fused_directory, :fused_fasta_simd) ?
+                        bucket_bases : [first(bucket_bases)]
                     verifies = backend == :legacy ? [:align] : verify_variants
-                    for bucket in buckets, verify in verifies
-                        label = "$(variant)_$(backend)_b$(bucket)_$(verify)_d$(distance)_n$(length(guides))"
+                    prefilters = backend == :fused_fasta_simd ?
+                        prefilter_bits : [0]
+                    for bucket in buckets, verify in verifies, prefilter in prefilters
+                        label = "$(variant)_$(backend)_b$(bucket)_p$(prefilter)_$(verify)_d$(distance)_n$(length(guides))"
                         out = joinpath(tdir, "scan_" * label * ".csv")
                         kwargs = (
                             distance = distance,
@@ -82,6 +87,7 @@ function main()
                             scan_backend = backend,
                             bucket_bases = bucket,
                             scan_threads = scan_threads,
+                            prefilter_bits = prefilter,
                             verify_variant = verify,
                         )
                         CHOPOFF.search_prefixHashScan(guides, genome, motif, out; kwargs...)
@@ -109,7 +115,9 @@ function main()
                             guides = length(guides),
                             variant = string(variant),
                             backend = string(backend),
+                            backend_used = string(stats.scan_backend),
                             bucket_bases = bucket,
+                            prefilter_bits = prefilter,
                             verify = string(verify),
                             scan_threads = scan_threads,
                             runs = runs,
@@ -123,6 +131,7 @@ function main()
                             verification_calls = stats.alignment_calls,
                             distance_calls = stats.distance_calls,
                             traceback_calls = stats.traceback_calls,
+                            metadata_s = Float64(stats.metadata_ns) / 1e9,
                             query_build_s = Float64(stats.query_build_ns) / 1e9,
                             record_io_s = Float64(stats.record_io_ns) / 1e9,
                             sequence_convert_s = Float64(stats.sequence_convert_ns) / 1e9,

@@ -327,6 +327,7 @@ function main()
     scan_backend = Symbol(strip(get(ENV, "CHOPOFF_HUMAN_SCAN_BACKEND", "auto")))
     scan_bucket_bases = parse_int_env("CHOPOFF_HUMAN_SCAN_BUCKET_BASES", 11)
     scan_threads = parse_int_env("CHOPOFF_HUMAN_SCAN_THREADS", Threads.nthreads())
+    scan_prefilter_bits = parse_int_env("CHOPOFF_HUMAN_SCAN_PREFILTER_BITS", 26)
     scan_verify_variant = Symbol(strip(get(ENV, "CHOPOFF_HUMAN_SCAN_VERIFY_VARIANT", "auto")))
     rebuild_prefix = parse_bool_env("CHOPOFF_HUMAN_REBUILD_PREFIX", false)
     keep_outputs = parse_bool_env("CHOPOFF_HUMAN_KEEP_OUTPUTS", true)
@@ -357,6 +358,7 @@ function main()
     println("scan_backend: ", scan_backend)
     println("scan_bucket_bases: ", scan_bucket_bases)
     println("scan_threads: ", scan_threads)
+    println("scan_prefilter_bits: ", scan_prefilter_bits)
     println("scan_verify_variant: ", scan_verify_variant)
     println("output_dir: ", output_dir)
 
@@ -392,9 +394,11 @@ function main()
     scan_ambig_ref_rows = missing
     scan_path_source = missing
     scan_query_variant_used = missing
+    scan_backend_used = missing
     scan_alignment_calls = missing
     scan_distance_calls = missing
     scan_traceback_calls = missing
+    scan_metadata_s = missing
     scan_query_build_s = missing
     scan_path_load_s = missing
     scan_record_io_s = missing
@@ -446,6 +450,7 @@ function main()
             scan_backend = scan_backend,
             bucket_bases = scan_bucket_bases,
             scan_threads = scan_threads,
+            prefilter_bits = scan_prefilter_bits,
             verify_variant = scan_verify_variant,
             stats = scan_stats,
         )
@@ -454,9 +459,11 @@ function main()
         scan_ambig_ref_rows = count_ambiguous_reference_rows(scan_path)
         scan_path_source = scan_stats.path_source
         scan_query_variant_used = scan_stats.query_variant
+        scan_backend_used = scan_stats.scan_backend
         scan_alignment_calls = scan_stats.alignment_calls
         scan_distance_calls = scan_stats.distance_calls
         scan_traceback_calls = scan_stats.traceback_calls
+        scan_metadata_s = scan_stats.metadata_ns / 1e9
         scan_query_build_s = scan_stats.query_build_ns / 1e9
         scan_path_load_s = scan_stats.path_load_ns / 1e9
         scan_record_io_s = scan_stats.record_io_ns / 1e9
@@ -494,6 +501,7 @@ function main()
         scan_backend = scan_backend,
         scan_bucket_bases = scan_bucket_bases,
         scan_threads = scan_threads,
+        scan_prefilter_bits = scan_prefilter_bits,
         scan_verify_variant = scan_verify_variant,
         prefix_elapsed_s = prefix_elapsed,
         prefix_rows = prefix_rows,
@@ -509,9 +517,11 @@ function main()
         scan_ambig_ref_rows = scan_ambig_ref_rows,
         scan_path_source = scan_path_source,
         scan_query_variant_used = scan_query_variant_used,
+        scan_backend_used = scan_backend_used,
         scan_alignment_calls = scan_alignment_calls,
         scan_distance_calls = scan_distance_calls,
         scan_traceback_calls = scan_traceback_calls,
+        scan_metadata_s = scan_metadata_s,
         scan_query_build_s = scan_query_build_s,
         scan_path_load_s = scan_path_load_s,
         scan_record_io_s = scan_record_io_s,
@@ -543,15 +553,16 @@ function main()
             scan_ambig_ref_rows,
             string(scan_path_source),
             string(scan_query_variant_used),
-            string(scan_backend),
+            string(scan_backend_used),
             string(scan_verify_variant),
             scan_alignment_calls,
             scan_distance_calls,
             scan_traceback_calls,
         )
         @printf(
-            "prefixHashScan timers: query_build=%.3fs | path_load=%.3fs | record_io=%.3fs | sequence_convert=%.3fs | scan=%.3fs | findguides=%.3fs | candidate_hash=%.3fs | align=%.3fs
+            "prefixHashScan timers: metadata=%.3fs | query_build=%.3fs | path_load=%.3fs | record_io=%.3fs | sequence_convert=%.3fs | scan=%.3fs | findguides=%.3fs | candidate_hash=%.3fs | align=%.3fs
 ",
+            scan_metadata_s,
             scan_query_build_s,
             scan_path_load_s,
             scan_record_io_s,

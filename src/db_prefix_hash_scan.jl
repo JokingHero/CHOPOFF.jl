@@ -1,3 +1,5 @@
+using SIMD
+
 mutable struct PrefixHashScanStats
     motif_candidates::Int
     ambiguous_prefixes::Int
@@ -10,6 +12,7 @@ mutable struct PrefixHashScanStats
     path_rows::Int
     query_hashes::Int
     bruteforce_guide_pairs::Int
+    metadata_ns::UInt64
     query_build_ns::UInt64
     path_load_ns::UInt64
     query_hash_ns::UInt64
@@ -31,9 +34,10 @@ mutable struct PrefixHashScanStats
     verify_ns::UInt64
     path_source::Symbol
     query_variant::Symbol
+    scan_backend::Symbol
 end
 
-PrefixHashScanStats() = PrefixHashScanStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, :none, :none)
+PrefixHashScanStats() = PrefixHashScanStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, :none, :none, :none)
 
 function reset!(stats::PrefixHashScanStats)
     stats.motif_candidates = 0
@@ -47,6 +51,7 @@ function reset!(stats::PrefixHashScanStats)
     stats.path_rows = 0
     stats.query_hashes = 0
     stats.bruteforce_guide_pairs = 0
+    stats.metadata_ns = 0
     stats.query_build_ns = 0
     stats.path_load_ns = 0
     stats.query_hash_ns = 0
@@ -68,6 +73,7 @@ function reset!(stats::PrefixHashScanStats)
     stats.verify_ns = 0
     stats.path_source = :none
     stats.query_variant = :none
+    stats.scan_backend = :none
     return stats
 end
 
@@ -143,14 +149,46 @@ struct PrefixHashScanDirectory
     bucket_bases::UInt8
 end
 
+struct PrefixHashScanPrefilteredDirectory{D}
+    directory::D
+    presence::Vector{UInt64}
+    prefix_bits::UInt8
+end
+
 struct PrefixHashScanHit
     start::Int
     mask::UInt64
 end
 
-struct PrefixHashScanFASTARecords{R, C}
+struct PrefixHashScanFASTARecords{R, C, L}
     reader::R
     chrom::C
+    lengths::L
+end
+
+function prefix_hash_scan_dbinfo(filepath::String, motif::Motif)
+    if !is_fasta(filepath)
+        return DBInfo(filepath, "prefixHashScan", motif), nothing
+    end
+
+    fai_path = filepath * ".fai"
+    isfile(fai_path) || error("FASTA index not found: " * fai_path)
+    index = FASTA.Index(fai_path)
+    chrom = Vector{String}(undef, length(index.names))
+    for (name, idx) in index.names
+        chrom[idx] = name
+    end
+    maxchromlen = isempty(index.lengths) ? 0 : maximum(index.lengths)
+    gi = GenomeInfo(
+        now(Dates.UTC),
+        filepath,
+        UInt32(0),
+        chrom,
+        smallestutype(unsigned(length(chrom))),
+        smallestutype(unsigned(maxchromlen)),
+        true,
+    )
+    return DBInfo("prefixHashScan", now(Dates.UTC), gi, "", motif), index.lengths
 end
 
 struct PrefixHashScanIndexedRecords{R, C}
@@ -166,7 +204,9 @@ function Base.iterate(records::PrefixHashScanFASTARecords)
     record, reader_state = next
     isempty(records.chrom) && error("FASTA contains records absent from GenomeInfo.")
     chrom_name = records.chrom[1]
-    FASTA.identifier(record) == chrom_name || error("FASTA record order differs from GenomeInfo.")
+    FASTA.identifier(record) == chrom_name || error("FASTA record order differs from FAI.")
+    FASTX.seqsize(record) == records.lengths[1] ||
+        error("FASTA record length differs from FAI.")
     return (chrom_name, record, load_ns), (reader_state, 2)
 end
 
@@ -184,7 +224,9 @@ function Base.iterate(records::PrefixHashScanFASTARecords, state)
         error("FASTA contains more records than GenomeInfo.")
     record, next_reader_state = next
     chrom_name = records.chrom[chrom_idx]
-    FASTA.identifier(record) == chrom_name || error("FASTA record order differs from GenomeInfo.")
+    FASTA.identifier(record) == chrom_name || error("FASTA record order differs from FAI.")
+    FASTX.seqsize(record) == records.lengths[chrom_idx] ||
+        error("FASTA record length differs from FAI.")
     return (chrom_name, record, load_ns), (next_reader_state, chrom_idx + 1)
 end
 
@@ -535,6 +577,141 @@ function build_prefix_hash_scan_directory(
     return PrefixHashScanDirectory(offsets, suffixes, masks, UInt8(hash_len), UInt8(bucket_bases))
 end
 
+
+function merge_prefix_hash_scan_hash_lists(
+    lists::Vector{Vector{T}}) where T <: Unsigned
+
+    positions = ones(Int, length(lists))
+    heap = [idx for idx in eachindex(lists) if !isempty(lists[idx])]
+    @inline less(left, right) =
+        @inbounds lists[left][positions[left]] < lists[right][positions[right]]
+
+    function sift_down!(idx)
+        while true
+            left = idx << 1
+            left > length(heap) && return
+            right = left + 1
+            child = right <= length(heap) && less(heap[right], heap[left]) ?
+                right : left
+            less(heap[child], heap[idx]) || return
+            heap[idx], heap[child] = heap[child], heap[idx]
+            idx = child
+        end
+    end
+
+    for idx in (length(heap) >> 1):-1:1
+        sift_down!(idx)
+    end
+    capacity = sum(length, lists)
+    keys_ = T[]
+    masks = UInt64[]
+    sizehint!(keys_, capacity)
+    sizehint!(masks, capacity)
+
+    while !isempty(heap)
+        hash = @inbounds lists[heap[1]][positions[heap[1]]]
+        mask = UInt64(0)
+        while !isempty(heap) &&
+                (@inbounds lists[heap[1]][positions[heap[1]]]) == hash
+            guide_idx = heap[1]
+            mask |= UInt64(1) << (guide_idx - 1)
+            positions[guide_idx] += 1
+            if positions[guide_idx] > length(lists[guide_idx])
+                heap[1] = heap[end]
+                pop!(heap)
+            else
+                heap[1] = guide_idx
+            end
+            isempty(heap) || sift_down!(1)
+        end
+        push!(keys_, hash)
+        push!(masks, mask)
+    end
+    return keys_, masks
+end
+
+function build_prefix_hash_scan_directory(
+    keys_::Vector{UInt32},
+    masks::Vector{UInt64},
+    hash_len::Int,
+    bucket_bases::Int)
+
+    length(keys_) == length(masks) || error("Hash and mask counts differ.")
+    1 <= bucket_bases < hash_len ||
+        error("bucket_bases must be in 1:(hash_len - 1).")
+    suffix_bits = 2 * (hash_len - bucket_bases)
+    suffix_bits <= 16 || error("Directory suffix must fit in UInt16.")
+
+    nbuckets = 1 << (2 * bucket_bases)
+    offsets = Vector{UInt32}(undef, nbuckets + 1)
+    suffixes = Vector{UInt16}(undef, length(keys_))
+    suffix_mask = (UInt32(1) << suffix_bits) - UInt32(1)
+    key_idx = 1
+    @inbounds for bucket in 0:(nbuckets - 1)
+        offsets[bucket + 1] = UInt32(key_idx - 1)
+        while key_idx <= length(keys_) &&
+                Int(keys_[key_idx] >> suffix_bits) == bucket
+            suffixes[key_idx] = UInt16(keys_[key_idx] & suffix_mask)
+            key_idx += 1
+        end
+    end
+    offsets[end] = UInt32(length(keys_))
+    return PrefixHashScanDirectory(
+        offsets, suffixes, masks, UInt8(hash_len), UInt8(bucket_bases))
+end
+
+function build_prefix_hash_scan_compact_query(
+    guides::Vector{LongDNA{4}},
+    motif::Motif,
+    distance::Int,
+    hash_len::Int,
+    stats::Union{Nothing, PrefixHashScanStats};
+    bucket_bases::Int,
+    prefilter_bits::Int)
+
+    paths, _ = load_prefix_hash_scan_paths(
+        motif, distance, hash_len, stats)
+    guides_ = oriented_prefix_hash_scan_guides(guides, motif)
+    lists = Vector{Vector{UInt32}}(undef, length(guides_))
+    for (guide_idx, guide) in enumerate(guides_)
+        format_start = time_ns()
+        formatted = guide_to_template_format(
+            guide; alphabet = ALPHABET_TWOBIT)
+        if stats !== nothing
+            stats.query_format_ns += time_ns() - format_start
+        end
+
+        hashes = Vector{UInt32}(undef, size(paths, 1))
+        fold_start = time_ns()
+        fill_prefix_hashes_columnwise!(hashes, paths, formatted)
+        if stats !== nothing
+            stats.query_fold_ns += time_ns() - fold_start
+        end
+        dedup_start = time_ns()
+        sort!(hashes)
+        unique_sorted_prefix_hashes!(hashes)
+        if stats !== nothing
+            stats.query_dedup_ns += time_ns() - dedup_start
+            stats.query_hashes += length(hashes)
+        end
+        lists[guide_idx] = hashes
+    end
+
+    merge_start = time_ns()
+    keys_, masks = merge_prefix_hash_scan_hash_lists(lists)
+    directory = build_prefix_hash_scan_directory(
+        keys_, masks, hash_len, bucket_bases)
+    if prefilter_bits != 0
+        directory = build_prefix_hash_scan_prefilter(
+            directory, keys_, prefilter_bits)
+    end
+    if stats !== nothing
+        stats.query_insert_ns += time_ns() - merge_start
+        stats.query_variant = :bitmask64
+    end
+    return directory, guides_
+end
+
 @inline function prefix_hash_scan_candidate_mask(query::PrefixHashScanDirectory, hash::Unsigned)
     suffix_bits = 2 * (Int(query.hash_len) - Int(query.bucket_bases))
     key = UInt32(hash)
@@ -548,6 +725,35 @@ end
         query.suffixes[idx] == suffix && (mask |= query.masks[idx])
     end
     return mask
+end
+
+
+function build_prefix_hash_scan_prefilter(
+    directory::PrefixHashScanDirectory,
+    hashes,
+    prefix_bits::Int)
+
+    prefix_bits in (22, 24, 26) ||
+        error("prefilter_bits must be 22, 24, or 26.")
+    presence = zeros(UInt64, 1 << (prefix_bits - 6))
+    shift = 32 - prefix_bits
+    for hash in hashes
+        prefix = Int(UInt32(hash) >> shift)
+        @inbounds presence[(prefix >> 6) + 1] |= UInt64(1) << (prefix & 63)
+    end
+    return PrefixHashScanPrefilteredDirectory(
+        directory, presence, UInt8(prefix_bits))
+end
+
+@inline function prefix_hash_scan_candidate_mask(
+    query::PrefixHashScanPrefilteredDirectory,
+    hash::Unsigned)
+
+    shift = 32 - Int(query.prefix_bits)
+    prefix = Int(UInt32(hash) >> shift)
+    word = @inbounds query.presence[(prefix >> 6) + 1]
+    ((word >> (prefix & 63)) & UInt64(1)) == 0 && return UInt64(0)
+    return prefix_hash_scan_candidate_mask(query.directory, hash)
 end
 
 @inline function prefix_hash_scan_twobit_nibble(nibble::UInt8)
@@ -653,6 +859,284 @@ function scan_cas9_prefix_hits_range(
     return plus_hits, minus_hits, motif_candidates
 end
 
+
+const PREFIX_HASH_SCAN_V32U8 = Vec{32, UInt8}
+const PREFIX_HASH_SCAN_AVX2_FEATURE = UInt32(32 * 2 + 5)
+const PREFIX_HASH_SCAN_BMI2_FEATURE = UInt32(32 * 2 + 8)
+const PREFIX_HASH_SCAN_PDEP_EVEN = UInt64(0x5555555555555555)
+const PREFIX_HASH_SCAN_PDEP_ODD = UInt64(0xaaaaaaaaaaaaaaaa)
+
+@inline function can_use_prefix_hash_scan_simd()
+    (Sys.ARCH === :x86_64 || Sys.ARCH === :i686) || return false
+    return ccall(:jl_test_cpu_feature, Bool, (UInt32,), PREFIX_HASH_SCAN_AVX2_FEATURE) &&
+        ccall(:jl_test_cpu_feature, Bool, (UInt32,), PREFIX_HASH_SCAN_BMI2_FEATURE)
+end
+
+@inline function prefix_hash_scan_movemask(v::PREFIX_HASH_SCAN_V32U8)
+    Base.llvmcall(
+        ("""
+         declare i32 @llvm.x86.avx2.pmovmskb(<32 x i8>)
+         define i32 @entry(<32 x i8> %0) #0 {
+             %res = call i32 @llvm.x86.avx2.pmovmskb(<32 x i8> %0)
+             ret i32 %res
+         }
+         attributes #0 = { "target-features"="+avx2" }
+         """, "entry"),
+        UInt32, Tuple{PREFIX_HASH_SCAN_V32U8}, v)
+end
+
+@inline function prefix_hash_scan_pdep(value::UInt64, mask::UInt64)
+    Base.llvmcall(
+        ("""
+         declare i64 @llvm.x86.bmi.pdep.64(i64, i64)
+         define i64 @entry(i64 %0, i64 %1) #0 {
+             %res = call i64 @llvm.x86.bmi.pdep.64(i64 %0, i64 %1)
+             ret i64 %res
+         }
+         attributes #0 = { "target-features"="+bmi2" }
+         """, "entry"),
+        UInt64, Tuple{UInt64, UInt64}, value, mask)
+end
+
+@inline function prefix_hash_scan_ascii_mask(
+    folded::PREFIX_HASH_SCAN_V32U8, upper::UInt8)
+
+    bytes = vifelse(
+        folded == PREFIX_HASH_SCAN_V32U8(upper),
+        PREFIX_HASH_SCAN_V32U8(0xff),
+        PREFIX_HASH_SCAN_V32U8(0x00),
+    )
+    return UInt64(prefix_hash_scan_movemask(bytes))
+end
+
+@inline function prefix_hash_scan_raw_profile64(
+    raw::AbstractVector{UInt8}, start_pos::Int)
+
+    case_mask = PREFIX_HASH_SCAN_V32U8(0xdf)
+    chunk0 = vload(PREFIX_HASH_SCAN_V32U8, pointer(raw, start_pos)) & case_mask
+    chunk1 = vload(PREFIX_HASH_SCAN_V32U8, pointer(raw, start_pos + 32)) & case_mask
+    profile(upper) =
+        prefix_hash_scan_ascii_mask(chunk0, upper) |
+        (prefix_hash_scan_ascii_mask(chunk1, upper) << 32)
+    return (
+        profile(UInt8('A')),
+        profile(UInt8('C')),
+        profile(UInt8('G')),
+        profile(UInt8('T')),
+    )
+end
+
+@inline function prefix_hash_scan_valid23(exact::UInt128)
+    valid2 = exact & (exact >> 1)
+    valid4 = valid2 & (valid2 >> 2)
+    valid8 = valid4 & (valid4 >> 4)
+    valid16 = valid8 & (valid8 >> 8)
+    return valid16 & (UInt128(valid4) >> 16) &
+        (UInt128(valid2) >> 20) & (exact >> 22)
+end
+
+@inline function prefix_hash_scan_pack_codes(
+    low_bits::UInt64, high_bits::UInt64)
+
+    return UInt32(
+        prefix_hash_scan_pdep(low_bits, PREFIX_HASH_SCAN_PDEP_EVEN) |
+        prefix_hash_scan_pdep(high_bits, PREFIX_HASH_SCAN_PDEP_ODD))
+end
+
+@inline function prefix_hash_scan_reverse_codes(hash::UInt32)
+    reversed = bitreverse(hash)
+    return ((reversed & UInt32(0xaaaaaaaa)) >> 1) |
+        ((reversed & UInt32(0x55555555)) << 1)
+end
+
+@inline function prefix_hash_scan_raw_code(base::UInt8)
+    (base == UInt8('A') || base == UInt8('a')) && return UInt8(0)
+    (base == UInt8('C') || base == UInt8('c')) && return UInt8(1)
+    (base == UInt8('G') || base == UInt8('g')) && return UInt8(2)
+    (base == UInt8('T') || base == UInt8('t')) && return UInt8(3)
+    return UInt8(0xff)
+end
+
+@inline function prefix_hash_scan_raw_hash(
+    raw::AbstractVector{UInt8}, candidate_start::Int, is_antisense::Bool)
+
+    hash = UInt32(0)
+    positions = if is_antisense
+        (candidate_start + 3):(candidate_start + 18)
+    else
+        (candidate_start + 19):-1:(candidate_start + 4)
+    end
+    @inbounds for pos in positions
+        code = prefix_hash_scan_raw_code(raw[pos])
+        code == 0xff && return nothing
+        is_antisense && (code = UInt8(3) - code)
+        hash = (hash << 2) | UInt32(code)
+    end
+    return hash
+end
+
+function cas9_prefix_scan_bounds_raw(raw::AbstractVector{UInt8}, dbi::DBInfo)
+    n = length(raw)
+    n < 23 && return nothing
+    seq_start = 1
+    seq_stop = n
+    @inbounds while seq_start <= seq_stop &&
+            (raw[seq_start] == UInt8('N') || raw[seq_start] == UInt8('n'))
+        seq_start += 1
+    end
+    @inbounds while seq_stop > 0 &&
+            (raw[seq_stop] == UInt8('N') || raw[seq_stop] == UInt8('n'))
+        seq_stop -= 1
+    end
+    plus_first = max(seq_start - dbi.motif.distance, 1)
+    plus_last = seq_stop - 22
+    minus_first = seq_start
+    minus_last = min(seq_stop + dbi.motif.distance, n) - 22
+    firsts = Int[]
+    lasts = Int[]
+    plus_first <= plus_last && (push!(firsts, plus_first); push!(lasts, plus_last))
+    minus_first <= minus_last && (push!(firsts, minus_first); push!(lasts, minus_last))
+    isempty(firsts) && return nothing
+    return minimum(firsts), maximum(lasts), plus_first, plus_last, minus_first, minus_last
+end
+
+function scan_cas9_prefix_hits_raw_range(
+    raw::AbstractVector{UInt8},
+    query,
+    candidate_first::Int,
+    candidate_last::Int,
+    plus_first::Int,
+    plus_last::Int,
+    minus_first::Int,
+    minus_last::Int)
+
+    plus_hits = PrefixHashScanHit[]
+    minus_hits = PrefixHashScanHit[]
+    motif_candidates = 0
+    candidate_first > candidate_last && return plus_hits, minus_hits, motif_candidates
+    n = length(raw)
+    block_start = candidate_first
+
+    if block_start + 127 <= n && block_start + 63 <= candidate_last
+        a0, c0, g0, t0 = prefix_hash_scan_raw_profile64(raw, block_start)
+    end
+    while block_start + 127 <= n && block_start + 63 <= candidate_last
+        a1, c1, g1, t1 = prefix_hash_scan_raw_profile64(raw, block_start + 64)
+        a = UInt128(a0) | (UInt128(a1) << 64)
+        c = UInt128(c0) | (UInt128(c1) << 64)
+        g = UInt128(g0) | (UInt128(g1) << 64)
+        t = UInt128(t0) | (UInt128(t1) << 64)
+        valid = UInt64(prefix_hash_scan_valid23(a | c | g | t) & UInt128(typemax(UInt64)))
+        count = min(64, candidate_last - block_start + 1)
+        count_mask = count == 64 ? typemax(UInt64) : (UInt64(1) << count) - 1
+        valid &= count_mask
+        plus_mask = valid & UInt64((g >> 21) & UInt128(typemax(UInt64))) &
+            UInt64((g >> 22) & UInt128(typemax(UInt64)))
+        minus_mask = valid & UInt64(c & UInt128(typemax(UInt64))) &
+            UInt64((c >> 1) & UInt128(typemax(UInt64)))
+        low = c | t
+        high = g | t
+
+        while plus_mask != 0
+            bit = trailing_zeros(plus_mask)
+            plus_mask &= plus_mask - 1
+            candidate_start = block_start + bit
+            plus_first <= candidate_start <= plus_last || continue
+            motif_candidates += 1
+            low16 = UInt64((low >> (bit + 4)) & UInt128(0xffff))
+            high16 = UInt64((high >> (bit + 4)) & UInt128(0xffff))
+            hash = prefix_hash_scan_pack_codes(low16, high16)
+            mask = prefix_hash_scan_candidate_mask(query, hash)
+            mask != 0 && push!(plus_hits, PrefixHashScanHit(candidate_start, mask))
+        end
+
+        while minus_mask != 0
+            bit = trailing_zeros(minus_mask)
+            minus_mask &= minus_mask - 1
+            candidate_start = block_start + bit
+            minus_first <= candidate_start <= minus_last || continue
+            motif_candidates += 1
+            low16 = UInt64((low >> (bit + 3)) & UInt128(0xffff))
+            high16 = UInt64((high >> (bit + 3)) & UInt128(0xffff))
+            hash = xor(
+                prefix_hash_scan_reverse_codes(
+                    prefix_hash_scan_pack_codes(low16, high16)),
+                typemax(UInt32),
+            )
+            mask = prefix_hash_scan_candidate_mask(query, hash)
+            mask != 0 && push!(minus_hits, PrefixHashScanHit(candidate_start, mask))
+        end
+        block_start += 64
+        a0, c0, g0, t0 = a1, c1, g1, t1
+    end
+
+    @inbounds for candidate_start in block_start:candidate_last
+        valid = true
+        for pos in candidate_start:(candidate_start + 22)
+            if prefix_hash_scan_raw_code(raw[pos]) == 0xff
+                valid = false
+                break
+            end
+        end
+        valid || continue
+        if plus_first <= candidate_start <= plus_last &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 21]) == 2 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 22]) == 2
+            motif_candidates += 1
+            hash = prefix_hash_scan_raw_hash(raw, candidate_start, false)
+            mask = prefix_hash_scan_candidate_mask(query, hash)
+            mask != 0 && push!(plus_hits, PrefixHashScanHit(candidate_start, mask))
+        end
+        if minus_first <= candidate_start <= minus_last &&
+                prefix_hash_scan_raw_code(raw[candidate_start]) == 1 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 1]) == 1
+            motif_candidates += 1
+            hash = prefix_hash_scan_raw_hash(raw, candidate_start, true)
+            mask = prefix_hash_scan_candidate_mask(query, hash)
+            mask != 0 && push!(minus_hits, PrefixHashScanHit(candidate_start, mask))
+        end
+    end
+    return plus_hits, minus_hits, motif_candidates
+end
+
+function scan_cas9_prefix_hits_raw(
+    raw::AbstractVector{UInt8},
+    dbi::DBInfo,
+    query,
+    stats::Union{Nothing, PrefixHashScanStats} = nothing;
+    scan_threads::Int = Threads.nthreads())
+
+    bounds = cas9_prefix_scan_bounds_raw(raw, dbi)
+    bounds === nothing && return PrefixHashScanHit[], PrefixHashScanHit[]
+    candidate_first, candidate_last, plus_first, plus_last, minus_first, minus_last = bounds
+    candidate_count = candidate_last - candidate_first + 1
+    thread_count = min(max(scan_threads, 1), candidate_count)
+    chunk_size = cld(candidate_count, thread_count)
+    ranges = [
+        first:min(first + chunk_size - 1, candidate_last)
+        for first in candidate_first:chunk_size:candidate_last
+    ]
+    tasks = map(ranges) do range
+        Threads.@spawn scan_cas9_prefix_hits_raw_range(
+            raw, query, first(range), last(range),
+            plus_first, plus_last, minus_first, minus_last)
+    end
+
+    plus_hits = PrefixHashScanHit[]
+    minus_hits = PrefixHashScanHit[]
+    motif_candidates = 0
+    for task in tasks
+        local_plus, local_minus, local_candidates = fetch(task)
+        append!(plus_hits, local_plus)
+        append!(minus_hits, local_minus)
+        motif_candidates += local_candidates
+    end
+    if stats !== nothing
+        stats.motif_candidates += motif_candidates
+    end
+    return plus_hits, minus_hits
+end
+
 function scan_cas9_prefix_hits(
     chrom_seq::LongDNA{4},
     dbi::DBInfo,
@@ -731,9 +1215,50 @@ function materialize_normalized_candidate_cas9(
     return ot, candidate_start + 22
 end
 
+
+function materialize_normalized_candidate_cas9(
+    raw::AbstractVector{UInt8},
+    candidate_start::Int,
+    dbi::DBInfo,
+    is_antisense::Bool)
+
+    distance = dbi.motif.distance
+    n = length(raw)
+    if is_antisense
+        guide_start = candidate_start + 3
+        extension_end = candidate_start + 22 + distance
+        if extension_end <= n
+            ot = complement(LongDNA{4}(@view raw[guide_start:extension_end]))
+        else
+            guide = LongDNA{4}(@view raw[guide_start:(candidate_start + 22)])
+            available_start = candidate_start + 23
+            available = available_start <= n ?
+                LongDNA{4}(@view raw[available_start:n]) :
+                LongDNA{4}()
+            extension = available * LongDNA{4}(repeat("-", distance - length(available)))
+            ot = complement(guide * extension)
+        end
+        return ot, candidate_start
+    end
+
+    extension_start = candidate_start - distance
+    if extension_start >= 1
+        ot = reverse(LongDNA{4}(@view raw[extension_start:(candidate_start + 19)]))
+    else
+        available_end = candidate_start - 1
+        available = available_end >= 1 ?
+            LongDNA{4}(@view raw[1:available_end]) :
+            LongDNA{4}()
+        extension = LongDNA{4}(repeat("-", distance - length(available))) * available
+        guide = LongDNA{4}(@view raw[candidate_start:(candidate_start + 19)])
+        ot = reverse(extension * guide)
+    end
+    return ot, candidate_start + 22
+end
+
 function verify_prefix_hash_scan_bitmask_candidate!(
     out,
-    chrom_seq::LongDNA{4},
+    chrom_seq,
     candidate_range::UnitRange{Int},
     dbi::DBInfo,
     is_antisense::Bool,
@@ -846,6 +1371,7 @@ function search_prefixHashScan(
     scan_backend::Symbol = :auto,
     bucket_bases::Int = 11,
     scan_threads::Int = Threads.nthreads(),
+    prefilter_bits::Int = 26,
     verify_variant::Symbol = :auto,
     stats::Union{Nothing, PrefixHashScanStats} = nothing)
 
@@ -859,6 +1385,8 @@ function search_prefixHashScan(
         error("hash_len must be in 1:16.")
     end
     scan_threads >= 1 || error("scan_threads must be positive.")
+    prefilter_bits in (0, 22, 24, 26) ||
+        error("prefilter_bits must be 0, 22, 24, or 26.")
     verify_variant in (:auto, :align, :distance_first) ||
         error("verify_variant must be :auto, :align, or :distance_first.")
     if any(isambig.(guides))
@@ -869,12 +1397,49 @@ function search_prefixHashScan(
         reset!(stats)
     end
 
-    dbi = DBInfo(genome_path, "prefixHashScan", motif)
+    metadata_start = time_ns()
+    dbi, reference_lengths = prefix_hash_scan_dbinfo(genome_path, motif)
+    if stats !== nothing
+        stats.metadata_ns += time_ns() - metadata_start
+    end
     hash_type = smallestutype(parse(UInt, repeat("1", hash_len * 2); base = 2))
-    resolved_query_variant = resolve_prefix_hash_scan_query_variant(query_variant, length(guides))
-    query = nothing
+    resolved_query_variant =
+        resolve_prefix_hash_scan_query_variant(query_variant, length(guides))
+    scan_backend in (
+        :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd) ||
+        error("scan_backend must be :auto, :legacy, :fused_dict, :fused_directory, or :fused_fasta_simd.")
+    supports_fused = distance == 3 &&
+        resolved_query_variant == :bitmask64 &&
+        is_cas9_prefix_hash_candidate(dbi, hash_len)
+    supports_fasta_simd = supports_fused && dbi.gi.is_fa && hash_len == 16 &&
+        can_use_prefix_hash_scan_simd()
+    resolved_scan_backend = if scan_backend == :auto
+        supports_fasta_simd ? :fused_fasta_simd :
+            (supports_fused ? :fused_directory : :legacy)
+    else
+        scan_backend
+    end
+    if resolved_scan_backend != :legacy && !supports_fused
+        error("Fused scan backends require Cas9 distance 3, hash_len <= 16, and at most 64 guides.")
+    end
+    if resolved_scan_backend == :fused_fasta_simd && !supports_fasta_simd
+        resolved_scan_backend = :fused_directory
+    end
+
     query_start = time_ns()
-    if resolved_query_variant == :bruteforce
+    if resolved_scan_backend in (:fused_directory, :fused_fasta_simd)
+        query, guides_ = build_prefix_hash_scan_compact_query(
+            guides,
+            motif,
+            distance,
+            hash_len,
+            stats;
+            bucket_bases = bucket_bases,
+            prefilter_bits = resolved_scan_backend == :fused_fasta_simd ?
+                prefilter_bits : 0,
+        )
+    elseif resolved_query_variant == :bruteforce
+        query = nothing
         guides_ = oriented_prefix_hash_scan_guides(guides, motif)
         if stats !== nothing
             stats.query_variant = :bruteforce
@@ -890,20 +1455,8 @@ function search_prefixHashScan(
             query_variant = resolved_query_variant,
         )
     end
-    scan_backend in (:auto, :legacy, :fused_dict, :fused_directory) ||
-        error("scan_backend must be :auto, :legacy, :fused_dict, or :fused_directory.")
-    supports_fused = distance == 3 &&
-        resolved_query_variant == :bitmask64 &&
-        is_cas9_prefix_hash_candidate(dbi, hash_len)
-    resolved_scan_backend = scan_backend == :auto ?
-        (supports_fused ? :fused_directory : :legacy) : scan_backend
-    if resolved_scan_backend != :legacy && !supports_fused
-        error("Fused scan backends require Cas9 distance 3, hash_len <= 16, and at most 64 guides.")
-    end
-    if resolved_scan_backend == :fused_directory
-        query = build_prefix_hash_scan_directory(query, hash_len, bucket_bases)
-    end
     if stats !== nothing
+        stats.scan_backend = resolved_scan_backend
         stats.query_build_ns += time_ns() - query_start
     end
 
@@ -914,7 +1467,7 @@ function search_prefixHashScan(
     use_bruteforce_query = resolved_query_variant == :bruteforce
     use_bitmask_query = query isa PrefixHashScanBitmaskQuery
     use_direct_cas9_hash = is_cas9_prefix_hash_candidate(dbi, hash_len)
-    use_fused_scan = resolved_scan_backend in (:fused_dict, :fused_directory)
+    use_fused_scan = resolved_scan_backend in (:fused_dict, :fused_directory, :fused_fasta_simd)
     use_distance_first = verify_variant == :distance_first ||
         (verify_variant == :auto && use_fused_scan)
     mkpath(dirname(output_file))
@@ -923,12 +1476,51 @@ function search_prefixHashScan(
 
         ref = open(dbi.gi.filepath, "r")
         try
-            reader = dbi.gi.is_fa ? FASTA.Reader(ref) : TwoBit.Reader(ref)
+            reader = dbi.gi.is_fa ? FASTA.Reader(ref; copy = false) : TwoBit.Reader(ref)
             records = dbi.gi.is_fa ?
-                PrefixHashScanFASTARecords(reader, dbi.gi.chrom) :
+                PrefixHashScanFASTARecords(reader, dbi.gi.chrom, reference_lengths) :
                 PrefixHashScanIndexedRecords(reader, dbi.gi.chrom)
             scan_start = time_ns()
             for (chrom_name, record, record_io_ns) in records
+                if resolved_scan_backend == :fused_fasta_simd
+                    raw_part = FASTX.seq_data_part(record, 1:FASTX.seqsize(record))
+                    raw = @view record.data[raw_part]
+                    if stats !== nothing
+                        stats.record_io_ns += record_io_ns
+                        stats.chrom_load_ns += record_io_ns
+                    end
+                    plus_hits, minus_hits = scan_cas9_prefix_hits_raw(
+                        raw, dbi, query, stats; scan_threads = scan_threads)
+                    for (is_antisense, hits) in ((false, plus_hits), (true, minus_hits))
+                        if stats !== nothing
+                            stats.prefix_hits += length(hits)
+                            stats.guide_pairs +=
+                                sum(hit -> count_ones(hit.mask), hits; init = 0)
+                        end
+                        for hit in hits
+                            verify_prefix_hash_scan_bitmask_candidate!(
+                                out,
+                                raw,
+                                hit.start:(hit.start + 22),
+                                dbi,
+                                is_antisense,
+                                hit.mask,
+                                guides,
+                                guides_,
+                                chrom_name,
+                                distance,
+                                early_stopping,
+                                es_acc,
+                                is_es,
+                                seen,
+                                stats;
+                                distance_first = use_distance_first,
+                            )
+                        end
+                    end
+                    continue
+                end
+
                 convert_start = time_ns()
                 chrom_seq = dbi.gi.is_fa ?
                     FASTA.sequence(LongDNA{4}, record) :

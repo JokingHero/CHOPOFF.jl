@@ -1,6 +1,7 @@
 using Test
 using CHOPOFF
 using BioSequences
+using FASTX
 using CSV
 using DataFrames
 
@@ -207,10 +208,80 @@ end
                         chrom_seq, candidate_range, dbi, is_antisense)
                     observed = CHOPOFF.materialize_normalized_candidate_cas9(
                         chrom_seq, first(candidate_range), dbi, is_antisense)
+                    raw_observed = CHOPOFF.materialize_normalized_candidate_cas9(
+                        collect(codeunits(seq)), first(candidate_range), dbi, is_antisense)
                     @test observed == expected
+                    @test raw_observed == expected
                 end
             end
         end
+    end
+
+    @testset "raw SIMD block and ambiguity parity" begin
+        motif3 = Motif("Cas9"; distance = 3)
+        hash_len = 16
+        target = collect(codeunits("ACGTACGTACGTACGTACGTAGG"))
+        lower_target = collect(codeunits("acgtacgtacgtacgtacgtagg"))
+        raw = fill(UInt8('A'), 340)
+        for (idx, start) in enumerate((1, 31, 64, 127, 190, 250, 315))
+            bytes = isodd(idx) ? target : lower_target
+            copyto!(raw, start, bytes, 1, length(bytes))
+        end
+        raw[120] = UInt8('R')
+        raw[180] = UInt8('N')
+        seq = String(copy(raw))
+        genome = joinpath(tdir, "prefix_hash_scan_simd_blocks.fa")
+        write_phs_fasta(genome, "chr1", seq)
+        chrom_seq = LongDNA{4}(seq)
+        dbi = DBInfo(genome, "prefix_hash_scan_simd_blocks", motif3)
+
+        masks = Dict{UInt32, UInt64}()
+        for is_antisense in (false, true)
+            for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
+                hash = only(CHOPOFF.candidate_prefix_hashes_direct_cas9(
+                    chrom_seq, candidate_range, is_antisense, hash_len, UInt32))
+                masks[hash] = get(masks, hash, UInt64(0)) | UInt64(1)
+            end
+        end
+        query = CHOPOFF.PrefixHashScanBitmaskQuery(masks, 1)
+        directory = CHOPOFF.build_prefix_hash_scan_directory(query, hash_len, 8)
+        expected = CHOPOFF.scan_cas9_prefix_hits(
+            chrom_seq, dbi, directory, hash_len; scan_threads = 1)
+        for bits in (22, 24, 26)
+            filtered = CHOPOFF.build_prefix_hash_scan_prefilter(
+                directory, keys(masks), bits)
+            for threads in (1, 4)
+                observed = CHOPOFF.scan_cas9_prefix_hits_raw(
+                    raw, dbi, filtered; scan_threads = threads)
+                @test observed == expected
+            end
+        end
+    end
+
+    @testset "FAI search metadata and streamed validation" begin
+        motif3 = Motif("Cas9"; distance = 3)
+        genome = joinpath(tdir, "prefix_hash_scan_fai.fa")
+        seq = repeat("ACGT", 20)
+        write_phs_fasta(genome, "chr1", seq)
+        dbi, lengths = CHOPOFF.prefix_hash_scan_dbinfo(genome, motif3)
+        @test dbi.gi.genomechecksum == 0
+        @test dbi.gi.chrom == ["chr1"]
+        @test lengths == [length(seq)]
+
+        open(genome) do io
+            records = CHOPOFF.PrefixHashScanFASTARecords(
+                FASTA.Reader(io; copy = false), ["chr1"], [length(seq) + 1])
+            @test_throws ErrorException first(records)
+        end
+
+        missing_fai = joinpath(tdir, "prefix_hash_scan_missing_fai.fa")
+        open(missing_fai, "w") do io
+            write(io, ">chr1
+", seq, "
+")
+        end
+        @test_throws ErrorException CHOPOFF.prefix_hash_scan_dbinfo(
+            missing_fai, motif3)
     end
 
     @testset "fused Cas9 scan and directory parity" begin
@@ -246,6 +317,15 @@ end
         @test [(hit.start, hit.mask) for hit in minus_hits] == expected[2]
 
         directory = CHOPOFF.build_prefix_hash_scan_directory(query, hash_len, 8)
+        raw = collect(codeunits(fused_seq))
+        raw_plus, raw_minus = CHOPOFF.scan_cas9_prefix_hits_raw(
+            raw, dbi, directory; scan_threads = 1)
+        threaded_plus, threaded_minus = CHOPOFF.scan_cas9_prefix_hits_raw(
+            raw, dbi, directory; scan_threads = 4)
+        @test [(hit.start, hit.mask) for hit in raw_plus] == expected[1]
+        @test [(hit.start, hit.mask) for hit in raw_minus] == expected[2]
+        @test raw_plus == threaded_plus
+        @test raw_minus == threaded_minus
         for (hash, mask) in query_masks
             @test CHOPOFF.prefix_hash_scan_candidate_mask(directory, hash) == mask
         end
@@ -253,7 +333,7 @@ end
             get(query_masks, UInt32(0x12345678), UInt64(0))
 
         outputs = Dict{Symbol, DataFrame}()
-        for backend in (:legacy, :fused_dict, :fused_directory)
+        for backend in (:legacy, :fused_dict, :fused_directory, :fused_fasta_simd, :auto)
             output = joinpath(tdir, "scan_" * string(backend) * ".csv")
             CHOPOFF.search_prefixHashScan(
                 [guide3],
@@ -274,6 +354,8 @@ end
         @test nrow(outputs[:legacy]) > 0
         @test outputs[:fused_dict] == outputs[:legacy]
         @test outputs[:fused_directory] == outputs[:legacy]
+        @test outputs[:fused_fasta_simd] == outputs[:legacy]
+        @test outputs[:auto] == outputs[:legacy]
     end
 
     guide = LongDNA{4}("ACGTACGTACGTACGTACGT")
