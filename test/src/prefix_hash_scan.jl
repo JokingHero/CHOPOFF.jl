@@ -258,6 +258,32 @@ end
         end
     end
 
+    @testset "raw Myers boundary and IUPAC parity" begin
+        motif3 = Motif("Cas9"; distance = 3)
+        guide = LongDNA{4}("ACGTACGTACGTACGTACGT")
+        guide_oriented = reverse(guide)
+        profile = CHOPOFF.build_prefix_hash_scan_myers_profile(guide_oriented)
+        fixture_genome = joinpath(tdir, "prefix_hash_scan_simd_blocks.fa")
+
+        plus_raw = collect(codeunits(String(guide) * "AGG" * "RYN"))
+        plus_dbi = DBInfo(fixture_genome, "raw_myers_plus", motif3)
+        plus_ot, _ = CHOPOFF.materialize_normalized_candidate_cas9(
+            plus_raw, 1, plus_dbi, false)
+        @test CHOPOFF.prefix_hash_scan_raw_myers_distance(
+            profile, plus_raw, 1, false, 3) ==
+            CHOPOFF.levenshtein(guide_oriented, plus_ot, 3, iscompatible)
+
+        minus_guide = String(reverse(complement(guide)))
+        minus_raw = collect(codeunits("RYNCCN" * minus_guide))
+        minus_start = 4
+        minus_dbi = DBInfo(fixture_genome, "raw_myers_minus", motif3)
+        minus_ot, _ = CHOPOFF.materialize_normalized_candidate_cas9(
+            minus_raw, minus_start, minus_dbi, true)
+        @test CHOPOFF.prefix_hash_scan_raw_myers_distance(
+            profile, minus_raw, minus_start, true, 3) ==
+            CHOPOFF.levenshtein(guide_oriented, minus_ot, 3, iscompatible)
+    end
+
     @testset "FAI search metadata and streamed validation" begin
         motif3 = Motif("Cas9"; distance = 3)
         genome = joinpath(tdir, "prefix_hash_scan_fai.fa")
@@ -282,6 +308,24 @@ end
         end
         @test_throws ErrorException CHOPOFF.prefix_hash_scan_dbinfo(
             missing_fai, motif3)
+
+        crlf_genome = joinpath(tdir, "prefix_hash_scan_crlf.fa")
+        open(crlf_genome, "w") do io
+            write(io, ">chr1\r\nACGT\r\nTGCA\r\nAC\r\n")
+        end
+        open(crlf_genome * ".fai", "w") do io
+            write(io, "chr1\t10\t7\t4\t6\n")
+        end
+        crlf_index = FASTA.Index(crlf_genome * ".fai")
+        open(crlf_genome) do io
+            buffer = UInt8[]
+            @test String(CHOPOFF.read_prefix_hash_scan_fasta_range!(
+                buffer, io, crlf_index, 1, 1, 10)) == "ACGTTGCAAC"
+            @test String(CHOPOFF.read_prefix_hash_scan_fasta_range!(
+                buffer, io, crlf_index, 1, 3, 9)) == "GTTGCAA"
+            @test String(CHOPOFF.read_prefix_hash_scan_fasta_range!(
+                buffer, io, crlf_index, 1, 4, 6)) == "TTG"
+        end
     end
 
     @testset "fused Cas9 scan and directory parity" begin
@@ -326,6 +370,20 @@ end
         @test [(hit.start, hit.mask) for hit in raw_minus] == expected[2]
         @test raw_plus == threaded_plus
         @test raw_minus == threaded_minus
+
+        guide_oriented = reverse(guide3)
+        myers_profile = CHOPOFF.build_prefix_hash_scan_myers_profile(guide_oriented)
+        for is_antisense in (false, true)
+            for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
+                ot, _ = CHOPOFF.materialize_normalized_candidate_cas9(
+                    raw, first(candidate_range), dbi, is_antisense)
+                expected_distance = CHOPOFF.levenshtein(
+                    guide_oriented, ot, 3, iscompatible)
+                observed_distance = CHOPOFF.prefix_hash_scan_raw_myers_distance(
+                    myers_profile, raw, first(candidate_range), is_antisense, 3)
+                @test observed_distance == expected_distance
+            end
+        end
         for (hash, mask) in query_masks
             @test CHOPOFF.prefix_hash_scan_candidate_mask(directory, hash) == mask
         end
@@ -333,7 +391,9 @@ end
             get(query_masks, UInt32(0x12345678), UInt64(0))
 
         outputs = Dict{Symbol, DataFrame}()
-        for backend in (:legacy, :fused_dict, :fused_directory, :fused_fasta_simd, :auto)
+        for backend in (
+                :legacy, :fused_dict, :fused_directory, :fused_fasta_simd,
+                :streaming_fasta_simd, :auto)
             output = joinpath(tdir, "scan_" * string(backend) * ".csv")
             CHOPOFF.search_prefixHashScan(
                 [guide3],
@@ -346,6 +406,7 @@ end
                 query_variant = :bitmask64,
                 scan_backend = backend,
                 bucket_bases = 8,
+                stream_chunk_bases = 64,
             )
             df = DataFrame(CSV.File(output))
             sort!(df, names(df))
@@ -355,7 +416,61 @@ end
         @test outputs[:fused_dict] == outputs[:legacy]
         @test outputs[:fused_directory] == outputs[:legacy]
         @test outputs[:fused_fasta_simd] == outputs[:legacy]
+        @test outputs[:streaming_fasta_simd] == outputs[:legacy]
         @test outputs[:auto] == outputs[:legacy]
+
+        early_outputs = Dict{Symbol, Vector{UInt8}}()
+        for backend in (:fused_fasta_simd, :streaming_fasta_simd)
+            output = joinpath(tdir, "scan_early_" * string(backend) * ".csv")
+            CHOPOFF.search_prefixHashScan(
+                [guide3],
+                fused_genome,
+                motif3,
+                output;
+                distance = 3,
+                hash_len = hash_len,
+                early_stopping = fill(1, 4),
+                query_variant = :bitmask64,
+                scan_backend = backend,
+                bucket_bases = 8,
+                stream_chunk_bases = 64,
+            )
+            early_outputs[backend] = read(output)
+        end
+        @test early_outputs[:streaming_fasta_simd] ==
+            early_outputs[:fused_fasta_simd]
+
+        myers_output = joinpath(tdir, "scan_myers_raw.csv")
+        myers_stats = CHOPOFF.PrefixHashScanStats()
+        CHOPOFF.search_prefixHashScan(
+            [guide3],
+            fused_genome,
+            motif3,
+            myers_output;
+            distance = 3,
+            hash_len = hash_len,
+            early_stopping = fill(100, 4),
+            query_variant = :bitmask64,
+            scan_backend = :fused_fasta_simd,
+            bucket_bases = 8,
+            verify_variant = :myers_raw,
+            stats = myers_stats,
+        )
+        myers_df = DataFrame(CSV.File(myers_output))
+        sort!(myers_df, names(myers_df))
+        @test myers_df == outputs[:legacy]
+        @test myers_stats.distance_calls > 0
+        @test myers_stats.traceback_calls == myers_stats.emitted_rows
+        @test_throws ErrorException CHOPOFF.search_prefixHashScan(
+            [guide3],
+            fused_genome,
+            motif3,
+            myers_output;
+            distance = 3,
+            early_stopping = fill(100, 4),
+            scan_backend = :fused_directory,
+            verify_variant = :myers_raw,
+        )
     end
 
     guide = LongDNA{4}("ACGTACGTACGTACGTACGT")

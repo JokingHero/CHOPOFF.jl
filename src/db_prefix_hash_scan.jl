@@ -160,6 +160,119 @@ struct PrefixHashScanHit
     mask::UInt64
 end
 
+struct PrefixHashScanVerifiedHit
+    guide_idx::Int
+    pos::Int
+    dist::Int
+    is_antisense::Bool
+    aln_guide::String
+    aln_ref::String
+end
+
+struct PrefixHashScanChromResult
+    plus::Vector{PrefixHashScanVerifiedHit}
+    minus::Vector{PrefixHashScanVerifiedHit}
+    stats::PrefixHashScanStats
+end
+
+struct PrefixHashScanMyersProfile
+    eq_by_iupac::NTuple{16, UInt64}
+    length::UInt8
+    final_bit::UInt64
+end
+
+@inline function prefix_hash_scan_iupac_mask(base::UInt8)
+    base = base & UInt8(0xdf)
+    base == UInt8('A') && return UInt8(0x01)
+    base == UInt8('C') && return UInt8(0x02)
+    base == UInt8('G') && return UInt8(0x04)
+    base == UInt8('T') && return UInt8(0x08)
+    base == UInt8('R') && return UInt8(0x05)
+    base == UInt8('Y') && return UInt8(0x0a)
+    base == UInt8('S') && return UInt8(0x06)
+    base == UInt8('W') && return UInt8(0x09)
+    base == UInt8('K') && return UInt8(0x0c)
+    base == UInt8('M') && return UInt8(0x03)
+    base == UInt8('B') && return UInt8(0x0e)
+    base == UInt8('D') && return UInt8(0x0d)
+    base == UInt8('H') && return UInt8(0x0b)
+    base == UInt8('V') && return UInt8(0x07)
+    base == UInt8('N') && return UInt8(0x0f)
+    return UInt8(0)
+end
+
+@inline function prefix_hash_scan_complement_mask(mask::UInt8)
+    return ((mask & UInt8(0x01)) << 3) |
+        ((mask & UInt8(0x02)) << 1) |
+        ((mask & UInt8(0x04)) >> 1) |
+        ((mask & UInt8(0x08)) >> 3)
+end
+
+function build_prefix_hash_scan_myers_profile(guide::LongDNA{4})
+    length(guide) <= 64 || error("Myers profile supports guides up to 64 bases.")
+    peq = zeros(UInt64, 4)
+    @inbounds for idx in eachindex(guide)
+        bit = UInt64(1) << (idx - 1)
+        guide[idx] == DNA_A && (peq[1] |= bit)
+        guide[idx] == DNA_C && (peq[2] |= bit)
+        guide[idx] == DNA_G && (peq[3] |= bit)
+        guide[idx] == DNA_T && (peq[4] |= bit)
+    end
+    eq_by_iupac = ntuple(16) do idx
+        mask = UInt8(idx - 1)
+        eq = UInt64(0)
+        mask & UInt8(0x01) != 0 && (eq |= peq[1])
+        mask & UInt8(0x02) != 0 && (eq |= peq[2])
+        mask & UInt8(0x04) != 0 && (eq |= peq[3])
+        mask & UInt8(0x08) != 0 && (eq |= peq[4])
+        eq
+    end
+    return PrefixHashScanMyersProfile(
+        eq_by_iupac, UInt8(length(guide)), UInt64(1) << (length(guide) - 1))
+end
+
+function build_prefix_hash_scan_myers_profiles(guides::Vector{LongDNA{4}})
+    return build_prefix_hash_scan_myers_profile.(guides)
+end
+
+@inline function prefix_hash_scan_raw_myers_distance(
+    profile::PrefixHashScanMyersProfile,
+    raw::AbstractVector{UInt8},
+    candidate_start::Int,
+    is_antisense::Bool,
+    distance::Int)
+
+    pattern_length = Int(profile.length)
+    reference_length = pattern_length + distance
+    first_scored_prefix = pattern_length - distance
+    pv = typemax(UInt64)
+    mv = UInt64(0)
+    score = pattern_length
+    best = distance + 1
+
+    @inbounds for ref_idx in 1:reference_length
+        raw_idx = is_antisense ?
+            candidate_start + 2 + ref_idx :
+            candidate_start + pattern_length - ref_idx
+        mask = 1 <= raw_idx <= length(raw) ?
+            prefix_hash_scan_iupac_mask(raw[raw_idx]) : UInt8(0)
+        is_antisense && (mask = prefix_hash_scan_complement_mask(mask))
+        eq = profile.eq_by_iupac[Int(mask) + 1]
+        xv = eq | mv
+        xh = xor((eq & pv) + pv, pv) | eq
+        ph = mv | ~(xh | pv)
+        mh = pv & xh
+        ph & profile.final_bit != 0 && (score += 1)
+        mh & profile.final_bit != 0 && (score -= 1)
+        ph = (ph << 1) | UInt64(1)
+        mh <<= 1
+        pv = mh | ~(xv | ph)
+        mv = ph & xv
+        ref_idx >= first_scored_prefix && (best = min(best, score))
+    end
+    return min(best, distance + 1)
+end
+
 struct PrefixHashScanFASTARecords{R, C, L}
     reader::R
     chrom::C
@@ -1272,16 +1385,12 @@ function verify_prefix_hash_scan_bitmask_candidate!(
     is_es,
     seen,
     stats::Union{Nothing, PrefixHashScanStats};
-    distance_first::Bool = false)
-
-    materialize_start = time_ns()
-    ot, pos = materialize_normalized_candidate_cas9(
-        chrom_seq, first(candidate_range), dbi, is_antisense)
-    if stats !== nothing
-        stats.candidate_materialize_ns += time_ns() - materialize_start
-    end
+    distance_first::Bool = false,
+    myers_profiles::Union{Nothing, Vector{PrefixHashScanMyersProfile}} = nothing)
 
     strand = is_antisense ? "-" : "+"
+    ot = LongDNA{4}()
+    pos = 0
     verify_start = time_ns()
     mask = candidate_mask
     while mask != 0
@@ -1293,7 +1402,28 @@ function verify_prefix_hash_scan_bitmask_candidate!(
             stats.alignment_calls += 1
         end
         align_start = time_ns()
-        if distance_first
+        if myers_profiles !== nothing
+            if stats !== nothing
+                stats.distance_calls += 1
+            end
+            dist = prefix_hash_scan_raw_myers_distance(
+                myers_profiles[guide_idx], chrom_seq, first(candidate_range),
+                is_antisense, distance)
+            if dist > distance
+                if stats !== nothing
+                    stats.align_ns += time_ns() - align_start
+                end
+                continue
+            end
+        elseif distance_first
+            if isempty(ot)
+                materialize_start = time_ns()
+                ot, pos = materialize_normalized_candidate_cas9(
+                    chrom_seq, first(candidate_range), dbi, is_antisense)
+                if stats !== nothing
+                    stats.candidate_materialize_ns += time_ns() - materialize_start
+                end
+            end
             if stats !== nothing
                 stats.distance_calls += 1
             end
@@ -1303,6 +1433,14 @@ function verify_prefix_hash_scan_bitmask_candidate!(
                     stats.align_ns += time_ns() - align_start
                 end
                 continue
+            end
+        end
+        if isempty(ot)
+            materialize_start = time_ns()
+            ot, pos = materialize_normalized_candidate_cas9(
+                chrom_seq, first(candidate_range), dbi, is_antisense)
+            if stats !== nothing
+                stats.candidate_materialize_ns += time_ns() - materialize_start
             end
         end
         if stats !== nothing
@@ -1352,6 +1490,271 @@ function verify_prefix_hash_scan_bitmask_candidate!(
     return nothing
 end
 
+function read_prefix_hash_scan_fasta_range!(
+    buffer::Vector{UInt8},
+    io,
+    index::FASTA.Index,
+    chrom_idx::Int,
+    first_base::Int,
+    last_base::Int)
+
+    line_bases, line_width = FASTA.linebases_width(index, chrom_idx)
+    first_line, first_offset = divrem(first_base - 1, line_bases)
+    last_line, last_offset = divrem(last_base - 1, line_bases)
+    physical_first = index.offsets[chrom_idx] +
+        first_line * line_width + first_offset
+    physical_last = index.offsets[chrom_idx] +
+        last_line * line_width + last_offset
+    resize!(buffer, physical_last - physical_first + 1)
+    seek(io, physical_first)
+    read!(io, buffer)
+
+    logical_length = last_base - first_base + 1
+    read_idx = 1
+    write_idx = 1
+    available = line_bases - first_offset
+    newline_width = line_width - line_bases
+    while write_idx <= logical_length
+        count = min(available, logical_length - write_idx + 1)
+        copyto!(buffer, write_idx, buffer, read_idx, count)
+        write_idx += count
+        read_idx += count
+        if write_idx <= logical_length
+            read_idx += newline_width
+            available = line_bases
+        end
+    end
+    resize!(buffer, logical_length)
+    return buffer
+end
+
+function evaluate_prefix_hash_scan_hits!(
+    output::Vector{PrefixHashScanVerifiedHit},
+    raw::AbstractVector{UInt8},
+    hits::Vector{PrefixHashScanHit},
+    global_offset::Int,
+    dbi::DBInfo,
+    is_antisense::Bool,
+    guides_::Vector{LongDNA{4}},
+    myers_profiles::Vector{PrefixHashScanMyersProfile},
+    distance::Int,
+    stats::PrefixHashScanStats)
+
+    stats.prefix_hits += length(hits)
+    stats.guide_pairs += sum(hit -> count_ones(hit.mask), hits; init = 0)
+    for hit in hits
+        verify_start = time_ns()
+        ot = LongDNA{4}()
+        local_pos = 0
+        mask = hit.mask
+        while mask != 0
+            guide_idx = trailing_zeros(mask) + 1
+            mask &= mask - 1
+            stats.alignment_calls += 1
+            stats.distance_calls += 1
+            align_start = time_ns()
+            dist = prefix_hash_scan_raw_myers_distance(
+                myers_profiles[guide_idx], raw, hit.start,
+                is_antisense, distance)
+            if dist > distance
+                stats.align_ns += time_ns() - align_start
+                continue
+            end
+
+            if isempty(ot)
+                materialize_start = time_ns()
+                ot, local_pos = materialize_normalized_candidate_cas9(
+                    raw, hit.start, dbi, is_antisense)
+                stats.candidate_materialize_ns +=
+                    time_ns() - materialize_start
+            end
+            stats.traceback_calls += 1
+            aln = align(guides_[guide_idx], ot, distance, iscompatible)
+            stats.align_ns += time_ns() - align_start
+            aln.dist > distance && continue
+
+            if dbi.motif.extends5
+                aln_guide = reverse(aln.guide)
+                aln_ref = reverse(aln.ref)
+            else
+                aln_guide = aln.guide
+                aln_ref = aln.ref
+            end
+            push!(output, PrefixHashScanVerifiedHit(
+                guide_idx,
+                local_pos + global_offset,
+                aln.dist,
+                is_antisense,
+                aln_guide,
+                aln_ref,
+            ))
+        end
+        stats.verify_ns += time_ns() - verify_start
+    end
+    return output
+end
+
+function stream_prefix_hash_scan_chromosome(
+    io,
+    buffer::Vector{UInt8},
+    index::FASTA.Index,
+    chrom_idx::Int,
+    chromosome_length::Int,
+    query,
+    dbi::DBInfo,
+    guides_::Vector{LongDNA{4}},
+    myers_profiles::Vector{PrefixHashScanMyersProfile},
+    distance::Int,
+    chunk_bases::Int)
+
+    plus = PrefixHashScanVerifiedHit[]
+    minus = PrefixHashScanVerifiedHit[]
+    stats = PrefixHashScanStats()
+    chromosome_length < 23 &&
+        return PrefixHashScanChromResult(plus, minus, stats)
+
+    last_candidate = chromosome_length - 22
+    for core_first in 1:chunk_bases:last_candidate
+        core_last = min(core_first + chunk_bases - 1, last_candidate)
+        read_first = max(1, core_first - distance)
+        read_last = min(chromosome_length, core_last + 22 + distance)
+        read_start = time_ns()
+        raw = read_prefix_hash_scan_fasta_range!(
+            buffer, io, index, chrom_idx, read_first, read_last)
+        read_ns = time_ns() - read_start
+        stats.record_io_ns += read_ns
+        stats.chrom_load_ns += read_ns
+
+        local_first = core_first - read_first + 1
+        local_last = core_last - read_first + 1
+        plus_hits, minus_hits, motif_candidates =
+            scan_cas9_prefix_hits_raw_range(
+                raw,
+                query,
+                local_first,
+                local_last,
+                local_first,
+                local_last,
+                local_first,
+                local_last,
+            )
+        stats.motif_candidates += motif_candidates
+        global_offset = read_first - 1
+        evaluate_prefix_hash_scan_hits!(
+            plus, raw, plus_hits, global_offset, dbi, false,
+            guides_, myers_profiles, distance, stats)
+        evaluate_prefix_hash_scan_hits!(
+            minus, raw, minus_hits, global_offset, dbi, true,
+            guides_, myers_profiles, distance, stats)
+    end
+    return PrefixHashScanChromResult(plus, minus, stats)
+end
+
+function stream_prefix_hash_scan(
+    genome_path::String,
+    reference_lengths,
+    query,
+    dbi::DBInfo,
+    guides_::Vector{LongDNA{4}},
+    myers_profiles::Vector{PrefixHashScanMyersProfile},
+    distance::Int,
+    chunk_bases::Int,
+    scan_threads::Int)
+
+    index = FASTA.Index(genome_path * ".fai")
+    results = Vector{Union{Nothing, PrefixHashScanChromResult}}(
+        nothing, length(reference_lengths))
+    next_chromosome = Threads.Atomic{Int}(1)
+    worker_count = min(scan_threads, length(reference_lengths))
+    workers = map(1:worker_count) do _
+        Threads.@spawn begin
+            io = open(genome_path, "r")
+            buffer = UInt8[]
+            try
+                while true
+                    chrom_idx = Threads.atomic_add!(next_chromosome, 1)
+                    chrom_idx > length(reference_lengths) && break
+                    results[chrom_idx] = stream_prefix_hash_scan_chromosome(
+                        io,
+                        buffer,
+                        index,
+                        chrom_idx,
+                        reference_lengths[chrom_idx],
+                        query,
+                        dbi,
+                        guides_,
+                        myers_profiles,
+                        distance,
+                        chunk_bases,
+                    )
+                end
+            finally
+                close(io)
+            end
+        end
+    end
+    fetch.(workers)
+    return results
+end
+
+function merge_prefix_hash_scan_worker_stats!(
+    stats::PrefixHashScanStats,
+    worker_stats::PrefixHashScanStats)
+
+    stats.motif_candidates += worker_stats.motif_candidates
+    stats.prefix_hits += worker_stats.prefix_hits
+    stats.guide_pairs += worker_stats.guide_pairs
+    stats.alignment_calls += worker_stats.alignment_calls
+    stats.distance_calls += worker_stats.distance_calls
+    stats.traceback_calls += worker_stats.traceback_calls
+    stats.record_io_ns += worker_stats.record_io_ns
+    stats.chrom_load_ns += worker_stats.chrom_load_ns
+    stats.candidate_materialize_ns += worker_stats.candidate_materialize_ns
+    stats.align_ns += worker_stats.align_ns
+    stats.verify_ns += worker_stats.verify_ns
+    return stats
+end
+
+function commit_prefix_hash_scan_verified!(
+    out,
+    hit::PrefixHashScanVerifiedHit,
+    guide::LongDNA{4},
+    chrom_name::String,
+    early_stopping::Vector{Int},
+    es_acc,
+    is_es,
+    seen,
+    stats::Union{Nothing, PrefixHashScanStats})
+
+    guide_idx = hit.guide_idx
+    is_es[guide_idx] && return nothing
+    strand = hit.is_antisense ? "-" : "+"
+    key = (
+        string(guide),
+        hit.dist,
+        chrom_name,
+        hit.pos,
+        strand,
+        hit.aln_guide,
+        hit.aln_ref,
+    )
+    key in seen[guide_idx] && return nothing
+    push!(seen[guide_idx], key)
+
+    emit_start = time_ns()
+    print(out, guide, ",", hit.aln_guide, ",", hit.aln_ref, ",",
+        hit.dist, ",", chrom_name, ",", hit.pos, ",", strand, "\n")
+    if stats !== nothing
+        stats.emit_ns += time_ns() - emit_start
+        stats.emitted_rows += 1
+    end
+    es_acc[guide_idx, hit.dist + 1] += 1
+    if es_acc[guide_idx, hit.dist + 1] >= early_stopping[hit.dist + 1]
+        is_es[guide_idx] = true
+    end
+    return nothing
+end
+
 """
     search_prefixHashScan(guides, genome_path, motif, output_file; kwargs...)
 
@@ -1371,6 +1774,7 @@ function search_prefixHashScan(
     scan_backend::Symbol = :auto,
     bucket_bases::Int = 11,
     scan_threads::Int = Threads.nthreads(),
+    stream_chunk_bases::Int = 8 * 1024 * 1024,
     prefilter_bits::Int = 26,
     verify_variant::Symbol = :auto,
     stats::Union{Nothing, PrefixHashScanStats} = nothing)
@@ -1385,10 +1789,12 @@ function search_prefixHashScan(
         error("hash_len must be in 1:16.")
     end
     scan_threads >= 1 || error("scan_threads must be positive.")
+    stream_chunk_bases >= 64 ||
+        error("stream_chunk_bases must be at least 64.")
     prefilter_bits in (0, 22, 24, 26) ||
         error("prefilter_bits must be 0, 22, 24, or 26.")
-    verify_variant in (:auto, :align, :distance_first) ||
-        error("verify_variant must be :auto, :align, or :distance_first.")
+    verify_variant in (:auto, :align, :distance_first, :myers_raw) ||
+        error("verify_variant must be :auto, :align, :distance_first, or :myers_raw.")
     if any(isambig.(guides))
         error("search_prefixHashScan does not support ambiguous query guides.")
     end
@@ -1406,15 +1812,16 @@ function search_prefixHashScan(
     resolved_query_variant =
         resolve_prefix_hash_scan_query_variant(query_variant, length(guides))
     scan_backend in (
-        :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd) ||
-        error("scan_backend must be :auto, :legacy, :fused_dict, :fused_directory, or :fused_fasta_simd.")
+        :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd,
+        :streaming_fasta_simd) ||
+        error("scan_backend must be :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd, or :streaming_fasta_simd.")
     supports_fused = distance == 3 &&
         resolved_query_variant == :bitmask64 &&
         is_cas9_prefix_hash_candidate(dbi, hash_len)
     supports_fasta_simd = supports_fused && dbi.gi.is_fa && hash_len == 16 &&
         can_use_prefix_hash_scan_simd()
     resolved_scan_backend = if scan_backend == :auto
-        supports_fasta_simd ? :fused_fasta_simd :
+        supports_fasta_simd ? :streaming_fasta_simd :
             (supports_fused ? :fused_directory : :legacy)
     else
         scan_backend
@@ -1422,12 +1829,22 @@ function search_prefixHashScan(
     if resolved_scan_backend != :legacy && !supports_fused
         error("Fused scan backends require Cas9 distance 3, hash_len <= 16, and at most 64 guides.")
     end
-    if resolved_scan_backend == :fused_fasta_simd && !supports_fasta_simd
+    if resolved_scan_backend in (:fused_fasta_simd, :streaming_fasta_simd) &&
+            !supports_fasta_simd
         resolved_scan_backend = :fused_directory
+    end
+    if verify_variant == :myers_raw &&
+            !(resolved_scan_backend in (:fused_fasta_simd, :streaming_fasta_simd))
+        error("verify_variant=:myers_raw requires a fused FASTA SIMD backend.")
+    end
+    if resolved_scan_backend == :streaming_fasta_simd &&
+            !(verify_variant in (:auto, :myers_raw))
+        error("The streaming FASTA SIMD backend requires verify_variant=:auto or :myers_raw.")
     end
 
     query_start = time_ns()
-    if resolved_scan_backend in (:fused_directory, :fused_fasta_simd)
+    if resolved_scan_backend in (
+            :fused_directory, :fused_fasta_simd, :streaming_fasta_simd)
         query, guides_ = build_prefix_hash_scan_compact_query(
             guides,
             motif,
@@ -1435,7 +1852,8 @@ function search_prefixHashScan(
             hash_len,
             stats;
             bucket_bases = bucket_bases,
-            prefilter_bits = resolved_scan_backend == :fused_fasta_simd ?
+            prefilter_bits = resolved_scan_backend in (
+                :fused_fasta_simd, :streaming_fasta_simd) ?
                 prefilter_bits : 0,
         )
     elseif resolved_query_variant == :bruteforce
@@ -1467,12 +1885,61 @@ function search_prefixHashScan(
     use_bruteforce_query = resolved_query_variant == :bruteforce
     use_bitmask_query = query isa PrefixHashScanBitmaskQuery
     use_direct_cas9_hash = is_cas9_prefix_hash_candidate(dbi, hash_len)
-    use_fused_scan = resolved_scan_backend in (:fused_dict, :fused_directory, :fused_fasta_simd)
+    use_fused_scan = resolved_scan_backend in (
+        :fused_dict, :fused_directory, :fused_fasta_simd,
+        :streaming_fasta_simd)
+    use_myers_raw = verify_variant == :myers_raw ||
+        (verify_variant == :auto && resolved_scan_backend in (
+            :fused_fasta_simd, :streaming_fasta_simd))
     use_distance_first = verify_variant == :distance_first ||
-        (verify_variant == :auto && use_fused_scan)
+        (verify_variant == :auto && use_fused_scan && !use_myers_raw)
+    myers_profiles = use_myers_raw ?
+        build_prefix_hash_scan_myers_profiles(guides_) : nothing
     mkpath(dirname(output_file))
     open(output_file, "w") do out
         write(out, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
+
+        if resolved_scan_backend == :streaming_fasta_simd
+            scan_start = time_ns()
+            chrom_results = stream_prefix_hash_scan(
+                dbi.gi.filepath,
+                reference_lengths,
+                query,
+                dbi,
+                guides_,
+                myers_profiles,
+                distance,
+                stream_chunk_bases,
+                scan_threads,
+            )
+            for chrom_idx in eachindex(chrom_results)
+                chrom_result = something(chrom_results[chrom_idx])
+                if stats !== nothing
+                    merge_prefix_hash_scan_worker_stats!(
+                        stats, chrom_result.stats)
+                end
+                chrom_name = dbi.gi.chrom[chrom_idx]
+                for hits in (chrom_result.plus, chrom_result.minus)
+                    for hit in hits
+                        commit_prefix_hash_scan_verified!(
+                            out,
+                            hit,
+                            guides[hit.guide_idx],
+                            chrom_name,
+                            early_stopping,
+                            es_acc,
+                            is_es,
+                            seen,
+                            stats,
+                        )
+                    end
+                end
+            end
+            if stats !== nothing
+                stats.scan_ns += time_ns() - scan_start
+            end
+            return nothing
+        end
 
         ref = open(dbi.gi.filepath, "r")
         try
@@ -1515,6 +1982,7 @@ function search_prefixHashScan(
                                 seen,
                                 stats;
                                 distance_first = use_distance_first,
+                                myers_profiles = myers_profiles,
                             )
                         end
                     end
