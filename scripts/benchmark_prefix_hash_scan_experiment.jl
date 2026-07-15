@@ -41,7 +41,7 @@ function main()
     variants = parse_symbol_list("CHOPOFF_SCAN_EXPERIMENT_VARIANTS", "bitmask64")
     backends = parse_symbol_list(
         "CHOPOFF_SCAN_EXPERIMENT_BACKENDS",
-        "legacy,fused_dict,fused_directory,fused_fasta_simd,streaming_fasta_simd",
+        "legacy,fused_dict,fused_directory,fused_fasta_simd,streaming_fasta_simd,streaming_fasta_simd_fused",
     )
     bucket_bases = parse_int_list("CHOPOFF_SCAN_EXPERIMENT_BUCKET_BASES", "9,10,11")
     prefilter_bits = parse_int_list(
@@ -57,7 +57,7 @@ function main()
     ))
     stream_chunk_bases = only(parse_int_list(
         "CHOPOFF_SCAN_EXPERIMENT_CHUNK_BASES",
-        string(8 * 1024 * 1024),
+        string(2 * 1024 * 1024),
     ))
     tdir = mktempdir(prefix = "chopoff_scan_experiment_")
     rows = NamedTuple[]
@@ -78,16 +78,20 @@ function main()
                 for backend in supported_backends
                     buckets = backend in (
                         :fused_directory, :fused_fasta_simd,
-                        :streaming_fasta_simd) ?
+                        :streaming_fasta_simd, :streaming_fasta_simd_fused) ?
                         bucket_bases : [first(bucket_bases)]
                     verifies = backend in (
-                        :fused_fasta_simd, :streaming_fasta_simd) ?
-                        (backend == :streaming_fasta_simd ?
+                        :fused_fasta_simd, :streaming_fasta_simd,
+                        :streaming_fasta_simd_fused) ?
+                        (backend in (
+                            :streaming_fasta_simd,
+                            :streaming_fasta_simd_fused) ?
                             filter(in((:myers_raw,)), verify_variants) :
                             verify_variants) :
                         (backend == :legacy ? [:align] : filter(!=(:myers_raw), verify_variants))
                     prefilters = backend in (
-                        :fused_fasta_simd, :streaming_fasta_simd) ?
+                        :fused_fasta_simd, :streaming_fasta_simd,
+                        :streaming_fasta_simd_fused) ?
                         prefilter_bits : [0]
                     for bucket in buckets, verify in verifies, prefilter in prefilters
                         label = "$(variant)_$(backend)_b$(bucket)_p$(prefilter)_$(verify)_d$(distance)_n$(length(guides))"

@@ -39,6 +39,11 @@ end
 
 PrefixHashScanStats() = PrefixHashScanStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, :none, :none, :none)
 
+@inline prefix_hash_scan_timer(::Nothing) = UInt64(0)
+@inline prefix_hash_scan_timer(::PrefixHashScanStats) = time_ns()
+@inline prefix_hash_scan_worker_stats(::Nothing) = nothing
+@inline prefix_hash_scan_worker_stats(::PrefixHashScanStats) = PrefixHashScanStats()
+
 function reset!(stats::PrefixHashScanStats)
     stats.motif_candidates = 0
     stats.ambiguous_prefixes = 0
@@ -102,7 +107,7 @@ function load_prefix_hash_scan_paths(
     hash_len::Int,
     stats::Union{Nothing, PrefixHashScanStats} = nothing)
 
-    load_start = time_ns()
+    load_start = prefix_hash_scan_timer(stats)
     source = :generated
     paths = nothing
 
@@ -160,6 +165,17 @@ struct PrefixHashScanHit
     mask::UInt64
 end
 
+struct PrefixHashScanLookupScratch
+    plus_candidates::Vector{UInt64}
+    minus_candidates::Vector{UInt64}
+    plus_radix::Vector{UInt64}
+    minus_radix::Vector{UInt64}
+    radix_counts::Vector{Int}
+end
+
+PrefixHashScanLookupScratch() = PrefixHashScanLookupScratch(
+    UInt64[], UInt64[], UInt64[], UInt64[], zeros(Int, 2048))
+
 struct PrefixHashScanVerifiedHit
     guide_idx::Int
     pos::Int
@@ -169,10 +185,16 @@ struct PrefixHashScanVerifiedHit
     aln_ref::String
 end
 
-struct PrefixHashScanChromResult
+struct PrefixHashScanChromResult{S}
     plus::Vector{PrefixHashScanVerifiedHit}
     minus::Vector{PrefixHashScanVerifiedHit}
-    stats::PrefixHashScanStats
+    stats::S
+end
+
+struct PrefixHashScanChunkWork
+    chrom_idx::Int
+    core_first::Int
+    core_last::Int
 end
 
 struct PrefixHashScanMyersProfile
@@ -465,29 +487,29 @@ function build_prefix_hash_scan_map_from_paths(
     else
         query = Dict{hash_type, Vector{Int}}()
     end
-    hash_start = time_ns()
+    hash_start = prefix_hash_scan_timer(stats)
     for (guide_idx, guide) in enumerate(guides_)
-        format_start = time_ns()
+        format_start = prefix_hash_scan_timer(stats)
         guide_formatted = guide_to_template_format(guide; alphabet = ALPHABET_TWOBIT)
         if stats !== nothing
             stats.query_format_ns += time_ns() - format_start
         end
 
         if variant == :baseline
-            fold_start = time_ns()
+            fold_start = prefix_hash_scan_timer(stats)
             hashes = prefix_hashes_baseline(paths, guide_formatted, hash_type)
             if stats !== nothing
                 stats.query_fold_ns += time_ns() - fold_start
             end
         else
             hashes = Vector{hash_type}(undef, size(paths, 1))
-            fold_start = time_ns()
+            fold_start = prefix_hash_scan_timer(stats)
             fill_prefix_hashes_columnwise!(hashes, paths, guide_formatted)
             if stats !== nothing
                 stats.query_fold_ns += time_ns() - fold_start
             end
 
-            dedup_start = time_ns()
+            dedup_start = prefix_hash_scan_timer(stats)
             sort!(hashes)
             unique_sorted_prefix_hashes!(hashes)
             if stats !== nothing
@@ -499,7 +521,7 @@ function build_prefix_hash_scan_map_from_paths(
             stats.query_hashes += length(hashes)
         end
 
-        insert_start = time_ns()
+        insert_start = prefix_hash_scan_timer(stats)
         if variant == :bitmask64
             bit = UInt64(1) << (guide_idx - 1)
             for h in hashes
@@ -773,6 +795,53 @@ function build_prefix_hash_scan_directory(
         offsets, suffixes, masks, UInt8(hash_len), UInt8(bucket_bases))
 end
 
+function build_prefix_hash_scan_compact_guide_hashes(
+    paths, guide::LongDNA{4}, ::Val{Timed}) where Timed
+
+    format_start = Timed ? time_ns() : UInt64(0)
+    formatted = guide_to_template_format(
+        guide; alphabet = ALPHABET_TWOBIT)
+    format_ns = Timed ? time_ns() - format_start : UInt64(0)
+
+    hashes = Vector{UInt32}(undef, size(paths, 1))
+    fold_start = Timed ? time_ns() : UInt64(0)
+    fill_prefix_hashes_columnwise!(hashes, paths, formatted)
+    fold_ns = Timed ? time_ns() - fold_start : UInt64(0)
+
+    dedup_start = Timed ? time_ns() : UInt64(0)
+    sort!(hashes)
+    unique_sorted_prefix_hashes!(hashes)
+    dedup_ns = Timed ? time_ns() - dedup_start : UInt64(0)
+    return hashes, (format_ns, fold_ns, dedup_ns)
+end
+
+function build_prefix_hash_scan_compact_lists!(
+    lists, timings, paths, guides_, worker_count::Int, ::Val{Parallel},
+    timed::Val) where Parallel
+
+    function build_guide!(guide_idx)
+        hashes, guide_timings = build_prefix_hash_scan_compact_guide_hashes(
+            paths, guides_[guide_idx], timed)
+        lists[guide_idx] = hashes
+        timings === nothing || (timings[guide_idx] = guide_timings)
+        return nothing
+    end
+
+    if Parallel && worker_count > 1
+        workers = map(1:worker_count) do worker_idx
+            Threads.@spawn for guide_idx in worker_idx:worker_count:length(guides_)
+                build_guide!(guide_idx)
+            end
+        end
+        fetch.(workers)
+    else
+        for guide_idx in eachindex(guides_)
+            build_guide!(guide_idx)
+        end
+    end
+    return nothing
+end
+
 function build_prefix_hash_scan_compact_query(
     guides::Vector{LongDNA{4}},
     motif::Motif,
@@ -780,37 +849,34 @@ function build_prefix_hash_scan_compact_query(
     hash_len::Int,
     stats::Union{Nothing, PrefixHashScanStats};
     bucket_bases::Int,
-    prefilter_bits::Int)
+    prefilter_bits::Int,
+    query_build_backend::Symbol = :serial,
+    query_threads::Int = 1)
+
+    query_build_backend in (:auto, :serial, :parallel) ||
+        error("query_build_backend must be :auto, :serial, or :parallel.")
+    query_threads >= 1 || error("query_threads must be positive.")
 
     paths, _ = load_prefix_hash_scan_paths(
         motif, distance, hash_len, stats)
     guides_ = oriented_prefix_hash_scan_guides(guides, motif)
     lists = Vector{Vector{UInt32}}(undef, length(guides_))
-    for (guide_idx, guide) in enumerate(guides_)
-        format_start = time_ns()
-        formatted = guide_to_template_format(
-            guide; alphabet = ALPHABET_TWOBIT)
-        if stats !== nothing
-            stats.query_format_ns += time_ns() - format_start
-        end
-
-        hashes = Vector{UInt32}(undef, size(paths, 1))
-        fold_start = time_ns()
-        fill_prefix_hashes_columnwise!(hashes, paths, formatted)
-        if stats !== nothing
-            stats.query_fold_ns += time_ns() - fold_start
-        end
-        dedup_start = time_ns()
-        sort!(hashes)
-        unique_sorted_prefix_hashes!(hashes)
-        if stats !== nothing
-            stats.query_dedup_ns += time_ns() - dedup_start
-            stats.query_hashes += length(hashes)
-        end
-        lists[guide_idx] = hashes
+    timings = stats === nothing ? nothing :
+        Vector{NTuple{3, UInt64}}(undef, length(guides_))
+    worker_count = min(query_threads, Threads.nthreads(), length(guides_))
+    resolved_backend = query_build_backend == :auto ?
+        (worker_count > 1 ? :parallel : :serial) : query_build_backend
+    build_prefix_hash_scan_compact_lists!(
+        lists, timings, paths, guides_, worker_count,
+        Val(resolved_backend == :parallel), Val(stats !== nothing))
+    if stats !== nothing
+        stats.query_format_ns += sum(first, timings)
+        stats.query_fold_ns += sum(x -> x[2], timings)
+        stats.query_dedup_ns += sum(last, timings)
+        stats.query_hashes += sum(length, lists)
     end
 
-    merge_start = time_ns()
+    merge_start = prefix_hash_scan_timer(stats)
     keys_, masks = merge_prefix_hash_scan_hash_lists(lists)
     directory = build_prefix_hash_scan_directory(
         keys_, masks, hash_len, bucket_bases)
@@ -862,11 +928,18 @@ end
     query::PrefixHashScanPrefilteredDirectory,
     hash::Unsigned)
 
+    prefix_hash_scan_prefilter_contains(query, hash) || return UInt64(0)
+    return prefix_hash_scan_candidate_mask(query.directory, hash)
+end
+
+@inline function prefix_hash_scan_prefilter_contains(
+    query::PrefixHashScanPrefilteredDirectory,
+    hash::Unsigned)
+
     shift = 32 - Int(query.prefix_bits)
     prefix = Int(UInt32(hash) >> shift)
     word = @inbounds query.presence[(prefix >> 6) + 1]
-    ((word >> (prefix & 63)) & UInt64(1)) == 0 && return UInt64(0)
-    return prefix_hash_scan_candidate_mask(query.directory, hash)
+    return ((word >> (prefix & 63)) & UInt64(1)) != 0
 end
 
 @inline function prefix_hash_scan_twobit_nibble(nibble::UInt8)
@@ -1113,7 +1186,110 @@ function cas9_prefix_scan_bounds_raw(raw::AbstractVector{UInt8}, dbi::DBInfo)
     return minimum(firsts), maximum(lasts), plus_first, plus_last, minus_first, minus_last
 end
 
-function scan_cas9_prefix_hits_raw_range(
+@inline function prefix_hash_scan_record_candidate!(
+    hits::Vector{PrefixHashScanHit},
+    ::Nothing,
+    query,
+    candidate_start::Int,
+    hash::Unsigned,
+    ::Val{false})
+
+    mask = prefix_hash_scan_candidate_mask(query, hash)
+    mask != 0 && push!(hits, PrefixHashScanHit(candidate_start, mask))
+    return nothing
+end
+
+@inline function prefix_hash_scan_record_candidate!(
+    hits::Vector{PrefixHashScanHit},
+    candidates::Vector{UInt64},
+    query::PrefixHashScanPrefilteredDirectory,
+    candidate_start::Int,
+    hash::Unsigned,
+    ::Val{true})
+
+    prefix_hash_scan_prefilter_contains(query, hash) || return nothing
+    packed = (UInt64(UInt32(hash)) << 32) | UInt64(UInt32(candidate_start))
+    push!(candidates, packed)
+    return nothing
+end
+
+function prefix_hash_scan_radix_pass!(
+    destination::Vector{UInt64},
+    source::Vector{UInt64},
+    counts::Vector{Int},
+    shift::Int,
+    mask::UInt64)
+
+    fill!(counts, 0)
+    @inbounds for value in source
+        counts[Int((value >> shift) & mask) + 1] += 1
+    end
+    next_idx = 1
+    @inbounds for idx in eachindex(counts)
+        count = counts[idx]
+        counts[idx] = next_idx
+        next_idx += count
+    end
+    @inbounds for value in source
+        digit = Int((value >> shift) & mask) + 1
+        destination[counts[digit]] = value
+        counts[digit] += 1
+    end
+    return destination
+end
+
+function prefix_hash_scan_radix_order!(
+    candidates::Vector{UInt64},
+    scratch::Vector{UInt64},
+    counts::Vector{Int})
+
+    resize!(scratch, length(candidates))
+    isempty(candidates) && return scratch
+    prefix_hash_scan_radix_pass!(
+        scratch, candidates, counts, 32, UInt64(0x03ff))
+    prefix_hash_scan_radix_pass!(
+        candidates, scratch, counts, 42, UInt64(0x07ff))
+    prefix_hash_scan_radix_pass!(
+        scratch, candidates, counts, 53, UInt64(0x07ff))
+    return scratch
+end
+
+function resolve_prefix_hash_scan_bucketed_hits!(
+    hits::Vector{PrefixHashScanHit},
+    candidates::Vector{UInt64},
+    scratch::Vector{UInt64},
+    counts::Vector{Int},
+    query::PrefixHashScanPrefilteredDirectory)
+
+    ordered = prefix_hash_scan_radix_order!(candidates, scratch, counts)
+    previous_hash = UInt32(0)
+    candidate_mask = UInt64(0)
+    have_previous = false
+    @inbounds for packed in ordered
+        hash = UInt32(packed >> 32)
+        if !have_previous || hash != previous_hash
+            previous_hash = hash
+            candidate_mask = prefix_hash_scan_candidate_mask(
+                query.directory, hash)
+            have_previous = true
+        end
+        candidate_mask == 0 && continue
+        candidate_start = Int(
+            UInt32(packed & UInt64(typemax(UInt32))))
+        push!(hits, PrefixHashScanHit(candidate_start, candidate_mask))
+    end
+    sort!(hits; by = hit -> hit.start, alg = QuickSort)
+    return hits
+end
+
+function scan_cas9_prefix_hits_raw_range_impl!(
+    plus_hits::Vector{PrefixHashScanHit},
+    minus_hits::Vector{PrefixHashScanHit},
+    plus_candidates,
+    minus_candidates,
+    plus_radix_scratch,
+    minus_radix_scratch,
+    radix_counts,
     raw::AbstractVector{UInt8},
     query,
     candidate_first::Int,
@@ -1121,12 +1297,17 @@ function scan_cas9_prefix_hits_raw_range(
     plus_first::Int,
     plus_last::Int,
     minus_first::Int,
-    minus_last::Int)
+    minus_last::Int,
+    ::Val{Bucketed}) where Bucketed
 
-    plus_hits = PrefixHashScanHit[]
-    minus_hits = PrefixHashScanHit[]
+    empty!(plus_hits)
+    empty!(minus_hits)
+    if Bucketed
+        empty!(plus_candidates)
+        empty!(minus_candidates)
+    end
     motif_candidates = 0
-    candidate_first > candidate_last && return plus_hits, minus_hits, motif_candidates
+    candidate_first > candidate_last && return motif_candidates
     n = length(raw)
     block_start = candidate_first
 
@@ -1159,8 +1340,9 @@ function scan_cas9_prefix_hits_raw_range(
             low16 = UInt64((low >> (bit + 4)) & UInt128(0xffff))
             high16 = UInt64((high >> (bit + 4)) & UInt128(0xffff))
             hash = prefix_hash_scan_pack_codes(low16, high16)
-            mask = prefix_hash_scan_candidate_mask(query, hash)
-            mask != 0 && push!(plus_hits, PrefixHashScanHit(candidate_start, mask))
+            prefix_hash_scan_record_candidate!(
+                plus_hits, plus_candidates, query, candidate_start, hash,
+                Val(Bucketed))
         end
 
         while minus_mask != 0
@@ -1176,8 +1358,9 @@ function scan_cas9_prefix_hits_raw_range(
                     prefix_hash_scan_pack_codes(low16, high16)),
                 typemax(UInt32),
             )
-            mask = prefix_hash_scan_candidate_mask(query, hash)
-            mask != 0 && push!(minus_hits, PrefixHashScanHit(candidate_start, mask))
+            prefix_hash_scan_record_candidate!(
+                minus_hits, minus_candidates, query, candidate_start, hash,
+                Val(Bucketed))
         end
         block_start += 64
         a0, c0, g0, t0 = a1, c1, g1, t1
@@ -1197,18 +1380,86 @@ function scan_cas9_prefix_hits_raw_range(
                 prefix_hash_scan_raw_code(raw[candidate_start + 22]) == 2
             motif_candidates += 1
             hash = prefix_hash_scan_raw_hash(raw, candidate_start, false)
-            mask = prefix_hash_scan_candidate_mask(query, hash)
-            mask != 0 && push!(plus_hits, PrefixHashScanHit(candidate_start, mask))
+            prefix_hash_scan_record_candidate!(
+                plus_hits, plus_candidates, query, candidate_start, hash,
+                Val(Bucketed))
         end
         if minus_first <= candidate_start <= minus_last &&
                 prefix_hash_scan_raw_code(raw[candidate_start]) == 1 &&
                 prefix_hash_scan_raw_code(raw[candidate_start + 1]) == 1
             motif_candidates += 1
             hash = prefix_hash_scan_raw_hash(raw, candidate_start, true)
-            mask = prefix_hash_scan_candidate_mask(query, hash)
-            mask != 0 && push!(minus_hits, PrefixHashScanHit(candidate_start, mask))
+            prefix_hash_scan_record_candidate!(
+                minus_hits, minus_candidates, query, candidate_start, hash,
+                Val(Bucketed))
         end
     end
+    if Bucketed
+        resolve_prefix_hash_scan_bucketed_hits!(
+            plus_hits, plus_candidates, plus_radix_scratch, radix_counts, query)
+        resolve_prefix_hash_scan_bucketed_hits!(
+            minus_hits, minus_candidates, minus_radix_scratch, radix_counts, query)
+    end
+    return motif_candidates
+end
+
+function scan_cas9_prefix_hits_raw_range!(
+    plus_hits::Vector{PrefixHashScanHit},
+    minus_hits::Vector{PrefixHashScanHit},
+    raw::AbstractVector{UInt8},
+    query,
+    candidate_first::Int,
+    candidate_last::Int,
+    plus_first::Int,
+    plus_last::Int,
+    minus_first::Int,
+    minus_last::Int)
+
+    return scan_cas9_prefix_hits_raw_range_impl!(
+        plus_hits, minus_hits, nothing, nothing, nothing, nothing, nothing,
+        raw, query, candidate_first, candidate_last, plus_first, plus_last,
+        minus_first, minus_last, Val(false))
+end
+
+function scan_cas9_prefix_hits_raw_range_bucketed!(
+    plus_hits::Vector{PrefixHashScanHit},
+    minus_hits::Vector{PrefixHashScanHit},
+    plus_candidates::Vector{UInt64},
+    minus_candidates::Vector{UInt64},
+    plus_radix_scratch::Vector{UInt64},
+    minus_radix_scratch::Vector{UInt64},
+    radix_counts::Vector{Int},
+    raw::AbstractVector{UInt8},
+    query::PrefixHashScanPrefilteredDirectory,
+    candidate_first::Int,
+    candidate_last::Int,
+    plus_first::Int,
+    plus_last::Int,
+    minus_first::Int,
+    minus_last::Int)
+
+    return scan_cas9_prefix_hits_raw_range_impl!(
+        plus_hits, minus_hits, plus_candidates, minus_candidates,
+        plus_radix_scratch, minus_radix_scratch, radix_counts, raw, query,
+        candidate_first, candidate_last, plus_first, plus_last, minus_first,
+        minus_last, Val(true))
+end
+
+function scan_cas9_prefix_hits_raw_range(
+    raw::AbstractVector{UInt8},
+    query,
+    candidate_first::Int,
+    candidate_last::Int,
+    plus_first::Int,
+    plus_last::Int,
+    minus_first::Int,
+    minus_last::Int)
+
+    plus_hits = PrefixHashScanHit[]
+    minus_hits = PrefixHashScanHit[]
+    motif_candidates = scan_cas9_prefix_hits_raw_range!(
+        plus_hits, minus_hits, raw, query, candidate_first, candidate_last,
+        plus_first, plus_last, minus_first, minus_last)
     return plus_hits, minus_hits, motif_candidates
 end
 
@@ -1528,6 +1779,85 @@ function read_prefix_hash_scan_fasta_range!(
     return buffer
 end
 
+function evaluate_prefix_hash_scan_candidate!(
+    output::Vector{PrefixHashScanVerifiedHit},
+    raw::AbstractVector{UInt8},
+    candidate_start::Int,
+    candidate_mask::UInt64,
+    global_offset::Int,
+    dbi::DBInfo,
+    is_antisense::Bool,
+    guides_::Vector{LongDNA{4}},
+    myers_profiles::Vector{PrefixHashScanMyersProfile},
+    distance::Int,
+    stats::S) where {S <: Union{Nothing, PrefixHashScanStats}}
+
+    if stats !== nothing
+        stats.prefix_hits += 1
+        stats.guide_pairs += count_ones(candidate_mask)
+    end
+    verify_start = prefix_hash_scan_timer(stats)
+    ot = LongDNA{4}()
+    local_pos = 0
+    mask = candidate_mask
+    while mask != 0
+        guide_idx = trailing_zeros(mask) + 1
+        mask &= mask - 1
+        align_start = prefix_hash_scan_timer(stats)
+        if stats !== nothing
+            stats.alignment_calls += 1
+            stats.distance_calls += 1
+        end
+        dist = prefix_hash_scan_raw_myers_distance(
+            myers_profiles[guide_idx], raw, candidate_start,
+            is_antisense, distance)
+        if dist > distance
+            if stats !== nothing
+                stats.align_ns += time_ns() - align_start
+            end
+            continue
+        end
+
+        if isempty(ot)
+            materialize_start = prefix_hash_scan_timer(stats)
+            ot, local_pos = materialize_normalized_candidate_cas9(
+                raw, candidate_start, dbi, is_antisense)
+            if stats !== nothing
+                stats.candidate_materialize_ns +=
+                    time_ns() - materialize_start
+            end
+        end
+        if stats !== nothing
+            stats.traceback_calls += 1
+        end
+        aln = align(guides_[guide_idx], ot, distance, iscompatible)
+        if stats !== nothing
+            stats.align_ns += time_ns() - align_start
+        end
+        aln.dist > distance && continue
+
+        if dbi.motif.extends5
+            aln_guide = reverse(aln.guide)
+            aln_ref = reverse(aln.ref)
+        else
+            aln_guide = aln.guide
+            aln_ref = aln.ref
+        end
+        push!(output, PrefixHashScanVerifiedHit(
+            guide_idx,
+            local_pos + global_offset,
+            aln.dist,
+            is_antisense,
+            aln_guide,
+            aln_ref,
+        ))
+    end
+    if stats !== nothing
+        stats.verify_ns += time_ns() - verify_start
+    end
+    return output
+end
+
 function evaluate_prefix_hash_scan_hits!(
     output::Vector{PrefixHashScanVerifiedHit},
     raw::AbstractVector{UInt8},
@@ -1538,60 +1868,244 @@ function evaluate_prefix_hash_scan_hits!(
     guides_::Vector{LongDNA{4}},
     myers_profiles::Vector{PrefixHashScanMyersProfile},
     distance::Int,
-    stats::PrefixHashScanStats)
+    stats::S) where {S <: Union{Nothing, PrefixHashScanStats}}
 
-    stats.prefix_hits += length(hits)
-    stats.guide_pairs += sum(hit -> count_ones(hit.mask), hits; init = 0)
     for hit in hits
-        verify_start = time_ns()
-        ot = LongDNA{4}()
-        local_pos = 0
-        mask = hit.mask
-        while mask != 0
-            guide_idx = trailing_zeros(mask) + 1
-            mask &= mask - 1
-            stats.alignment_calls += 1
-            stats.distance_calls += 1
-            align_start = time_ns()
-            dist = prefix_hash_scan_raw_myers_distance(
-                myers_profiles[guide_idx], raw, hit.start,
-                is_antisense, distance)
-            if dist > distance
-                stats.align_ns += time_ns() - align_start
-                continue
-            end
-
-            if isempty(ot)
-                materialize_start = time_ns()
-                ot, local_pos = materialize_normalized_candidate_cas9(
-                    raw, hit.start, dbi, is_antisense)
-                stats.candidate_materialize_ns +=
-                    time_ns() - materialize_start
-            end
-            stats.traceback_calls += 1
-            aln = align(guides_[guide_idx], ot, distance, iscompatible)
-            stats.align_ns += time_ns() - align_start
-            aln.dist > distance && continue
-
-            if dbi.motif.extends5
-                aln_guide = reverse(aln.guide)
-                aln_ref = reverse(aln.ref)
-            else
-                aln_guide = aln.guide
-                aln_ref = aln.ref
-            end
-            push!(output, PrefixHashScanVerifiedHit(
-                guide_idx,
-                local_pos + global_offset,
-                aln.dist,
-                is_antisense,
-                aln_guide,
-                aln_ref,
-            ))
-        end
-        stats.verify_ns += time_ns() - verify_start
+        evaluate_prefix_hash_scan_candidate!(
+            output, raw, hit.start, hit.mask, global_offset, dbi,
+            is_antisense, guides_, myers_profiles, distance, stats)
     end
     return output
+end
+
+function scan_verify_cas9_prefix_raw_range!(
+    plus::Vector{PrefixHashScanVerifiedHit},
+    minus::Vector{PrefixHashScanVerifiedHit},
+    raw::AbstractVector{UInt8},
+    query,
+    candidate_first::Int,
+    candidate_last::Int,
+    plus_first::Int,
+    plus_last::Int,
+    minus_first::Int,
+    minus_last::Int,
+    global_offset::Int,
+    dbi::DBInfo,
+    guides_::Vector{LongDNA{4}},
+    myers_profiles::Vector{PrefixHashScanMyersProfile},
+    distance::Int,
+    stats::S) where {S <: Union{Nothing, PrefixHashScanStats}}
+
+    motif_candidates = 0
+    candidate_first > candidate_last && return plus, minus
+    n = length(raw)
+    block_start = candidate_first
+
+    if block_start + 127 <= n && block_start + 63 <= candidate_last
+        a0, c0, g0, t0 = prefix_hash_scan_raw_profile64(raw, block_start)
+    end
+    while block_start + 127 <= n && block_start + 63 <= candidate_last
+        a1, c1, g1, t1 = prefix_hash_scan_raw_profile64(raw, block_start + 64)
+        a = UInt128(a0) | (UInt128(a1) << 64)
+        c = UInt128(c0) | (UInt128(c1) << 64)
+        g = UInt128(g0) | (UInt128(g1) << 64)
+        t = UInt128(t0) | (UInt128(t1) << 64)
+        valid = UInt64(prefix_hash_scan_valid23(a | c | g | t) & UInt128(typemax(UInt64)))
+        count = min(64, candidate_last - block_start + 1)
+        count_mask = count == 64 ? typemax(UInt64) : (UInt64(1) << count) - 1
+        valid &= count_mask
+        plus_mask = valid & UInt64((g >> 21) & UInt128(typemax(UInt64))) &
+            UInt64((g >> 22) & UInt128(typemax(UInt64)))
+        minus_mask = valid & UInt64(c & UInt128(typemax(UInt64))) &
+            UInt64((c >> 1) & UInt128(typemax(UInt64)))
+        low = c | t
+        high = g | t
+
+        while plus_mask != 0
+            bit = trailing_zeros(plus_mask)
+            plus_mask &= plus_mask - 1
+            candidate_start = block_start + bit
+            plus_first <= candidate_start <= plus_last || continue
+            motif_candidates += 1
+            low16 = UInt64((low >> (bit + 4)) & UInt128(0xffff))
+            high16 = UInt64((high >> (bit + 4)) & UInt128(0xffff))
+            hash = prefix_hash_scan_pack_codes(low16, high16)
+            mask = prefix_hash_scan_candidate_mask(query, hash)
+            mask == 0 || evaluate_prefix_hash_scan_candidate!(
+                plus, raw, candidate_start, mask, global_offset, dbi, false,
+                guides_, myers_profiles, distance, stats)
+        end
+
+        while minus_mask != 0
+            bit = trailing_zeros(minus_mask)
+            minus_mask &= minus_mask - 1
+            candidate_start = block_start + bit
+            minus_first <= candidate_start <= minus_last || continue
+            motif_candidates += 1
+            low16 = UInt64((low >> (bit + 3)) & UInt128(0xffff))
+            high16 = UInt64((high >> (bit + 3)) & UInt128(0xffff))
+            hash = xor(
+                prefix_hash_scan_reverse_codes(
+                    prefix_hash_scan_pack_codes(low16, high16)),
+                typemax(UInt32),
+            )
+            mask = prefix_hash_scan_candidate_mask(query, hash)
+            mask == 0 || evaluate_prefix_hash_scan_candidate!(
+                minus, raw, candidate_start, mask, global_offset, dbi, true,
+                guides_, myers_profiles, distance, stats)
+        end
+        block_start += 64
+        a0, c0, g0, t0 = a1, c1, g1, t1
+    end
+
+    @inbounds for candidate_start in block_start:candidate_last
+        valid = true
+        for pos in candidate_start:(candidate_start + 22)
+            if prefix_hash_scan_raw_code(raw[pos]) == 0xff
+                valid = false
+                break
+            end
+        end
+        valid || continue
+        if plus_first <= candidate_start <= plus_last &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 21]) == 2 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 22]) == 2
+            motif_candidates += 1
+            hash = prefix_hash_scan_raw_hash(raw, candidate_start, false)
+            mask = prefix_hash_scan_candidate_mask(query, hash)
+            mask == 0 || evaluate_prefix_hash_scan_candidate!(
+                plus, raw, candidate_start, mask, global_offset, dbi, false,
+                guides_, myers_profiles, distance, stats)
+        end
+        if minus_first <= candidate_start <= minus_last &&
+                prefix_hash_scan_raw_code(raw[candidate_start]) == 1 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 1]) == 1
+            motif_candidates += 1
+            hash = prefix_hash_scan_raw_hash(raw, candidate_start, true)
+            mask = prefix_hash_scan_candidate_mask(query, hash)
+            mask == 0 || evaluate_prefix_hash_scan_candidate!(
+                minus, raw, candidate_start, mask, global_offset, dbi, true,
+                guides_, myers_profiles, distance, stats)
+        end
+    end
+    if stats !== nothing
+        stats.motif_candidates += motif_candidates
+    end
+    return plus, minus
+end
+
+function stream_prefix_hash_scan_chunk(
+    io,
+    buffer::Vector{UInt8},
+    index::FASTA.Index,
+    work::PrefixHashScanChunkWork,
+    chromosome_length::Int,
+    query,
+    dbi::DBInfo,
+    guides_::Vector{LongDNA{4}},
+    myers_profiles::Vector{PrefixHashScanMyersProfile},
+    distance::Int,
+    scratch_plus_hits::Vector{PrefixHashScanHit},
+    scratch_minus_hits::Vector{PrefixHashScanHit},
+    lookup_scratch::PrefixHashScanLookupScratch,
+    ::Val{M},
+    stats::S,
+    plus::Vector{PrefixHashScanVerifiedHit} = PrefixHashScanVerifiedHit[],
+    minus::Vector{PrefixHashScanVerifiedHit} = PrefixHashScanVerifiedHit[]) where {M, S}
+
+    read_first = max(1, work.core_first - distance)
+    read_last = min(chromosome_length, work.core_last + 22 + distance)
+    read_start = prefix_hash_scan_timer(stats)
+    raw = read_prefix_hash_scan_fasta_range!(
+        buffer, io, index, work.chrom_idx, read_first, read_last)
+    if stats !== nothing
+        read_ns = time_ns() - read_start
+        stats.record_io_ns += read_ns
+        stats.chrom_load_ns += read_ns
+    end
+
+    local_first = work.core_first - read_first + 1
+    local_last = work.core_last - read_first + 1
+    global_offset = read_first - 1
+    if M === :fused
+        scan_verify_cas9_prefix_raw_range!(
+            plus,
+            minus,
+            raw,
+            query,
+            local_first,
+            local_last,
+            local_first,
+            local_last,
+            local_first,
+            local_last,
+            global_offset,
+            dbi,
+            guides_,
+            myers_profiles,
+            distance,
+            stats,
+        )
+    else
+        if M === :buffered_reuse
+            motif_candidates = scan_cas9_prefix_hits_raw_range!(
+                scratch_plus_hits,
+                scratch_minus_hits,
+                raw,
+                query,
+                local_first,
+                local_last,
+                local_first,
+                local_last,
+                local_first,
+                local_last,
+            )
+            plus_hits = scratch_plus_hits
+            minus_hits = scratch_minus_hits
+        elseif M === :bucketed_reuse
+            motif_candidates = scan_cas9_prefix_hits_raw_range_bucketed!(
+                scratch_plus_hits,
+                scratch_minus_hits,
+                lookup_scratch.plus_candidates,
+                lookup_scratch.minus_candidates,
+                lookup_scratch.plus_radix,
+                lookup_scratch.minus_radix,
+                lookup_scratch.radix_counts,
+                raw,
+                query,
+                local_first,
+                local_last,
+                local_first,
+                local_last,
+                local_first,
+                local_last,
+            )
+            plus_hits = scratch_plus_hits
+            minus_hits = scratch_minus_hits
+        else
+            plus_hits, minus_hits, motif_candidates =
+                scan_cas9_prefix_hits_raw_range(
+                    raw,
+                    query,
+                    local_first,
+                    local_last,
+                    local_first,
+                    local_last,
+                    local_first,
+                    local_last,
+                )
+        end
+        if stats !== nothing
+            stats.motif_candidates += motif_candidates
+        end
+        evaluate_prefix_hash_scan_hits!(
+            plus, raw, plus_hits, global_offset, dbi, false,
+            guides_, myers_profiles, distance, stats)
+        evaluate_prefix_hash_scan_hits!(
+            minus, raw, minus_hits, global_offset, dbi, true,
+            guides_, myers_profiles, distance, stats)
+    end
+    return PrefixHashScanChromResult(plus, minus, stats)
 end
 
 function stream_prefix_hash_scan_chromosome(
@@ -1605,49 +2119,43 @@ function stream_prefix_hash_scan_chromosome(
     guides_::Vector{LongDNA{4}},
     myers_profiles::Vector{PrefixHashScanMyersProfile},
     distance::Int,
-    chunk_bases::Int)
+    chunk_bases::Int,
+    scratch_plus_hits::Vector{PrefixHashScanHit},
+    scratch_minus_hits::Vector{PrefixHashScanHit},
+    lookup_scratch::PrefixHashScanLookupScratch,
+    mode::Val{M},
+    stats::S) where {M, S}
 
     plus = PrefixHashScanVerifiedHit[]
     minus = PrefixHashScanVerifiedHit[]
-    stats = PrefixHashScanStats()
-    chromosome_length < 23 &&
-        return PrefixHashScanChromResult(plus, minus, stats)
-
     last_candidate = chromosome_length - 22
     for core_first in 1:chunk_bases:last_candidate
-        core_last = min(core_first + chunk_bases - 1, last_candidate)
-        read_first = max(1, core_first - distance)
-        read_last = min(chromosome_length, core_last + 22 + distance)
-        read_start = time_ns()
-        raw = read_prefix_hash_scan_fasta_range!(
-            buffer, io, index, chrom_idx, read_first, read_last)
-        read_ns = time_ns() - read_start
-        stats.record_io_ns += read_ns
-        stats.chrom_load_ns += read_ns
-
-        local_first = core_first - read_first + 1
-        local_last = core_last - read_first + 1
-        plus_hits, minus_hits, motif_candidates =
-            scan_cas9_prefix_hits_raw_range(
-                raw,
-                query,
-                local_first,
-                local_last,
-                local_first,
-                local_last,
-                local_first,
-                local_last,
-            )
-        stats.motif_candidates += motif_candidates
-        global_offset = read_first - 1
-        evaluate_prefix_hash_scan_hits!(
-            plus, raw, plus_hits, global_offset, dbi, false,
-            guides_, myers_profiles, distance, stats)
-        evaluate_prefix_hash_scan_hits!(
-            minus, raw, minus_hits, global_offset, dbi, true,
-            guides_, myers_profiles, distance, stats)
+        work = PrefixHashScanChunkWork(
+            chrom_idx, core_first, min(core_first + chunk_bases - 1, last_candidate))
+        stream_prefix_hash_scan_chunk(
+            io, buffer, index, work, chromosome_length, query, dbi, guides_,
+            myers_profiles, distance, scratch_plus_hits, scratch_minus_hits,
+            lookup_scratch, mode, stats, plus, minus)
     end
     return PrefixHashScanChromResult(plus, minus, stats)
+end
+
+function prefix_hash_scan_chunk_work(reference_lengths, chunk_bases::Int)
+    work = PrefixHashScanChunkWork[]
+    chrom_chunk_ranges = Vector{UnitRange{Int}}(undef, length(reference_lengths))
+    for chrom_idx in eachindex(reference_lengths)
+        range_first = length(work) + 1
+        last_candidate = reference_lengths[chrom_idx] - 22
+        for core_first in 1:chunk_bases:last_candidate
+            push!(work, PrefixHashScanChunkWork(
+                chrom_idx,
+                core_first,
+                min(core_first + chunk_bases - 1, last_candidate),
+            ))
+        end
+        chrom_chunk_ranges[chrom_idx] = range_first:length(work)
+    end
+    return work, chrom_chunk_ranges
 end
 
 function stream_prefix_hash_scan(
@@ -1659,34 +2167,53 @@ function stream_prefix_hash_scan(
     myers_profiles::Vector{PrefixHashScanMyersProfile},
     distance::Int,
     chunk_bases::Int,
-    scan_threads::Int)
+    scan_threads::Int,
+    mode::Val{M},
+    stats::S,
+    ::Val{Scheduler} = Val(:chunk)) where {M, S, Scheduler}
 
     index = FASTA.Index(genome_path * ".fai")
+    if Scheduler === :chunk
+        work, chrom_chunk_ranges = prefix_hash_scan_chunk_work(
+            reference_lengths, chunk_bases)
+    elseif Scheduler === :chromosome
+        work = collect(eachindex(reference_lengths))
+        chrom_chunk_ranges = [idx:idx for idx in eachindex(reference_lengths)]
+    else
+        error("Unknown prefixHashScan stream scheduler: $Scheduler")
+    end
     results = Vector{Union{Nothing, PrefixHashScanChromResult}}(
-        nothing, length(reference_lengths))
-    next_chromosome = Threads.Atomic{Int}(1)
-    worker_count = min(scan_threads, length(reference_lengths))
+        nothing, length(work))
+    next_work = Threads.Atomic{Int}(1)
+    worker_count = min(scan_threads, length(work))
     workers = map(1:worker_count) do _
         Threads.@spawn begin
             io = open(genome_path, "r")
             buffer = UInt8[]
+            scratch_plus_hits = PrefixHashScanHit[]
+            scratch_minus_hits = PrefixHashScanHit[]
+            lookup_scratch = PrefixHashScanLookupScratch()
             try
                 while true
-                    chrom_idx = Threads.atomic_add!(next_chromosome, 1)
-                    chrom_idx > length(reference_lengths) && break
-                    results[chrom_idx] = stream_prefix_hash_scan_chromosome(
-                        io,
-                        buffer,
-                        index,
-                        chrom_idx,
-                        reference_lengths[chrom_idx],
-                        query,
-                        dbi,
-                        guides_,
-                        myers_profiles,
-                        distance,
-                        chunk_bases,
-                    )
+                    work_idx = Threads.atomic_add!(next_work, 1)
+                    work_idx > length(work) && break
+                    worker_stats = prefix_hash_scan_worker_stats(stats)
+                    if Scheduler === :chunk
+                        item = work[work_idx]
+                        results[work_idx] = stream_prefix_hash_scan_chunk(
+                            io, buffer, index, item,
+                            reference_lengths[item.chrom_idx], query, dbi,
+                            guides_, myers_profiles, distance, scratch_plus_hits,
+                            scratch_minus_hits, lookup_scratch, mode, worker_stats)
+                    else
+                        chrom_idx = work[work_idx]
+                        results[work_idx] = stream_prefix_hash_scan_chromosome(
+                            io, buffer, index, chrom_idx,
+                            reference_lengths[chrom_idx], query, dbi, guides_,
+                            myers_profiles, distance, chunk_bases,
+                            scratch_plus_hits, scratch_minus_hits, lookup_scratch,
+                            mode, worker_stats)
+                    end
                 end
             finally
                 close(io)
@@ -1694,7 +2221,7 @@ function stream_prefix_hash_scan(
         end
     end
     fetch.(workers)
-    return results
+    return results, chrom_chunk_ranges
 end
 
 function merge_prefix_hash_scan_worker_stats!(
@@ -1741,7 +2268,7 @@ function commit_prefix_hash_scan_verified!(
     key in seen[guide_idx] && return nothing
     push!(seen[guide_idx], key)
 
-    emit_start = time_ns()
+    emit_start = prefix_hash_scan_timer(stats)
     print(out, guide, ",", hit.aln_guide, ",", hit.aln_ref, ",",
         hit.dist, ",", chrom_name, ",", hit.pos, ",", strand, "\n")
     if stats !== nothing
@@ -1774,8 +2301,10 @@ function search_prefixHashScan(
     scan_backend::Symbol = :auto,
     bucket_bases::Int = 11,
     scan_threads::Int = Threads.nthreads(),
-    stream_chunk_bases::Int = 8 * 1024 * 1024,
+    stream_chunk_bases::Int = 2 * 1024 * 1024,
     prefilter_bits::Int = 26,
+    query_build_backend::Symbol = :auto,
+    lookup_variant::Symbol = :auto,
     verify_variant::Symbol = :auto,
     stats::Union{Nothing, PrefixHashScanStats} = nothing)
 
@@ -1793,6 +2322,10 @@ function search_prefixHashScan(
         error("stream_chunk_bases must be at least 64.")
     prefilter_bits in (0, 22, 24, 26) ||
         error("prefilter_bits must be 0, 22, 24, or 26.")
+    query_build_backend in (:auto, :serial, :parallel) ||
+        error("query_build_backend must be :auto, :serial, or :parallel.")
+    lookup_variant in (:auto, :inline, :bucketed) ||
+        error("lookup_variant must be :auto, :inline, or :bucketed.")
     verify_variant in (:auto, :align, :distance_first, :myers_raw) ||
         error("verify_variant must be :auto, :align, :distance_first, or :myers_raw.")
     if any(isambig.(guides))
@@ -1803,7 +2336,7 @@ function search_prefixHashScan(
         reset!(stats)
     end
 
-    metadata_start = time_ns()
+    metadata_start = prefix_hash_scan_timer(stats)
     dbi, reference_lengths = prefix_hash_scan_dbinfo(genome_path, motif)
     if stats !== nothing
         stats.metadata_ns += time_ns() - metadata_start
@@ -1813,8 +2346,8 @@ function search_prefixHashScan(
         resolve_prefix_hash_scan_query_variant(query_variant, length(guides))
     scan_backend in (
         :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd,
-        :streaming_fasta_simd) ||
-        error("scan_backend must be :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd, or :streaming_fasta_simd.")
+        :streaming_fasta_simd, :streaming_fasta_simd_fused) ||
+        error("scan_backend must be :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd, :streaming_fasta_simd, or :streaming_fasta_simd_fused.")
     supports_fused = distance == 3 &&
         resolved_query_variant == :bitmask64 &&
         is_cas9_prefix_hash_candidate(dbi, hash_len)
@@ -1829,22 +2362,46 @@ function search_prefixHashScan(
     if resolved_scan_backend != :legacy && !supports_fused
         error("Fused scan backends require Cas9 distance 3, hash_len <= 16, and at most 64 guides.")
     end
-    if resolved_scan_backend in (:fused_fasta_simd, :streaming_fasta_simd) &&
+    if resolved_scan_backend in (
+            :fused_fasta_simd, :streaming_fasta_simd,
+            :streaming_fasta_simd_fused) &&
             !supports_fasta_simd
         resolved_scan_backend = :fused_directory
     end
+    resolved_lookup_variant = if lookup_variant == :auto
+        resolved_scan_backend == :streaming_fasta_simd &&
+            prefilter_bits != 0 && bucket_bases == 11 &&
+            stream_chunk_bases + 22 + distance <= typemax(UInt32) ?
+            :bucketed : :inline
+    else
+        lookup_variant
+    end
+    if resolved_lookup_variant == :bucketed
+        resolved_scan_backend == :streaming_fasta_simd ||
+            error("lookup_variant=:bucketed requires the buffered streaming FASTA SIMD backend.")
+        prefilter_bits != 0 ||
+            error("lookup_variant=:bucketed requires a nonzero prefilter.")
+        bucket_bases == 11 ||
+            error("lookup_variant=:bucketed currently requires bucket_bases=11.")
+        stream_chunk_bases + 22 + distance <= typemax(UInt32) ||
+            error("lookup_variant=:bucketed requires chunks smaller than 4 GiB.")
+    end
     if verify_variant == :myers_raw &&
-            !(resolved_scan_backend in (:fused_fasta_simd, :streaming_fasta_simd))
+            !(resolved_scan_backend in (
+                :fused_fasta_simd, :streaming_fasta_simd,
+                :streaming_fasta_simd_fused))
         error("verify_variant=:myers_raw requires a fused FASTA SIMD backend.")
     end
-    if resolved_scan_backend == :streaming_fasta_simd &&
+    if resolved_scan_backend in (
+            :streaming_fasta_simd, :streaming_fasta_simd_fused) &&
             !(verify_variant in (:auto, :myers_raw))
         error("The streaming FASTA SIMD backend requires verify_variant=:auto or :myers_raw.")
     end
 
-    query_start = time_ns()
+    query_start = prefix_hash_scan_timer(stats)
     if resolved_scan_backend in (
-            :fused_directory, :fused_fasta_simd, :streaming_fasta_simd)
+            :fused_directory, :fused_fasta_simd, :streaming_fasta_simd,
+            :streaming_fasta_simd_fused)
         query, guides_ = build_prefix_hash_scan_compact_query(
             guides,
             motif,
@@ -1853,8 +2410,11 @@ function search_prefixHashScan(
             stats;
             bucket_bases = bucket_bases,
             prefilter_bits = resolved_scan_backend in (
-                :fused_fasta_simd, :streaming_fasta_simd) ?
+                :fused_fasta_simd, :streaming_fasta_simd,
+                :streaming_fasta_simd_fused) ?
                 prefilter_bits : 0,
+            query_build_backend = query_build_backend,
+            query_threads = scan_threads,
         )
     elseif resolved_query_variant == :bruteforce
         query = nothing
@@ -1887,10 +2447,11 @@ function search_prefixHashScan(
     use_direct_cas9_hash = is_cas9_prefix_hash_candidate(dbi, hash_len)
     use_fused_scan = resolved_scan_backend in (
         :fused_dict, :fused_directory, :fused_fasta_simd,
-        :streaming_fasta_simd)
+        :streaming_fasta_simd, :streaming_fasta_simd_fused)
     use_myers_raw = verify_variant == :myers_raw ||
         (verify_variant == :auto && resolved_scan_backend in (
-            :fused_fasta_simd, :streaming_fasta_simd))
+            :fused_fasta_simd, :streaming_fasta_simd,
+            :streaming_fasta_simd_fused))
     use_distance_first = verify_variant == :distance_first ||
         (verify_variant == :auto && use_fused_scan && !use_myers_raw)
     myers_profiles = use_myers_raw ?
@@ -1899,9 +2460,10 @@ function search_prefixHashScan(
     open(output_file, "w") do out
         write(out, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
 
-        if resolved_scan_backend == :streaming_fasta_simd
-            scan_start = time_ns()
-            chrom_results = stream_prefix_hash_scan(
+        if resolved_scan_backend in (
+                :streaming_fasta_simd, :streaming_fasta_simd_fused)
+            scan_start = prefix_hash_scan_timer(stats)
+            chunk_results, chrom_chunk_ranges = stream_prefix_hash_scan(
                 dbi.gi.filepath,
                 reference_lengths,
                 query,
@@ -1911,27 +2473,36 @@ function search_prefixHashScan(
                 distance,
                 stream_chunk_bases,
                 scan_threads,
+                Val(resolved_scan_backend == :streaming_fasta_simd_fused ?
+                    :fused : (resolved_lookup_variant == :bucketed ?
+                        :bucketed_reuse : :buffered_reuse)),
+                stats,
             )
-            for chrom_idx in eachindex(chrom_results)
-                chrom_result = something(chrom_results[chrom_idx])
-                if stats !== nothing
-                    merge_prefix_hash_scan_worker_stats!(
-                        stats, chrom_result.stats)
-                end
+            for chrom_idx in eachindex(chrom_chunk_ranges)
                 chrom_name = dbi.gi.chrom[chrom_idx]
-                for hits in (chrom_result.plus, chrom_result.minus)
-                    for hit in hits
-                        commit_prefix_hash_scan_verified!(
-                            out,
-                            hit,
-                            guides[hit.guide_idx],
-                            chrom_name,
-                            early_stopping,
-                            es_acc,
-                            is_es,
-                            seen,
-                            stats,
-                        )
+                chunk_range = chrom_chunk_ranges[chrom_idx]
+                if stats !== nothing
+                    for chunk_idx in chunk_range
+                        merge_prefix_hash_scan_worker_stats!(
+                            stats, something(chunk_results[chunk_idx]).stats)
+                    end
+                end
+                for strand in (:plus, :minus)
+                    for chunk_idx in chunk_range
+                        hits = getfield(something(chunk_results[chunk_idx]), strand)
+                        for hit in hits
+                            commit_prefix_hash_scan_verified!(
+                                out,
+                                hit,
+                                guides[hit.guide_idx],
+                                chrom_name,
+                                early_stopping,
+                                es_acc,
+                                is_es,
+                                seen,
+                                stats,
+                            )
+                        end
                     end
                 end
             end
