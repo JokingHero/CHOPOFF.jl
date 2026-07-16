@@ -76,14 +76,11 @@ julia --threads 8 --project=. src/CHOPOFF.jl search sassy \
   --guides test/sample_data/guides.txt \
   --genome test/sample_data/genome/semirandom.fa \
   --output /tmp/sassy_hits.csv \
-  --distance 3 \
-  --database unused_placeholder
+  --distance 3
 ```
 
 Notes:
 
-- `--database` is currently required by shared CLI argument parsing, even though
-  `search sassy` uses `--genome` directly.
 - `--force_safe_minima` disables BMI2/PEXT minima and forces the safe fallback.
 
 ## Current parity contract

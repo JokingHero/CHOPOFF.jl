@@ -33,5 +33,43 @@ using BioSequences
         @test all(res.guide .== String.(guides))
         @test all(Matrix(res[:, 2:3]) == Matrix(hdb_res[:, 2:3]))
     end
-end
 
+    @testset "prefixHashScan direct search" begin
+        tdir = tempname()
+        mkpath(tdir)
+        root = joinpath(dirname(pathof(CHOPOFF)), "..")
+        genome = joinpath(root, "test", "sample_data", "genome", "semirandom.fa")
+        guides_path = joinpath(root, "test", "sample_data", "guides.txt")
+        guides = LongDNA{4}.(readlines(guides_path))
+        expected = joinpath(tdir, "expected.csv")
+        actual = joinpath(tdir, "actual.csv")
+        search_prefixHashScan(guides, genome, expected)
+
+        args = [
+            "search", "--guides", guides_path, "--output", actual,
+            "prefixHashScan", "--genome", genome,
+        ]
+        parsed = CHOPOFF.parse_commandline(args)
+        @test parsed["search"]["database"] === nothing
+        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(args)
+        @test read(actual) == read(expected)
+
+        sassy_args = [
+            "search", "--guides", guides_path, "--output", actual,
+            "sassy", "--genome", genome, "--motif", "Cas9",
+        ]
+        @test CHOPOFF.parse_commandline(sassy_args)["search"]["database"] === nothing
+
+        missing_database = [
+            "search", "--guides", guides_path, "--output", actual,
+            "prefixHashDB",
+        ]
+        @test_throws ErrorException CHOPOFF.main(missing_database)
+
+        wrong_distance = [
+            "search", "--distance", "2", "--guides", guides_path,
+            "--output", actual, "prefixHashScan", "--genome", genome,
+        ]
+        @test_throws ErrorException CHOPOFF.main(wrong_distance)
+    end
+end

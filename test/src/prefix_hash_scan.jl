@@ -4,6 +4,7 @@ using BioSequences
 using FASTX
 using CSV
 using DataFrames
+using Logging
 
 const PHS_CORE_COLS = [:guide, :distance, :chromosome, :start, :strand]
 
@@ -75,6 +76,72 @@ end
 @testset "prefixHashScan" begin
     tdir = tempname()
     mkpath(tdir)
+
+    @testset "Cas9 distance-3 geometry" begin
+        geometry = CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY
+        @test geometry.guide_bases == 20
+        @test geometry.pam_bases == 3
+        @test geometry.prefix_bases == 16
+        @test geometry.distance == 3
+        @test CHOPOFF.prefix_scan_candidate_bases(geometry) == 23
+        @test CHOPOFF.prefix_scan_candidate_last_offset(geometry) == 22
+
+        work, ranges = CHOPOFF.prefix_hash_scan_chunk_work([22, 23, 24], 8)
+        @test ranges == [1:0, 1:1, 2:2]
+        @test [(item.chrom_idx, item.core_first, item.core_last) for item in work] ==
+            [(2, 1, 1), (3, 1, 2)]
+    end
+
+    @testset "supported Cas9 distance-3 API" begin
+        guide = LongDNA{4}("ACGTACGTACGTACGTACGT")
+        pad = repeat("A", 40)
+        genome = joinpath(tdir, "supported_api.fa")
+        write_phs_fasta(genome, "chr1", pad * string(guide) * "AGG" * pad)
+        public_out = joinpath(tdir, "supported_api.csv")
+        verbose_out = joinpath(tdir, "supported_api_verbose.csv")
+        engine_out = joinpath(tdir, "supported_api_engine.csv")
+
+        @test_logs min_level=Logging.Info search_prefixHashScan(
+            [guide], genome, public_out; early_stopping = fill(100, 4))
+        @test_logs (:info, r"prefixHashScan execution") search_prefixHashScan(
+            [guide], genome, verbose_out;
+            early_stopping = fill(100, 4), verbose = true)
+        motif = setdist(Motif("Cas9"), 3)
+        CHOPOFF.search_prefixHashScan(
+            [guide], genome, motif, engine_out;
+            distance = 3, early_stopping = fill(100, 4))
+        @test read(public_out) == read(verbose_out) == read(engine_out)
+
+        ambiguous_genome = joinpath(tdir, "supported_api_ambiguous.fa")
+        ambiguous_guide = "ACGTACGTACNTACGTACGT"
+        write_phs_fasta(
+            ambiguous_genome, "chr1", pad * ambiguous_guide * "AGG" * pad)
+        ambiguous_out = joinpath(tdir, "supported_api_ambiguous.csv")
+        search_prefixHashScan(
+            [guide], ambiguous_genome, ambiguous_out;
+            early_stopping = fill(100, 4))
+        @test nrow(DataFrame(CSV.File(ambiguous_out))) == 0
+
+        @test_throws ErrorException search_prefixHashScan(
+            LongDNA{4}[], genome, public_out)
+        @test_throws ErrorException search_prefixHashScan(
+            fill(guide, 65), genome, public_out)
+        @test_throws ErrorException search_prefixHashScan(
+            [LongDNA{4}("ACGTACGTACGTACGTACG")], genome, public_out)
+        @test_throws ErrorException search_prefixHashScan(
+            [LongDNA{4}("ACGTACGTACGTACGTACGN")], genome, public_out)
+        @test_throws ErrorException search_prefixHashScan(
+            [guide], genome, public_out; early_stopping = fill(100, 3))
+        @test_throws ErrorException search_prefixHashScan(
+            [guide], joinpath(tdir, "reference.2bit"), public_out)
+
+        unindexed = joinpath(tdir, "unindexed.fa")
+        open(unindexed, "w") do io
+            write(io, ">chr1\n", pad, string(guide), "AGG", pad, "\n")
+        end
+        @test_throws ErrorException search_prefixHashScan(
+            [guide], unindexed, public_out)
+    end
 
 
     @testset "exact Cas9 asset matches full fallback" begin

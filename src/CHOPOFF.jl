@@ -73,7 +73,7 @@ export build_PathTemplates
 export search_sassy
 
 export build_dictDB, search_dictDB # db_sketch
-export build_prefixHashDB, search_prefixHashDB
+export build_prefixHashDB, search_prefixHashDB, search_prefixHashScan
 export build_vcfDB, search_vcfDB # db_vcf
 
 ## Standalone binary generation
@@ -286,6 +286,9 @@ function parse_commandline(args::Array{String})
         "vcfDB"
             action = :command
             help = "vcfDB is a specialized database to handle .vcf files and personalized off-target search."
+        "prefixHashScan"
+            action = :command
+            help = "Search a FASTA reference directly with the optimized Cas9 distance-3 prefix scan."
         "sassy"
             action = :command
             help = "Search directly using Sassy (Myers bit-parallel) algorithm."
@@ -294,9 +297,9 @@ function parse_commandline(args::Array{String})
             arg_type = Int
             default = 3
         "--database"
-            help = "Path to THE FOLDER where the database is stored. Same as used when building."
+            help = "Path to the database used by database-backed search modes."
             arg_type = String
-            required = true
+            required = false
         "--guides"
             help = "File path to the guides, each row in the file contains a guide WITHOUT PAM."
             arg_type = String
@@ -334,6 +337,18 @@ function parse_commandline(args::Array{String})
     @add_arg_table! s["search"]["vcfDB"] begin
         "--early_stopping"
             help = "Input a vector of length of distance + 1 with early stopping conditions. If not supplied we will look up to 1e6 OTs for each distance."
+            arg_type = Int
+            nargs = '*'
+            required = false
+    end
+
+    @add_arg_table! s["search"]["prefixHashScan"] begin
+        "--genome"
+            help = "Path to an indexed FASTA reference."
+            arg_type = String
+            required = true
+        "--early_stopping"
+            help = "Input four early stopping limits for distances 0 through 3."
             arg_type = Int
             nargs = '*'
             required = false
@@ -503,6 +518,11 @@ function main(args::Array{String})
     elseif args["%COMMAND%"] == "search"
         args = args["search"]
         guides = LongDNA{4}.(readlines(args["guides"]))
+        database_commands = (
+            "treeDB", "linearDB", "prefixHashDB", "motifDB", "vcfDB")
+        if args["%COMMAND%"] in database_commands && args["database"] === nothing
+            error("--database is required for search $(args["%COMMAND%"]).")
+        end
         if args["%COMMAND%"] == "treeDB"
             search_treeDB(args["database"], guides, args["output"]; 
                 distance = args["distance"])
@@ -539,6 +559,19 @@ function main(args::Array{String})
                     distance = args["distance"],
                     early_stopping = repeat([1000000], args["distance"] + 1))
             end
+        elseif args["%COMMAND%"] == "prefixHashScan"
+            args["distance"] == 3 ||
+                error("prefixHashScan currently supports only distance 3.")
+            scan_args = args["prefixHashScan"]
+            early_stopping = isempty(scan_args["early_stopping"]) ?
+                fill(1_000_000, 4) : scan_args["early_stopping"]
+            search_prefixHashScan(
+                guides,
+                scan_args["genome"],
+                args["output"];
+                early_stopping = early_stopping,
+                verbose = true,
+            )
         elseif args["%COMMAND%"] == "sassy"
             sassy_args = args["sassy"]
             

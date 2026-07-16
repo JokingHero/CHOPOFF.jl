@@ -2,9 +2,11 @@
 
 ## Status and scope
 
-`prefixHashScan` is an indexless CRISPR off-target search prototype. It reuses
-the symbolic prefix paths from `prefixHashDB`, but builds a guide-specific query
-structure in memory and scans the reference genome directly.
+`prefixHashScan` is an indexless CRISPR off-target search. Its supported public
+entrypoint covers the measured Cas9/d3 configuration; the broader four-argument
+method remains an experimental benchmark and parity engine. It reuses the
+symbolic prefix paths from `prefixHashDB`, builds a guide-specific query
+structure in memory, and scans the reference genome directly.
 
 This document focuses on the current optimized configuration:
 
@@ -32,6 +34,18 @@ lookup automatically; multi-guide searches also use parallel query construction.
 
 "Indexless" means that no CHOPOFF genome database must be built. The optimized
 FASTA reader still requires the small, standard `.fai` random-access index.
+
+The implementation is split by stable responsibility:
+
+- `src/db_prefix_hash_scan.jl`: shared types, orchestration, and public API;
+- `src/prefix_hash_scan/query.jl`: symbolic paths, hashes, directory, prefilter;
+- `src/prefix_hash_scan/cas9.jl`: scalar and AVX2/BMI2 Cas9 scan kernels;
+- `src/prefix_hash_scan/verification.jl`: Myers, traceback, and result commit;
+- `src/prefix_hash_scan/streaming.jl`: indexed FASTA reads and global scheduler.
+
+`PrefixScanGeometry` now supplies guide, PAM, prefix, distance, candidate-span,
+and overlap values to validation and orchestration. Literal Cas9 constants stay
+inside the SIMD hot loop so this refactor does not add runtime motif branches.
 
 ## Core idea
 
@@ -375,6 +389,16 @@ A/B result confirms whole-chromosome tail imbalance was a major cause.
 These numbers are evidence for this exact machine and workload, not a universal
 speed claim.
 
+The July 2026 stabilization refactor preserved full-GRCh38 output bytes,
+prepared-result signatures, semantic counters, and all 25,826 emitted rows at
+both 12 and 24 CPUs. The new three-argument public API also produced identical
+bytes for all 61 guides. Focused tests, the complete Julia suite, and the
+Documenter build passed after separating the source files and introducing
+`PrefixScanGeometry`. Refactor timing runs were made while unrelated R jobs
+occupied host CPUs and were about 11% above the idle-host results in the table;
+they are retained only as parity evidence and do not replace the uncontaminated
+production measurements.
+
 A staged GRCh38 sweep varied chunk size (2, 4, 8, and 16 MiB), prefilter
 width (22, 24, and 26 bits), and bucket prefix (9 through 12 bases) at 12 and 24
 pinned physical CPUs. Every configuration preserved result signatures, output
@@ -448,14 +472,15 @@ this host.
 
 ## Current limitations and issues
 
-1. The fastest backend is hard-coded around Cas9/d3/16-base-prefix geometry.
+1. The fastest kernel remains specialized for Cas9/d3/16-base-prefix geometry;
+   shared validation, bounds, overlap, and scheduling use `PrefixScanGeometry`.
 2. A `UInt64` guide mask limits the fused path to 64 guides.
 3. AVX2 and BMI2 are required; there is no equivalent ARM or AVX-512 kernel.
 4. FASTA requires `.fai`; optimized streaming is not implemented for 2bit.
 5. Ambiguous query guides are rejected.
-6. Raw SIMD scanning requires an unambiguous 23-base candidate window. This is
-   tested against the existing fused behavior, but broader IUPAC policy should
-   be specified explicitly before treating the backend as a public interface.
+6. The supported API intentionally skips any candidate with a non-ACGT base in
+   its complete 23-base guide/PAM window. There is no ambiguous-reference
+   fallback.
 7. Early stopping does not cancel already scheduled scan/verification work.
 8. Global scheduling adds per-chunk result containers and concurrent FASTA
    seeks. Current evidence is for warm-cache GRCh38; cold-cache and networked
@@ -472,10 +497,11 @@ this host.
     bitmap is still probed in genome order and may remain memory-latency bound.
 13. `PrefixHashScanStats` contains summed worker CPU times and wall-clock fields;
     those values cannot be compared directly without clear labeling.
-14. `search_prefixHashScan` is not exported, documented as public API, or
-    available through the standalone CLI.
-15. The implementation remains concentrated in one large source file, which
-    makes kernel-level profiling and maintenance harder.
+14. The exported three-argument `search_prefixHashScan` and standalone CLI are
+    supported only for Cas9/d3. Advanced tuning remains on the experimental
+    four-argument method.
+15. Source is separated into query, Cas9 kernel, verification, streaming, and
+    orchestration units while remaining in the parent `CHOPOFF` module.
 
 ## Potential speed optimizations
 
@@ -546,8 +572,9 @@ this host.
 Performance work should not be mixed blindly with generalization. Useful next
 features are:
 
-1. Export and document `search_prefixHashScan`, add a standalone CLI search
-   mode, and report which backend `:auto` selected.
+1. **Completed:** export and document the supported Cas9/d3
+   `search_prefixHashScan`, add a standalone CLI search mode, and report the
+   resolved backend and execution modes without enabling statistics.
 2. Support more than 64 guides in one genome pass with a compact hash-to-guide
    ID list. Rescanning the genome in 64-guide batches would be simpler but loses
    the main amortization advantage.
@@ -572,7 +599,8 @@ and lookup is only 7.9% of cumulative samples at 24 CPUs. The next speed work
 should target the remaining genome-order presence-bitmap probes or explain the
 44.4% worker-wait share through NUMA/pinning measurements. Require equal-memory
 comparisons and exact final directory verification. If neither has a credible
-10% route, stabilize Cas9/d3 before expanding motifs.
+10% route, proceed to a separate Cas12a geometry/kernel instead of generalizing
+the Cas9 hot loop.
 
 The likely remaining gain without a genome index is meaningful but smaller than
 the previous 10x improvement. Another 1.5-3x is plausible only if profiling
@@ -589,4 +617,3 @@ unlikely because every exact indexless search must still inspect the reference.
   overhead, and can NUMA-local query placement reduce it?
 - Why does immediate verification show no latency gain despite allocating 5.78%
   fewer bytes: instruction pressure or phase-locality loss?
-- What exact ambiguous-reference semantics should the supported API guarantee?
