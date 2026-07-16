@@ -54,6 +54,34 @@ using BioSequences
         @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(args)
         @test read(actual) == read(expected)
 
+        cas12a_guide = "TGCATGCATGCATGCATGCAT"
+        cas12a_guides_path = joinpath(tdir, "cas12a_guides.txt")
+        write(cas12a_guides_path, cas12a_guide * "\n")
+        cas12a_genome = joinpath(tdir, "cas12a.fa")
+        cas12a_seq = repeat("A", 40) * "TTTA" * cas12a_guide * repeat("A", 40)
+        open(cas12a_genome, "w") do io
+            write(io, ">chr1\n", cas12a_seq, "\n")
+        end
+        open(cas12a_genome * ".fai", "w") do io
+            write(io, "chr1\t", string(length(cas12a_seq)), "\t6\t",
+                string(length(cas12a_seq)), "\t",
+                string(length(cas12a_seq) + 1), "\n")
+        end
+        cas12a_expected = joinpath(tdir, "cas12a_expected.csv")
+        cas12a_actual = joinpath(tdir, "cas12a_actual.csv")
+        search_prefixHashScan(
+            [LongDNA{4}(cas12a_guide)], cas12a_genome, cas12a_expected;
+            motif = "Cas12a")
+        cas12a_args = [
+            "search", "--guides", cas12a_guides_path,
+            "--output", cas12a_actual, "prefixHashScan",
+            "--genome", cas12a_genome, "--motif", "Cas12a",
+        ]
+        parsed_cas12a = CHOPOFF.parse_commandline(cas12a_args)
+        @test parsed_cas12a["search"]["prefixHashScan"]["motif"] == "Cas12a"
+        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(cas12a_args)
+        @test read(cas12a_actual) == read(cas12a_expected)
+
         sassy_args = [
             "search", "--guides", guides_path, "--output", actual,
             "sassy", "--genome", genome, "--motif", "Cas9",

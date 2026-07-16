@@ -143,6 +143,111 @@ end
             [guide], unindexed, public_out)
     end
 
+    @testset "specialized Cas12a distance-3 geometry and backends" begin
+        geometry = CHOPOFF.CAS12A_D3_PREFIX_SCAN_GEOMETRY
+        @test CHOPOFF.prefix_scan_kind(geometry) == :cas12a
+        @test geometry.guide_bases == 21
+        @test geometry.pam_bases == 4
+        @test geometry.prefix_bases == 16
+        @test geometry.distance == 3
+        @test CHOPOFF.prefix_scan_candidate_bases(geometry) == 25
+        @test CHOPOFF.prefix_scan_candidate_last_offset(geometry) == 24
+
+        work, ranges = CHOPOFF.prefix_hash_scan_chunk_work(
+            [24, 25, 26], 8, geometry)
+        @test ranges == [1:0, 1:1, 2:2]
+        @test [(item.chrom_idx, item.core_first, item.core_last) for item in work] ==
+            [(2, 1, 1), (3, 1, 2)]
+
+        motif = Motif("Cas12a"; distance = 3)
+        stats = CHOPOFF.PrefixHashScanStats()
+        paths, source =
+            CHOPOFF.load_prefix_hash_scan_paths(motif, 3, 16, stats)
+        @test source == :precomputed
+        @test stats.path_source == :precomputed
+        @test size(paths) == (302337, 16)
+
+        guide = LongDNA{4}("TGCATGCATGCATGCATGCAT")
+        forward_site = "TTTA" * string(guide)
+        reverse_site = string(reverse_complement(LongDNA{4}(forward_site)))
+        seq = reverse_site * repeat("ACGT", 45) * forward_site
+        genome = joinpath(tdir, "cas12a_specialized.fa")
+        write_phs_fasta(genome, "chr1", seq)
+        chrom_seq = LongDNA{4}(seq)
+        dbi = DBInfo(genome, "cas12a_specialized", motif)
+
+        for is_antisense in (false, true)
+            for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
+                prefix = CHOPOFF.normalized_candidate_prefix(
+                    chrom_seq, candidate_range, dbi, is_antisense, 16)
+                expected_hash = CHOPOFF.candidate_prefix_hashes(
+                    prefix, UInt32, nothing)
+                direct_hash = CHOPOFF.candidate_prefix_hashes_direct_cas12a(
+                    chrom_seq, candidate_range, is_antisense, 16, UInt32)
+                @test direct_hash == expected_hash
+
+                expected_materialized = CHOPOFF.materialize_normalized_candidate(
+                    chrom_seq, candidate_range, dbi, is_antisense)
+                observed = CHOPOFF.materialize_normalized_candidate_cas12a(
+                    chrom_seq, first(candidate_range), dbi, is_antisense)
+                raw_observed = CHOPOFF.materialize_normalized_candidate_cas12a(
+                    collect(codeunits(seq)), first(candidate_range), dbi, is_antisense)
+                @test observed == expected_materialized
+                @test raw_observed == expected_materialized
+            end
+        end
+
+        outputs = Dict{Symbol, String}()
+        backend_stats = Dict{Symbol, CHOPOFF.PrefixHashScanStats}()
+        for backend in (
+                :legacy, :fused_dict, :fused_directory, :fused_fasta_simd,
+                :streaming_fasta_simd, :streaming_fasta_simd_fused, :auto)
+            output = joinpath(tdir, "cas12a_$(backend).csv")
+            backend_stats[backend] = CHOPOFF.PrefixHashScanStats()
+            CHOPOFF.search_prefixHashScan(
+                [guide], genome, motif, output;
+                distance = 3,
+                hash_len = 16,
+                early_stopping = fill(100, 4),
+                scan_backend = backend,
+                stats = backend_stats[backend],
+            )
+            outputs[backend] = read(output, String)
+            @test backend_stats[backend].path_source == :precomputed
+        end
+        @test all(==(outputs[:legacy]), values(outputs))
+        expected_auto = CHOPOFF.can_use_prefix_hash_scan_simd() ?
+            :streaming_fasta_simd : :fused_directory
+        @test backend_stats[:auto].scan_backend == expected_auto
+
+        public_output = joinpath(tdir, "cas12a_public.csv")
+        search_prefixHashScan(
+            [guide], genome, public_output;
+            motif = "Cas12a", early_stopping = fill(100, 4))
+        @test read(public_output, String) == outputs[:legacy]
+
+        invalid_genome = joinpath(tdir, "cas12a_invalid.fa")
+        write_phs_fasta(
+            invalid_genome, "chr1", "TTTT" * string(guide))
+        invalid_output = joinpath(tdir, "cas12a_invalid.csv")
+        search_prefixHashScan(
+            [guide], invalid_genome, invalid_output;
+            motif = "Cas12a", early_stopping = fill(100, 4))
+        @test nrow(DataFrame(CSV.File(invalid_output))) == 0
+
+        ambiguous_genome = joinpath(tdir, "cas12a_ambiguous.fa")
+        guide_string = string(guide)
+        ambiguous_site =
+            "TTTA" * guide_string[1:7] * "N" * guide_string[9:end]
+        write_phs_fasta(
+            ambiguous_genome, "chr1", ambiguous_site)
+        ambiguous_output = joinpath(tdir, "cas12a_ambiguous.csv")
+        search_prefixHashScan(
+            [guide], ambiguous_genome, ambiguous_output;
+            motif = "Cas12a", early_stopping = fill(100, 4))
+        @test nrow(DataFrame(CSV.File(ambiguous_output))) == 0
+    end
+
 
     @testset "exact Cas9 asset matches full fallback" begin
         motif = Motif("Cas9"; distance = 3)

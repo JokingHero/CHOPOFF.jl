@@ -1,32 +1,23 @@
-# Specialized scalar and AVX2/BMI2 Cas9 scan kernels.
-# Cas9 geometry literals remain compile-time constants in these hot loops.
+# Specialized scalar and AVX2/BMI2 Cas12a scan kernels.
+# Cas12a geometry literals remain compile-time constants in these hot loops.
 
-function cas9_prefix_scan_bounds(chrom_seq::LongDNA{4}, dbi::DBInfo)
+function cas12a_prefix_scan_bounds(chrom_seq::LongDNA{4}, dbi::DBInfo)
     n = length(chrom_seq)
-    geometry = CAS9_D3_PREFIX_SCAN_GEOMETRY
-    candidate_bases = prefix_scan_candidate_bases(geometry)
-    candidate_last_offset = prefix_scan_candidate_last_offset(geometry)
-    n < candidate_bases && return nothing
+    n < 25 && return nothing
     seq_start, seq_stop = locate_telomeres(chrom_seq)
-    plus_first = max(seq_start - dbi.motif.distance, 1)
-    plus_last = seq_stop - candidate_last_offset
-    minus_first = seq_start
-    minus_last = min(seq_stop + dbi.motif.distance, n) - candidate_last_offset
+    plus_first = seq_start
+    plus_last = min(seq_stop + dbi.motif.distance, n) - 24
+    minus_first = max(seq_start - dbi.motif.distance, 1)
+    minus_last = seq_stop - 24
     firsts = Int[]
     lasts = Int[]
-    if plus_first <= plus_last
-        push!(firsts, plus_first)
-        push!(lasts, plus_last)
-    end
-    if minus_first <= minus_last
-        push!(firsts, minus_first)
-        push!(lasts, minus_last)
-    end
+    plus_first <= plus_last && (push!(firsts, plus_first); push!(lasts, plus_last))
+    minus_first <= minus_last && (push!(firsts, minus_first); push!(lasts, minus_last))
     isempty(firsts) && return nothing
     return minimum(firsts), maximum(lasts), plus_first, plus_last, minus_first, minus_last
 end
 
-function scan_cas9_prefix_hits_range(
+function scan_cas12a_prefix_hits_range(
     chrom_seq::LongDNA{4},
     query,
     hash_len::Int,
@@ -37,23 +28,19 @@ function scan_cas9_prefix_hits_range(
     minus_first::Int,
     minus_last::Int)
 
+    hash_len == 16 || error("The specialized Cas12a scan requires hash_len=16.")
     plus_hits = PrefixHashScanHit[]
     minus_hits = PrefixHashScanHit[]
     candidate_first > candidate_last && return plus_hits, minus_hits, 0
 
-    hash_bits = 2 * hash_len
-    hash_mask = (UInt64(1) << hash_bits) - UInt64(1)
-    window_mask = (UInt64(1) << 46) - UInt64(1)
-    hash_shift = 2 * (20 - hash_len)
+    window_mask = (UInt64(1) << 50) - UInt64(1)
     fwd_window = zero(UInt64)
-    rev_window = zero(UInt64)
     valid_run = 0
-    previous_code = UInt8(0xff)
     motif_candidates = 0
 
-    @inbounds for pos in candidate_first:(candidate_first + 21)
-        nibble = UInt8(BioSequences.extract_encoded_element(chrom_seq, pos))
-        code = prefix_hash_scan_twobit_nibble(nibble)
+    @inbounds for pos in candidate_first:(candidate_first + 23)
+        code = prefix_hash_scan_twobit_nibble(
+            UInt8(BioSequences.extract_encoded_element(chrom_seq, pos)))
         if code == 0xff
             valid_run = 0
             code = 0x00
@@ -61,63 +48,64 @@ function scan_cas9_prefix_hits_range(
             valid_run += 1
         end
         fwd_window = ((fwd_window << 2) | UInt64(code)) & window_mask
-        rev_window = (rev_window >> 2) | (UInt64(code) << 44)
-        previous_code = code
     end
 
-    @inbounds for pos in (candidate_first + 22):(candidate_last + 22)
-        nibble = UInt8(BioSequences.extract_encoded_element(chrom_seq, pos))
-        code = prefix_hash_scan_twobit_nibble(nibble)
+    @inbounds for pos in (candidate_first + 24):(candidate_last + 24)
+        code = prefix_hash_scan_twobit_nibble(
+            UInt8(BioSequences.extract_encoded_element(chrom_seq, pos)))
         if code == 0xff
             valid_run = 0
             code = 0x00
         else
             valid_run += 1
         end
-
         fwd_window = ((fwd_window << 2) | UInt64(code)) & window_mask
-        rev_window = (rev_window >> 2) | (UInt64(code) << 44)
-        candidate_start = pos - 22
-        if valid_run >= 23
-            if plus_first <= candidate_start <= plus_last && code == 0x02 && previous_code == 0x02
-                motif_candidates += 1
-                hash = (rev_window >> hash_shift) & hash_mask
-                mask = prefix_hash_scan_candidate_mask(query, hash)
-                mask != 0 && push!(plus_hits, PrefixHashScanHit(candidate_start, mask))
-            end
-            if minus_first <= candidate_start <= minus_last &&
-                    ((fwd_window >> 44) & UInt64(0x03)) == UInt64(0x01) &&
-                    ((fwd_window >> 42) & UInt64(0x03)) == UInt64(0x01)
-                motif_candidates += 1
-                hash = xor((fwd_window >> hash_shift) & hash_mask, hash_mask)
-                mask = prefix_hash_scan_candidate_mask(query, hash)
-                mask != 0 && push!(minus_hits, PrefixHashScanHit(candidate_start, mask))
-            end
+        candidate_start = pos - 24
+        valid_run >= 25 || continue
+
+        if plus_first <= candidate_start <= plus_last &&
+                ((fwd_window >> 48) & 0x03) == 0x03 &&
+                ((fwd_window >> 46) & 0x03) == 0x03 &&
+                ((fwd_window >> 44) & 0x03) == 0x03 &&
+                ((fwd_window >> 42) & 0x03) != 0x03
+            motif_candidates += 1
+            hash = UInt32((fwd_window >> 10) & UInt64(typemax(UInt32)))
+            mask = prefix_hash_scan_candidate_mask(query, hash)
+            mask != 0 && push!(plus_hits, PrefixHashScanHit(candidate_start, mask))
         end
-        previous_code = code
+        if minus_first <= candidate_start <= minus_last &&
+                ((fwd_window >> 6) & 0x03) != 0x00 &&
+                ((fwd_window >> 4) & 0x03) == 0x00 &&
+                ((fwd_window >> 2) & 0x03) == 0x00 &&
+                (fwd_window & 0x03) == 0x00
+            motif_candidates += 1
+            hash = xor(
+                prefix_hash_scan_reverse_codes(
+                    UInt32((fwd_window >> 8) & UInt64(typemax(UInt32)))),
+                typemax(UInt32),
+            )
+            mask = prefix_hash_scan_candidate_mask(query, hash)
+            mask != 0 && push!(minus_hits, PrefixHashScanHit(candidate_start, mask))
+        end
     end
     return plus_hits, minus_hits, motif_candidates
 end
 
-
-@inline function prefix_hash_scan_valid23(exact::UInt128)
+@inline function prefix_hash_scan_valid25(exact::UInt128)
     valid2 = exact & (exact >> 1)
     valid4 = valid2 & (valid2 >> 2)
     valid8 = valid4 & (valid4 >> 4)
     valid16 = valid8 & (valid8 >> 8)
-    return valid16 & (UInt128(valid4) >> 16) &
-        (UInt128(valid2) >> 20) & (exact >> 22)
+    return valid16 & (valid8 >> 16) & (exact >> 24)
 end
 
-@inline function prefix_hash_scan_raw_hash(
+@inline function prefix_hash_scan_raw_hash_cas12a(
     raw::AbstractVector{UInt8}, candidate_start::Int, is_antisense::Bool)
 
     hash = UInt32(0)
-    positions = if is_antisense
-        (candidate_start + 3):(candidate_start + 18)
-    else
-        (candidate_start + 19):-1:(candidate_start + 4)
-    end
+    positions = is_antisense ?
+        ((candidate_start + 20):-1:(candidate_start + 5)) :
+        ((candidate_start + 4):(candidate_start + 19))
     @inbounds for pos in positions
         code = prefix_hash_scan_raw_code(raw[pos])
         code == 0xff && return nothing
@@ -127,12 +115,9 @@ end
     return hash
 end
 
-function cas9_prefix_scan_bounds_raw(raw::AbstractVector{UInt8}, dbi::DBInfo)
+function cas12a_prefix_scan_bounds_raw(raw::AbstractVector{UInt8}, dbi::DBInfo)
     n = length(raw)
-    geometry = CAS9_D3_PREFIX_SCAN_GEOMETRY
-    candidate_bases = prefix_scan_candidate_bases(geometry)
-    candidate_last_offset = prefix_scan_candidate_last_offset(geometry)
-    n < candidate_bases && return nothing
+    n < 25 && return nothing
     seq_start = 1
     seq_stop = n
     @inbounds while seq_start <= seq_stop &&
@@ -143,10 +128,10 @@ function cas9_prefix_scan_bounds_raw(raw::AbstractVector{UInt8}, dbi::DBInfo)
             (raw[seq_stop] == UInt8('N') || raw[seq_stop] == UInt8('n'))
         seq_stop -= 1
     end
-    plus_first = max(seq_start - dbi.motif.distance, 1)
-    plus_last = seq_stop - candidate_last_offset
-    minus_first = seq_start
-    minus_last = min(seq_stop + dbi.motif.distance, n) - candidate_last_offset
+    plus_first = seq_start
+    plus_last = min(seq_stop + dbi.motif.distance, n) - 24
+    minus_first = max(seq_start - dbi.motif.distance, 1)
+    minus_last = seq_stop - 24
     firsts = Int[]
     lasts = Int[]
     plus_first <= plus_last && (push!(firsts, plus_first); push!(lasts, plus_last))
@@ -155,7 +140,7 @@ function cas9_prefix_scan_bounds_raw(raw::AbstractVector{UInt8}, dbi::DBInfo)
     return minimum(firsts), maximum(lasts), plus_first, plus_last, minus_first, minus_last
 end
 
-function scan_cas9_prefix_hits_raw_range_impl!(
+function scan_cas12a_prefix_hits_raw_range_impl!(
     plus_hits::Vector{PrefixHashScanHit},
     minus_hits::Vector{PrefixHashScanHit},
     plus_candidates,
@@ -193,14 +178,21 @@ function scan_cas9_prefix_hits_raw_range_impl!(
         c = UInt128(c0) | (UInt128(c1) << 64)
         g = UInt128(g0) | (UInt128(g1) << 64)
         t = UInt128(t0) | (UInt128(t1) << 64)
-        valid = UInt64(prefix_hash_scan_valid23(a | c | g | t) & UInt128(typemax(UInt64)))
+        exact = a | c | g | t
+        valid = UInt64(prefix_hash_scan_valid25(exact) & UInt128(typemax(UInt64)))
         count = min(64, candidate_last - block_start + 1)
         count_mask = count == 64 ? typemax(UInt64) : (UInt64(1) << count) - 1
         valid &= count_mask
-        plus_mask = valid & UInt64((g >> 21) & UInt128(typemax(UInt64))) &
-            UInt64((g >> 22) & UInt128(typemax(UInt64)))
-        minus_mask = valid & UInt64(c & UInt128(typemax(UInt64))) &
-            UInt64((c >> 1) & UInt128(typemax(UInt64)))
+        plus_mask = valid &
+            UInt64(t & UInt128(typemax(UInt64))) &
+            UInt64((t >> 1) & UInt128(typemax(UInt64))) &
+            UInt64((t >> 2) & UInt128(typemax(UInt64))) &
+            UInt64(((a | c | g) >> 3) & UInt128(typemax(UInt64)))
+        minus_mask = valid &
+            UInt64(((c | g | t) >> 21) & UInt128(typemax(UInt64))) &
+            UInt64((a >> 22) & UInt128(typemax(UInt64))) &
+            UInt64((a >> 23) & UInt128(typemax(UInt64))) &
+            UInt64((a >> 24) & UInt128(typemax(UInt64)))
         low = c | t
         high = g | t
 
@@ -212,7 +204,8 @@ function scan_cas9_prefix_hits_raw_range_impl!(
             motif_candidates += 1
             low16 = UInt64((low >> (bit + 4)) & UInt128(0xffff))
             high16 = UInt64((high >> (bit + 4)) & UInt128(0xffff))
-            hash = prefix_hash_scan_pack_codes(low16, high16)
+            hash = prefix_hash_scan_reverse_codes(
+                prefix_hash_scan_pack_codes(low16, high16))
             prefix_hash_scan_record_candidate!(
                 plus_hits, plus_candidates, query, candidate_start, hash,
                 Val(Bucketed))
@@ -224,13 +217,10 @@ function scan_cas9_prefix_hits_raw_range_impl!(
             candidate_start = block_start + bit
             minus_first <= candidate_start <= minus_last || continue
             motif_candidates += 1
-            low16 = UInt64((low >> (bit + 3)) & UInt128(0xffff))
-            high16 = UInt64((high >> (bit + 3)) & UInt128(0xffff))
+            low16 = UInt64((low >> (bit + 5)) & UInt128(0xffff))
+            high16 = UInt64((high >> (bit + 5)) & UInt128(0xffff))
             hash = xor(
-                prefix_hash_scan_reverse_codes(
-                    prefix_hash_scan_pack_codes(low16, high16)),
-                typemax(UInt32),
-            )
+                prefix_hash_scan_pack_codes(low16, high16), typemax(UInt32))
             prefix_hash_scan_record_candidate!(
                 minus_hits, minus_candidates, query, candidate_start, hash,
                 Val(Bucketed))
@@ -241,7 +231,7 @@ function scan_cas9_prefix_hits_raw_range_impl!(
 
     @inbounds for candidate_start in block_start:candidate_last
         valid = true
-        for pos in candidate_start:(candidate_start + 22)
+        for pos in candidate_start:(candidate_start + 24)
             if prefix_hash_scan_raw_code(raw[pos]) == 0xff
                 valid = false
                 break
@@ -249,19 +239,23 @@ function scan_cas9_prefix_hits_raw_range_impl!(
         end
         valid || continue
         if plus_first <= candidate_start <= plus_last &&
-                prefix_hash_scan_raw_code(raw[candidate_start + 21]) == 2 &&
-                prefix_hash_scan_raw_code(raw[candidate_start + 22]) == 2
+                prefix_hash_scan_raw_code(raw[candidate_start]) == 3 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 1]) == 3 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 2]) == 3 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 3]) != 3
             motif_candidates += 1
-            hash = prefix_hash_scan_raw_hash(raw, candidate_start, false)
+            hash = prefix_hash_scan_raw_hash_cas12a(raw, candidate_start, false)
             prefix_hash_scan_record_candidate!(
                 plus_hits, plus_candidates, query, candidate_start, hash,
                 Val(Bucketed))
         end
         if minus_first <= candidate_start <= minus_last &&
-                prefix_hash_scan_raw_code(raw[candidate_start]) == 1 &&
-                prefix_hash_scan_raw_code(raw[candidate_start + 1]) == 1
+                prefix_hash_scan_raw_code(raw[candidate_start + 21]) != 0 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 22]) == 0 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 23]) == 0 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 24]) == 0
             motif_candidates += 1
-            hash = prefix_hash_scan_raw_hash(raw, candidate_start, true)
+            hash = prefix_hash_scan_raw_hash_cas12a(raw, candidate_start, true)
             prefix_hash_scan_record_candidate!(
                 minus_hits, minus_candidates, query, candidate_start, hash,
                 Val(Bucketed))
@@ -276,7 +270,7 @@ function scan_cas9_prefix_hits_raw_range_impl!(
     return motif_candidates
 end
 
-function scan_cas9_prefix_hits_raw_range!(
+function scan_cas12a_prefix_hits_raw_range!(
     plus_hits::Vector{PrefixHashScanHit},
     minus_hits::Vector{PrefixHashScanHit},
     raw::AbstractVector{UInt8},
@@ -288,13 +282,13 @@ function scan_cas9_prefix_hits_raw_range!(
     minus_first::Int,
     minus_last::Int)
 
-    return scan_cas9_prefix_hits_raw_range_impl!(
+    return scan_cas12a_prefix_hits_raw_range_impl!(
         plus_hits, minus_hits, nothing, nothing, nothing, nothing, nothing,
         raw, query, candidate_first, candidate_last, plus_first, plus_last,
         minus_first, minus_last, Val(false))
 end
 
-function scan_cas9_prefix_hits_raw_range_bucketed!(
+function scan_cas12a_prefix_hits_raw_range_bucketed!(
     plus_hits::Vector{PrefixHashScanHit},
     minus_hits::Vector{PrefixHashScanHit},
     plus_candidates::Vector{UInt64},
@@ -311,14 +305,14 @@ function scan_cas9_prefix_hits_raw_range_bucketed!(
     minus_first::Int,
     minus_last::Int)
 
-    return scan_cas9_prefix_hits_raw_range_impl!(
+    return scan_cas12a_prefix_hits_raw_range_impl!(
         plus_hits, minus_hits, plus_candidates, minus_candidates,
         plus_radix_scratch, minus_radix_scratch, radix_counts, raw, query,
         candidate_first, candidate_last, plus_first, plus_last, minus_first,
         minus_last, Val(true))
 end
 
-function scan_cas9_prefix_hits_raw_range(
+function scan_cas12a_prefix_hits_raw_range(
     raw::AbstractVector{UInt8},
     query,
     candidate_first::Int,
@@ -330,20 +324,20 @@ function scan_cas9_prefix_hits_raw_range(
 
     plus_hits = PrefixHashScanHit[]
     minus_hits = PrefixHashScanHit[]
-    motif_candidates = scan_cas9_prefix_hits_raw_range!(
+    motif_candidates = scan_cas12a_prefix_hits_raw_range!(
         plus_hits, minus_hits, raw, query, candidate_first, candidate_last,
         plus_first, plus_last, minus_first, minus_last)
     return plus_hits, minus_hits, motif_candidates
 end
 
-function scan_cas9_prefix_hits_raw(
+function scan_cas12a_prefix_hits_raw(
     raw::AbstractVector{UInt8},
     dbi::DBInfo,
     query,
     stats::Union{Nothing, PrefixHashScanStats} = nothing;
     scan_threads::Int = Threads.nthreads())
 
-    bounds = cas9_prefix_scan_bounds_raw(raw, dbi)
+    bounds = cas12a_prefix_scan_bounds_raw(raw, dbi)
     bounds === nothing && return PrefixHashScanHit[], PrefixHashScanHit[]
     candidate_first, candidate_last, plus_first, plus_last, minus_first, minus_last = bounds
     candidate_count = candidate_last - candidate_first + 1
@@ -354,7 +348,7 @@ function scan_cas9_prefix_hits_raw(
         for first in candidate_first:chunk_size:candidate_last
     ]
     tasks = map(ranges) do range
-        Threads.@spawn scan_cas9_prefix_hits_raw_range(
+        Threads.@spawn scan_cas12a_prefix_hits_raw_range(
             raw, query, first(range), last(range),
             plus_first, plus_last, minus_first, minus_last)
     end
@@ -368,13 +362,11 @@ function scan_cas9_prefix_hits_raw(
         append!(minus_hits, local_minus)
         motif_candidates += local_candidates
     end
-    if stats !== nothing
-        stats.motif_candidates += motif_candidates
-    end
+    stats !== nothing && (stats.motif_candidates += motif_candidates)
     return plus_hits, minus_hits
 end
 
-function scan_cas9_prefix_hits(
+function scan_cas12a_prefix_hits(
     chrom_seq::LongDNA{4},
     dbi::DBInfo,
     query,
@@ -382,14 +374,13 @@ function scan_cas9_prefix_hits(
     stats::Union{Nothing, PrefixHashScanStats} = nothing;
     scan_threads::Int = Threads.nthreads())
 
-    bounds = cas9_prefix_scan_bounds(chrom_seq, dbi)
+    bounds = cas12a_prefix_scan_bounds(chrom_seq, dbi)
     bounds === nothing && return PrefixHashScanHit[], PrefixHashScanHit[]
     candidate_first, candidate_last, plus_first, plus_last, minus_first, minus_last = bounds
     candidate_count = candidate_last - candidate_first + 1
     thread_count = min(max(scan_threads, 1), candidate_count)
-
     if thread_count == 1
-        plus_hits, minus_hits, motif_candidates = scan_cas9_prefix_hits_range(
+        plus_hits, minus_hits, motif_candidates = scan_cas12a_prefix_hits_range(
             chrom_seq, query, hash_len, candidate_first, candidate_last,
             plus_first, plus_last, minus_first, minus_last)
     else
@@ -399,7 +390,7 @@ function scan_cas9_prefix_hits(
             for first in candidate_first:chunk_size:candidate_last
         ]
         tasks = map(ranges) do range
-            Threads.@spawn scan_cas9_prefix_hits_range(
+            Threads.@spawn scan_cas12a_prefix_hits_range(
                 chrom_seq, query, hash_len, first(range), last(range),
                 plus_first, plus_last, minus_first, minus_last)
         end
@@ -413,14 +404,11 @@ function scan_cas9_prefix_hits(
             motif_candidates += local_candidates
         end
     end
-
-    if stats !== nothing
-        stats.motif_candidates += motif_candidates
-    end
+    stats !== nothing && (stats.motif_candidates += motif_candidates)
     return plus_hits, minus_hits
 end
 
-function scan_verify_cas9_prefix_raw_range!(
+function scan_verify_cas12a_prefix_raw_range!(
     plus::Vector{PrefixHashScanVerifiedHit},
     minus::Vector{PrefixHashScanVerifiedHit},
     raw::AbstractVector{UInt8},
@@ -452,14 +440,21 @@ function scan_verify_cas9_prefix_raw_range!(
         c = UInt128(c0) | (UInt128(c1) << 64)
         g = UInt128(g0) | (UInt128(g1) << 64)
         t = UInt128(t0) | (UInt128(t1) << 64)
-        valid = UInt64(prefix_hash_scan_valid23(a | c | g | t) & UInt128(typemax(UInt64)))
+        exact = a | c | g | t
+        valid = UInt64(prefix_hash_scan_valid25(exact) & UInt128(typemax(UInt64)))
         count = min(64, candidate_last - block_start + 1)
         count_mask = count == 64 ? typemax(UInt64) : (UInt64(1) << count) - 1
         valid &= count_mask
-        plus_mask = valid & UInt64((g >> 21) & UInt128(typemax(UInt64))) &
-            UInt64((g >> 22) & UInt128(typemax(UInt64)))
-        minus_mask = valid & UInt64(c & UInt128(typemax(UInt64))) &
-            UInt64((c >> 1) & UInt128(typemax(UInt64)))
+        plus_mask = valid &
+            UInt64(t & UInt128(typemax(UInt64))) &
+            UInt64((t >> 1) & UInt128(typemax(UInt64))) &
+            UInt64((t >> 2) & UInt128(typemax(UInt64))) &
+            UInt64(((a | c | g) >> 3) & UInt128(typemax(UInt64)))
+        minus_mask = valid &
+            UInt64(((c | g | t) >> 21) & UInt128(typemax(UInt64))) &
+            UInt64((a >> 22) & UInt128(typemax(UInt64))) &
+            UInt64((a >> 23) & UInt128(typemax(UInt64))) &
+            UInt64((a >> 24) & UInt128(typemax(UInt64)))
         low = c | t
         high = g | t
 
@@ -471,10 +466,11 @@ function scan_verify_cas9_prefix_raw_range!(
             motif_candidates += 1
             low16 = UInt64((low >> (bit + 4)) & UInt128(0xffff))
             high16 = UInt64((high >> (bit + 4)) & UInt128(0xffff))
-            hash = prefix_hash_scan_pack_codes(low16, high16)
+            hash = prefix_hash_scan_reverse_codes(
+                prefix_hash_scan_pack_codes(low16, high16))
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || evaluate_prefix_hash_scan_candidate!(
-                plus, raw, CAS9_D3_PREFIX_SCAN_GEOMETRY,
+                plus, raw, CAS12A_D3_PREFIX_SCAN_GEOMETRY,
                 candidate_start, mask, global_offset, dbi, false,
                 guides_, myers_profiles, distance, stats)
         end
@@ -485,16 +481,13 @@ function scan_verify_cas9_prefix_raw_range!(
             candidate_start = block_start + bit
             minus_first <= candidate_start <= minus_last || continue
             motif_candidates += 1
-            low16 = UInt64((low >> (bit + 3)) & UInt128(0xffff))
-            high16 = UInt64((high >> (bit + 3)) & UInt128(0xffff))
+            low16 = UInt64((low >> (bit + 5)) & UInt128(0xffff))
+            high16 = UInt64((high >> (bit + 5)) & UInt128(0xffff))
             hash = xor(
-                prefix_hash_scan_reverse_codes(
-                    prefix_hash_scan_pack_codes(low16, high16)),
-                typemax(UInt32),
-            )
+                prefix_hash_scan_pack_codes(low16, high16), typemax(UInt32))
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || evaluate_prefix_hash_scan_candidate!(
-                minus, raw, CAS9_D3_PREFIX_SCAN_GEOMETRY,
+                minus, raw, CAS12A_D3_PREFIX_SCAN_GEOMETRY,
                 candidate_start, mask, global_offset, dbi, true,
                 guides_, myers_profiles, distance, stats)
         end
@@ -504,7 +497,7 @@ function scan_verify_cas9_prefix_raw_range!(
 
     @inbounds for candidate_start in block_start:candidate_last
         valid = true
-        for pos in candidate_start:(candidate_start + 22)
+        for pos in candidate_start:(candidate_start + 24)
             if prefix_hash_scan_raw_code(raw[pos]) == 0xff
                 valid = false
                 break
@@ -512,30 +505,74 @@ function scan_verify_cas9_prefix_raw_range!(
         end
         valid || continue
         if plus_first <= candidate_start <= plus_last &&
-                prefix_hash_scan_raw_code(raw[candidate_start + 21]) == 2 &&
-                prefix_hash_scan_raw_code(raw[candidate_start + 22]) == 2
+                prefix_hash_scan_raw_code(raw[candidate_start]) == 3 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 1]) == 3 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 2]) == 3 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 3]) != 3
             motif_candidates += 1
-            hash = prefix_hash_scan_raw_hash(raw, candidate_start, false)
+            hash = prefix_hash_scan_raw_hash_cas12a(raw, candidate_start, false)
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || evaluate_prefix_hash_scan_candidate!(
-                plus, raw, CAS9_D3_PREFIX_SCAN_GEOMETRY,
+                plus, raw, CAS12A_D3_PREFIX_SCAN_GEOMETRY,
                 candidate_start, mask, global_offset, dbi, false,
                 guides_, myers_profiles, distance, stats)
         end
         if minus_first <= candidate_start <= minus_last &&
-                prefix_hash_scan_raw_code(raw[candidate_start]) == 1 &&
-                prefix_hash_scan_raw_code(raw[candidate_start + 1]) == 1
+                prefix_hash_scan_raw_code(raw[candidate_start + 21]) != 0 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 22]) == 0 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 23]) == 0 &&
+                prefix_hash_scan_raw_code(raw[candidate_start + 24]) == 0
             motif_candidates += 1
-            hash = prefix_hash_scan_raw_hash(raw, candidate_start, true)
+            hash = prefix_hash_scan_raw_hash_cas12a(raw, candidate_start, true)
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || evaluate_prefix_hash_scan_candidate!(
-                minus, raw, CAS9_D3_PREFIX_SCAN_GEOMETRY,
+                minus, raw, CAS12A_D3_PREFIX_SCAN_GEOMETRY,
                 candidate_start, mask, global_offset, dbi, true,
                 guides_, myers_profiles, distance, stats)
         end
     end
-    if stats !== nothing
-        stats.motif_candidates += motif_candidates
-    end
+    stats !== nothing && (stats.motif_candidates += motif_candidates)
     return plus, minus
 end
+
+scan_prefix_hits(
+    ::PrefixScanGeometry{:cas9}, args...; kwargs...) =
+    scan_cas9_prefix_hits(args...; kwargs...)
+scan_prefix_hits(
+    ::PrefixScanGeometry{:cas12a}, args...; kwargs...) =
+    scan_cas12a_prefix_hits(args...; kwargs...)
+
+scan_prefix_hits_raw(
+    ::PrefixScanGeometry{:cas9}, args...; kwargs...) =
+    scan_cas9_prefix_hits_raw(args...; kwargs...)
+scan_prefix_hits_raw(
+    ::PrefixScanGeometry{:cas12a}, args...; kwargs...) =
+    scan_cas12a_prefix_hits_raw(args...; kwargs...)
+
+scan_prefix_hits_raw_range!(
+    ::PrefixScanGeometry{:cas9}, args...) =
+    scan_cas9_prefix_hits_raw_range!(args...)
+scan_prefix_hits_raw_range!(
+    ::PrefixScanGeometry{:cas12a}, args...) =
+    scan_cas12a_prefix_hits_raw_range!(args...)
+
+scan_prefix_hits_raw_range_bucketed!(
+    ::PrefixScanGeometry{:cas9}, args...) =
+    scan_cas9_prefix_hits_raw_range_bucketed!(args...)
+scan_prefix_hits_raw_range_bucketed!(
+    ::PrefixScanGeometry{:cas12a}, args...) =
+    scan_cas12a_prefix_hits_raw_range_bucketed!(args...)
+
+scan_prefix_hits_raw_range(
+    ::PrefixScanGeometry{:cas9}, args...) =
+    scan_cas9_prefix_hits_raw_range(args...)
+scan_prefix_hits_raw_range(
+    ::PrefixScanGeometry{:cas12a}, args...) =
+    scan_cas12a_prefix_hits_raw_range(args...)
+
+scan_verify_prefix_raw_range!(
+    ::PrefixScanGeometry{:cas9}, args...) =
+    scan_verify_cas9_prefix_raw_range!(args...)
+scan_verify_prefix_raw_range!(
+    ::PrefixScanGeometry{:cas12a}, args...) =
+    scan_verify_cas12a_prefix_raw_range!(args...)

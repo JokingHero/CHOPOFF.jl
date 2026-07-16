@@ -65,7 +65,7 @@ function load_benchmark_cases(distance::Int)
     cas9_guides_path = require_file(joinpath(SAMPLE_DIR, "guides.txt"))
     cas9_guides = LongDNA{4}.(sort(collect(Set(readlines(cas9_guides_path)))))
 
-    cas12a_genome = require_file(joinpath(SAMPLE_DIR, "genome", "semirandom.2bit"))
+    cas12a_genome = cas9_genome
     cas12a_guides = copy(CAS12A_GUIDES)
 
     selected = Set(split(lowercase(strip(get(ENV, "CHOPOFF_BENCH_CASES", "cas9,cas12a"))), ','))
@@ -200,6 +200,7 @@ function scan_stat_fields(stats)
             scan_bruteforce_guide_pairs = missing,
             scan_path_source = missing,
             scan_query_variant = missing,
+            scan_backend = missing,
             scan_query_build_s = missing,
             scan_path_load_s = missing,
             scan_query_hash_s = missing,
@@ -231,6 +232,7 @@ function scan_stat_fields(stats)
         scan_bruteforce_guide_pairs = stats.bruteforce_guide_pairs,
         scan_path_source = string(stats.path_source),
         scan_query_variant = string(stats.query_variant),
+        scan_backend = string(stats.scan_backend),
         scan_query_build_s = Float64(stats.query_build_ns) / 1e9,
         scan_path_load_s = Float64(stats.path_load_ns) / 1e9,
         scan_query_hash_s = Float64(stats.query_hash_ns) / 1e9,

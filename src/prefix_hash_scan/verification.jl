@@ -55,6 +55,7 @@ function build_prefix_hash_scan_myers_profiles(guides::Vector{LongDNA{4}})
 end
 
 @inline function prefix_hash_scan_raw_myers_distance(
+    ::PrefixScanGeometry{:cas9},
     profile::PrefixHashScanMyersProfile,
     raw::AbstractVector{UInt8},
     candidate_start::Int,
@@ -91,6 +92,49 @@ end
     end
     return min(best, distance + 1)
 end
+
+@inline function prefix_hash_scan_raw_myers_distance(
+    ::PrefixScanGeometry{:cas12a},
+    profile::PrefixHashScanMyersProfile,
+    raw::AbstractVector{UInt8},
+    candidate_start::Int,
+    is_antisense::Bool,
+    distance::Int)
+
+    pattern_length = Int(profile.length)
+    reference_length = pattern_length + distance
+    first_scored_prefix = pattern_length - distance
+    pv = typemax(UInt64)
+    mv = UInt64(0)
+    score = pattern_length
+    best = distance + 1
+
+    @inbounds for ref_idx in 1:reference_length
+        raw_idx = is_antisense ?
+            candidate_start + pattern_length - ref_idx :
+            candidate_start + 3 + ref_idx
+        mask = 1 <= raw_idx <= length(raw) ?
+            prefix_hash_scan_iupac_mask(raw[raw_idx]) : UInt8(0)
+        is_antisense && (mask = prefix_hash_scan_complement_mask(mask))
+        eq = profile.eq_by_iupac[Int(mask) + 1]
+        xv = eq | mv
+        xh = xor((eq & pv) + pv, pv) | eq
+        ph = mv | ~(xh | pv)
+        mh = pv & xh
+        ph & profile.final_bit != 0 && (score += 1)
+        mh & profile.final_bit != 0 && (score -= 1)
+        ph = (ph << 1) | UInt64(1)
+        mh <<= 1
+        pv = mh | ~(xv | ph)
+        mv = ph & xv
+        ref_idx >= first_scored_prefix && (best = min(best, score))
+    end
+    return min(best, distance + 1)
+end
+
+@inline prefix_hash_scan_raw_myers_distance(args...) =
+    prefix_hash_scan_raw_myers_distance(
+        CAS9_D3_PREFIX_SCAN_GEOMETRY, args...)
 
 function materialize_normalized_candidate(
     chrom_seq::LongDNA{4},
@@ -144,6 +188,38 @@ function materialize_normalized_candidate_cas9(
     return ot, candidate_start + candidate_last_offset
 end
 
+function materialize_normalized_candidate_cas12a(
+    chrom_seq::LongDNA{4},
+    candidate_start::Int,
+    dbi::DBInfo,
+    is_antisense::Bool)
+
+    distance = dbi.motif.distance
+    if is_antisense
+        extension_start = candidate_start - distance
+        if extension_start >= 1
+            ot = reverse_complement(
+                chrom_seq[extension_start:(candidate_start + 20)])
+        else
+            extension = getExt5(chrom_seq, candidate_start - 1, distance)
+            guide = chrom_seq[candidate_start:(candidate_start + 20)]
+            ot = reverse_complement(extension * guide)
+        end
+        return ot, candidate_start + 24
+    end
+
+    extension_end = candidate_start + 24 + distance
+    if extension_end <= length(chrom_seq)
+        ot = chrom_seq[(candidate_start + 4):extension_end]
+    else
+        guide = chrom_seq[(candidate_start + 4):(candidate_start + 24)]
+        extension = getExt3(
+            chrom_seq, length(chrom_seq), candidate_start + 25, distance)
+        ot = guide * extension
+    end
+    return ot, candidate_start
+end
+
 
 function materialize_normalized_candidate_cas9(
     raw::AbstractVector{UInt8},
@@ -191,10 +267,62 @@ function materialize_normalized_candidate_cas9(
     return ot, candidate_start + candidate_last_offset
 end
 
+function materialize_normalized_candidate_cas12a(
+    raw::AbstractVector{UInt8},
+    candidate_start::Int,
+    dbi::DBInfo,
+    is_antisense::Bool)
+
+    distance = dbi.motif.distance
+    n = length(raw)
+    if is_antisense
+        extension_start = candidate_start - distance
+        if extension_start >= 1
+            ot = reverse_complement(LongDNA{4}(
+                @view raw[extension_start:(candidate_start + 20)]))
+        else
+            available_end = candidate_start - 1
+            available = available_end >= 1 ?
+                LongDNA{4}(@view raw[1:available_end]) :
+                LongDNA{4}()
+            extension =
+                LongDNA{4}(repeat("-", distance - length(available))) * available
+            guide = LongDNA{4}(
+                @view raw[candidate_start:(candidate_start + 20)])
+            ot = reverse_complement(extension * guide)
+        end
+        return ot, candidate_start + 24
+    end
+
+    extension_end = candidate_start + 24 + distance
+    if extension_end <= n
+        ot = LongDNA{4}(@view raw[(candidate_start + 4):extension_end])
+    else
+        guide = LongDNA{4}(
+            @view raw[(candidate_start + 4):(candidate_start + 24)])
+        available_start = candidate_start + 25
+        available = available_start <= n ?
+            LongDNA{4}(@view raw[available_start:n]) :
+            LongDNA{4}()
+        extension = available * LongDNA{4}(repeat("-", distance - length(available)))
+        ot = guide * extension
+    end
+    return ot, candidate_start
+end
+
+materialize_normalized_candidate_specialized(
+    ::PrefixScanGeometry{:cas9}, args...) =
+    materialize_normalized_candidate_cas9(args...)
+
+materialize_normalized_candidate_specialized(
+    ::PrefixScanGeometry{:cas12a}, args...) =
+    materialize_normalized_candidate_cas12a(args...)
+
 function verify_prefix_hash_scan_bitmask_candidate!(
     out,
     chrom_seq,
     candidate_range::UnitRange{Int},
+    geometry::PrefixScanGeometry,
     dbi::DBInfo,
     is_antisense::Bool,
     candidate_mask::UInt64,
@@ -229,7 +357,7 @@ function verify_prefix_hash_scan_bitmask_candidate!(
                 stats.distance_calls += 1
             end
             dist = prefix_hash_scan_raw_myers_distance(
-                myers_profiles[guide_idx], chrom_seq, first(candidate_range),
+                geometry, myers_profiles[guide_idx], chrom_seq, first(candidate_range),
                 is_antisense, distance)
             if dist > distance
                 if stats !== nothing
@@ -240,8 +368,8 @@ function verify_prefix_hash_scan_bitmask_candidate!(
         elseif distance_first
             if isempty(ot)
                 materialize_start = time_ns()
-                ot, pos = materialize_normalized_candidate_cas9(
-                    chrom_seq, first(candidate_range), dbi, is_antisense)
+                ot, pos = materialize_normalized_candidate_specialized(
+                    geometry, chrom_seq, first(candidate_range), dbi, is_antisense)
                 if stats !== nothing
                     stats.candidate_materialize_ns += time_ns() - materialize_start
                 end
@@ -259,8 +387,8 @@ function verify_prefix_hash_scan_bitmask_candidate!(
         end
         if isempty(ot)
             materialize_start = time_ns()
-            ot, pos = materialize_normalized_candidate_cas9(
-                chrom_seq, first(candidate_range), dbi, is_antisense)
+            ot, pos = materialize_normalized_candidate_specialized(
+                geometry, chrom_seq, first(candidate_range), dbi, is_antisense)
             if stats !== nothing
                 stats.candidate_materialize_ns += time_ns() - materialize_start
             end
@@ -315,6 +443,7 @@ end
 function evaluate_prefix_hash_scan_candidate!(
     output::Vector{PrefixHashScanVerifiedHit},
     raw::AbstractVector{UInt8},
+    geometry::PrefixScanGeometry,
     candidate_start::Int,
     candidate_mask::UInt64,
     global_offset::Int,
@@ -342,7 +471,7 @@ function evaluate_prefix_hash_scan_candidate!(
             stats.distance_calls += 1
         end
         dist = prefix_hash_scan_raw_myers_distance(
-            myers_profiles[guide_idx], raw, candidate_start,
+            geometry, myers_profiles[guide_idx], raw, candidate_start,
             is_antisense, distance)
         if dist > distance
             if stats !== nothing
@@ -353,8 +482,8 @@ function evaluate_prefix_hash_scan_candidate!(
 
         if isempty(ot)
             materialize_start = prefix_hash_scan_timer(stats)
-            ot, local_pos = materialize_normalized_candidate_cas9(
-                raw, candidate_start, dbi, is_antisense)
+            ot, local_pos = materialize_normalized_candidate_specialized(
+                geometry, raw, candidate_start, dbi, is_antisense)
             if stats !== nothing
                 stats.candidate_materialize_ns +=
                     time_ns() - materialize_start
@@ -394,6 +523,7 @@ end
 function evaluate_prefix_hash_scan_hits!(
     output::Vector{PrefixHashScanVerifiedHit},
     raw::AbstractVector{UInt8},
+    geometry::PrefixScanGeometry,
     hits::Vector{PrefixHashScanHit},
     global_offset::Int,
     dbi::DBInfo,
@@ -405,7 +535,7 @@ function evaluate_prefix_hash_scan_hits!(
 
     for hit in hits
         evaluate_prefix_hash_scan_candidate!(
-            output, raw, hit.start, hit.mask, global_offset, dbi,
+            output, raw, geometry, hit.start, hit.mask, global_offset, dbi,
             is_antisense, guides_, myers_profiles, distance, stats)
     end
     return output

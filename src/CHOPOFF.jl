@@ -288,7 +288,7 @@ function parse_commandline(args::Array{String})
             help = "vcfDB is a specialized database to handle .vcf files and personalized off-target search."
         "prefixHashScan"
             action = :command
-            help = "Search a FASTA reference directly with the optimized Cas9 distance-3 prefix scan."
+            help = "Search a FASTA reference directly with optimized Cas9 or Cas12a distance-3 prefix scans."
         "sassy"
             action = :command
             help = "Search directly using Sassy (Myers bit-parallel) algorithm."
@@ -347,6 +347,10 @@ function parse_commandline(args::Array{String})
             help = "Path to an indexed FASTA reference."
             arg_type = String
             required = true
+        "--motif"
+            help = "Specialized scan motif: Cas9 or Cas12a."
+            arg_type = String
+            default = "Cas9"
         "--early_stopping"
             help = "Input four early stopping limits for distances 0 through 3."
             arg_type = Int
@@ -569,6 +573,7 @@ function main(args::Array{String})
                 guides,
                 scan_args["genome"],
                 args["output"];
+                motif = scan_args["motif"],
                 early_stopping = early_stopping,
                 verbose = true,
             )

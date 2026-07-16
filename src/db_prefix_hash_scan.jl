@@ -1,13 +1,40 @@
 using SIMD
 
-struct PrefixScanGeometry
+struct PrefixScanGeometry{Kind}
     guide_bases::Int
     pam_bases::Int
     prefix_bases::Int
     distance::Int
 end
 
-const CAS9_D3_PREFIX_SCAN_GEOMETRY = PrefixScanGeometry(20, 3, 16, 3)
+const CAS9_D3_PREFIX_SCAN_GEOMETRY =
+    PrefixScanGeometry{:cas9}(20, 3, 16, 3)
+const CAS12A_D3_PREFIX_SCAN_GEOMETRY =
+    PrefixScanGeometry{:cas12a}(21, 4, 16, 3)
+
+@inline prefix_scan_kind(::PrefixScanGeometry{Kind}) where Kind = Kind
+
+function matches_prefix_scan_motif(motif::Motif, name::String)
+    template = Motif(name)
+    return motif.fwd == template.fwd &&
+        motif.rve == template.rve &&
+        motif.pam_loci_fwd == template.pam_loci_fwd &&
+        motif.pam_loci_rve == template.pam_loci_rve &&
+        motif.extends5 == template.extends5 &&
+        motif.ambig_max == 0
+end
+
+function resolve_prefix_scan_geometry(
+    motif::Motif, distance::Int, hash_len::Int)
+
+    distance == 3 || return nothing
+    1 <= hash_len <= 16 || return nothing
+    matches_prefix_scan_motif(motif, "Cas9") &&
+        return CAS9_D3_PREFIX_SCAN_GEOMETRY
+    hash_len == 16 && matches_prefix_scan_motif(motif, "Cas12a") &&
+        return CAS12A_D3_PREFIX_SCAN_GEOMETRY
+    return nothing
+end
 
 @inline prefix_scan_candidate_bases(geometry::PrefixScanGeometry) =
     geometry.guide_bases + geometry.pam_bases
@@ -162,15 +189,17 @@ end
 
 include("prefix_hash_scan/query.jl")
 include("prefix_hash_scan/verification.jl")
+include("prefix_hash_scan/kernel_common.jl")
 include("prefix_hash_scan/cas9.jl")
+include("prefix_hash_scan/cas12a.jl")
 include("prefix_hash_scan/streaming.jl")
 
 """
     search_prefixHashScan(guides, genome_path, motif, output_file; kwargs...)
 
-Indexless prototype that reuses prefixHashDB's symbolic edit-distance prefix
-paths on the query side, scans motif-compatible genome candidates directly, and
-exact-verifies candidate hits with `align`.
+Indexless search that reuses prefixHashDB's symbolic edit-distance prefix paths.
+Standard Cas9 and Cas12a distance-3/prefix-16 motifs use separate specialized
+scan kernels; other configurations use the generic legacy engine.
 """
 function search_prefixHashScan(
     guides::Vector{LongDNA{4}},
@@ -232,12 +261,11 @@ function search_prefixHashScan(
         :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd,
         :streaming_fasta_simd, :streaming_fasta_simd_fused) ||
         error("scan_backend must be :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd, :streaming_fasta_simd, or :streaming_fasta_simd_fused.")
-    geometry = CAS9_D3_PREFIX_SCAN_GEOMETRY
-    supports_fused = distance == geometry.distance &&
-        resolved_query_variant == :bitmask64 &&
-        is_cas9_prefix_hash_candidate(dbi, hash_len)
+    geometry = resolve_prefix_scan_geometry(motif, distance, hash_len)
+    supports_fused = geometry !== nothing &&
+        resolved_query_variant == :bitmask64
     supports_fasta_simd = supports_fused && dbi.gi.is_fa &&
-        hash_len == geometry.prefix_bases &&
+        hash_len == (geometry::PrefixScanGeometry).prefix_bases &&
         can_use_prefix_hash_scan_simd()
     resolved_scan_backend = if scan_backend == :auto
         supports_fasta_simd ? :streaming_fasta_simd :
@@ -246,7 +274,7 @@ function search_prefixHashScan(
         scan_backend
     end
     if resolved_scan_backend != :legacy && !supports_fused
-        error("Fused scan backends require Cas9 distance 3, hash_len <= 16, and at most 64 guides.")
+        error("Fused scan backends require a supported Cas9 or Cas12a distance-3 geometry and at most 64 guides.")
     end
     if resolved_scan_backend in (
             :fused_fasta_simd, :streaming_fasta_simd,
@@ -258,7 +286,7 @@ function search_prefixHashScan(
         resolved_scan_backend == :streaming_fasta_simd &&
             prefilter_bits != 0 && bucket_bases == 11 &&
             stream_chunk_bases + prefix_scan_candidate_last_offset(
-                CAS9_D3_PREFIX_SCAN_GEOMETRY) + distance <= typemax(UInt32) ?
+                geometry::PrefixScanGeometry) + distance <= typemax(UInt32) ?
             :bucketed : :inline
     else
         lookup_variant
@@ -271,7 +299,7 @@ function search_prefixHashScan(
         bucket_bases == 11 ||
             error("lookup_variant=:bucketed currently requires bucket_bases=11.")
         stream_chunk_bases + prefix_scan_candidate_last_offset(
-            CAS9_D3_PREFIX_SCAN_GEOMETRY) + distance <= typemax(UInt32) ||
+            geometry::PrefixScanGeometry) + distance <= typemax(UInt32) ||
             error("lookup_variant=:bucketed requires chunks smaller than 4 GiB.")
     end
     if verify_variant == :myers_raw &&
@@ -294,6 +322,7 @@ function search_prefixHashScan(
             :chunk : :record
         @info(
             "prefixHashScan execution",
+            scan_geometry = geometry === nothing ? :generic : prefix_scan_kind(geometry),
             scan_backend = resolved_scan_backend,
             lookup_variant = resolved_lookup_variant,
             query_build_backend = resolved_query_build_backend,
@@ -349,7 +378,7 @@ function search_prefixHashScan(
     candidate_guides = Int[]
     use_bruteforce_query = resolved_query_variant == :bruteforce
     use_bitmask_query = query isa PrefixHashScanBitmaskQuery
-    use_direct_cas9_hash = is_cas9_prefix_hash_candidate(dbi, hash_len)
+    use_direct_specialized_hash = geometry !== nothing
     use_fused_scan = resolved_scan_backend in (
         :fused_dict, :fused_directory, :fused_fasta_simd,
         :streaming_fasta_simd, :streaming_fasta_simd_fused)
@@ -369,6 +398,7 @@ function search_prefixHashScan(
                 :streaming_fasta_simd, :streaming_fasta_simd_fused)
             scan_start = prefix_hash_scan_timer(stats)
             chunk_results, chrom_chunk_ranges = stream_prefix_hash_scan(
+                geometry::PrefixScanGeometry,
                 dbi.gi.filepath,
                 reference_lengths,
                 query,
@@ -432,8 +462,9 @@ function search_prefixHashScan(
                         stats.record_io_ns += record_io_ns
                         stats.chrom_load_ns += record_io_ns
                     end
-                    plus_hits, minus_hits = scan_cas9_prefix_hits_raw(
-                        raw, dbi, query, stats; scan_threads = scan_threads)
+                    plus_hits, minus_hits = scan_prefix_hits_raw(
+                        geometry::PrefixScanGeometry, raw, dbi, query, stats;
+                        scan_threads = scan_threads)
                     for (is_antisense, hits) in ((false, plus_hits), (true, minus_hits))
                         if stats !== nothing
                             stats.prefix_hits += length(hits)
@@ -445,7 +476,8 @@ function search_prefixHashScan(
                                 out,
                                 raw,
                                 hit.start:(hit.start + prefix_scan_candidate_last_offset(
-                                    CAS9_D3_PREFIX_SCAN_GEOMETRY)),
+                                    geometry::PrefixScanGeometry)),
+                                geometry::PrefixScanGeometry,
                                 dbi,
                                 is_antisense,
                                 hit.mask,
@@ -478,8 +510,9 @@ function search_prefixHashScan(
                 end
 
                 if use_fused_scan
-                    plus_hits, minus_hits = scan_cas9_prefix_hits(
-                        chrom_seq, dbi, query, hash_len, stats; scan_threads = scan_threads)
+                    plus_hits, minus_hits = scan_prefix_hits(
+                        geometry::PrefixScanGeometry, chrom_seq, dbi, query,
+                        hash_len, stats; scan_threads = scan_threads)
                     for (is_antisense, hits) in ((false, plus_hits), (true, minus_hits))
                         if stats !== nothing
                             stats.prefix_hits += length(hits)
@@ -488,11 +521,12 @@ function search_prefixHashScan(
                         for hit in hits
                             candidate_range = hit.start:(hit.start +
                                 prefix_scan_candidate_last_offset(
-                                    CAS9_D3_PREFIX_SCAN_GEOMETRY))
+                                    geometry::PrefixScanGeometry))
                             verify_prefix_hash_scan_bitmask_candidate!(
                                 out,
                                 chrom_seq,
                                 candidate_range,
+                                geometry::PrefixScanGeometry,
                                 dbi,
                                 is_antisense,
                                 hit.mask,
@@ -532,8 +566,10 @@ function search_prefixHashScan(
                             has_candidate_guides = guide_count != 0
                         else
                             hash_start = time_ns()
-                            if use_direct_cas9_hash
-                                hashes = candidate_prefix_hashes_direct_cas9(chrom_seq, candidate_range, is_antisense, hash_len, hash_type)
+                            if use_direct_specialized_hash
+                                hashes = candidate_prefix_hashes_direct(
+                                    geometry::PrefixScanGeometry, chrom_seq,
+                                    candidate_range, is_antisense, hash_len, hash_type)
                             else
                                 hashes = nothing
                             end
@@ -744,27 +780,32 @@ end
 
 """
     search_prefixHashScan(guides, genome_path, output_file;
+        motif="Cas9",
         early_stopping=fill(1_000_000, 4), scan_threads=Threads.nthreads(),
         verbose=false)
 
-Search a FASTA reference directly for Cas9 off-targets at edit distance 3. This
-supported entrypoint accepts 1-64 unambiguous 20-base guides and requires the
-standard FASTA `.fai` index. Candidate guide/PAM windows containing non-ACGT
-bases are skipped.
+Search an indexed FASTA reference directly for Cas9 or Cas12a off-targets at
+edit distance 3. This supported entrypoint accepts 1-64 unambiguous guides of
+the selected motif's standard length. Candidate guide/PAM windows containing
+non-ACGT bases are skipped.
 """
 function search_prefixHashScan(
     guides::Vector{LongDNA{4}},
     genome_path::String,
     output_file::String;
+    motif::Union{String, Motif} = "Cas9",
     early_stopping::Vector{Int} = fill(1_000_000, 4),
     scan_threads::Int = Threads.nthreads(),
     verbose::Bool = false)
 
-    geometry = CAS9_D3_PREFIX_SCAN_GEOMETRY
+    motif_ = motif isa String ? Motif(motif; distance = 3) : setdist(motif, 3)
+    geometry = resolve_prefix_scan_geometry(motif_, 3, 16)
+    geometry === nothing &&
+        error("search_prefixHashScan supports only standard Cas9 or Cas12a motifs.")
     1 <= length(guides) <= 64 ||
         error("search_prefixHashScan supports 1-64 guides per search.")
     all(==(geometry.guide_bases), length.(guides)) ||
-        error("search_prefixHashScan requires 20-base Cas9 guides.")
+        error("search_prefixHashScan requires $(geometry.guide_bases)-base $(prefix_scan_kind(geometry)) guides.")
     any(isambig.(guides)) &&
         error("search_prefixHashScan does not support ambiguous query guides.")
     length(early_stopping) == geometry.distance + 1 ||
@@ -772,11 +813,10 @@ function search_prefixHashScan(
     is_fasta(genome_path) ||
         error("search_prefixHashScan currently requires a FASTA reference.")
 
-    motif = setdist(Motif("Cas9"), geometry.distance)
     return search_prefixHashScan(
         guides,
         genome_path,
-        motif,
+        motif_,
         output_file;
         distance = geometry.distance,
         hash_len = geometry.prefix_bases,

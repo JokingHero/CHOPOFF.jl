@@ -295,12 +295,11 @@ function dna_twobit_complement_base(base)
 end
 
 function is_cas9_prefix_hash_candidate(dbi::DBInfo, hash_len::Int)
-    cas9 = Motif("Cas9")
-    return hash_len <= 16 &&
-        length_noPAM(dbi.motif) == length_noPAM(cas9) &&
-        dbi.motif.extends5 == cas9.extends5 &&
-        dbi.motif.pam_loci_fwd == cas9.pam_loci_fwd &&
-        dbi.motif.pam_loci_rve == cas9.pam_loci_rve
+    return hash_len <= 16 && matches_prefix_scan_motif(dbi.motif, "Cas9")
+end
+
+function is_cas12a_prefix_hash_candidate(dbi::DBInfo, hash_len::Int)
+    return hash_len == 16 && matches_prefix_scan_motif(dbi.motif, "Cas12a")
 end
 
 function candidate_prefix_hashes_direct_cas9(
@@ -329,6 +328,40 @@ function candidate_prefix_hashes_direct_cas9(
     end
     return hash_type[h]
 end
+
+function candidate_prefix_hashes_direct_cas12a(
+    chrom_seq::LongDNA{4},
+    candidate_range::UnitRange{Int64},
+    is_antisense::Bool,
+    hash_len::Int,
+    hash_type::Type{<:Unsigned})
+
+    h = zero(hash_type)
+    if is_antisense
+        start_pos = first(candidate_range) + 20
+        @inbounds for pos in start_pos:-1:(start_pos - hash_len + 1)
+            code = dna_twobit_complement_base(chrom_seq[pos])
+            code === nothing && return nothing
+            h = (h << 2) | convert(hash_type, code)
+        end
+    else
+        start_pos = first(candidate_range) + 4
+        @inbounds for pos in start_pos:(start_pos + hash_len - 1)
+            code = dna_twobit_base(chrom_seq[pos])
+            code === nothing && return nothing
+            h = (h << 2) | convert(hash_type, code)
+        end
+    end
+    return hash_type[h]
+end
+
+candidate_prefix_hashes_direct(
+    ::PrefixScanGeometry{:cas9}, args...) =
+    candidate_prefix_hashes_direct_cas9(args...)
+
+candidate_prefix_hashes_direct(
+    ::PrefixScanGeometry{:cas12a}, args...) =
+    candidate_prefix_hashes_direct_cas12a(args...)
 
 function append_prefix_hash_scan_guides!(candidate_guides::Vector{Int}, query::Dict, hashes)
     empty!(candidate_guides)

@@ -118,6 +118,7 @@ function read_prefix_hash_scan_fasta_range!(
 end
 
 function stream_prefix_hash_scan_chunk(
+    geometry::PrefixScanGeometry,
     io,
     buffer::Vector{UInt8},
     index::FASTA.Index,
@@ -136,8 +137,7 @@ function stream_prefix_hash_scan_chunk(
     plus::Vector{PrefixHashScanVerifiedHit} = PrefixHashScanVerifiedHit[],
     minus::Vector{PrefixHashScanVerifiedHit} = PrefixHashScanVerifiedHit[]) where {M, S}
 
-    candidate_last_offset = prefix_scan_candidate_last_offset(
-        CAS9_D3_PREFIX_SCAN_GEOMETRY)
+    candidate_last_offset = prefix_scan_candidate_last_offset(geometry)
     read_first = max(1, work.core_first - distance)
     read_last = min(
         chromosome_length, work.core_last + candidate_last_offset + distance)
@@ -154,7 +154,8 @@ function stream_prefix_hash_scan_chunk(
     local_last = work.core_last - read_first + 1
     global_offset = read_first - 1
     if M === :fused
-        scan_verify_cas9_prefix_raw_range!(
+        scan_verify_prefix_raw_range!(
+            geometry,
             plus,
             minus,
             raw,
@@ -174,7 +175,8 @@ function stream_prefix_hash_scan_chunk(
         )
     else
         if M === :buffered_reuse
-            motif_candidates = scan_cas9_prefix_hits_raw_range!(
+            motif_candidates = scan_prefix_hits_raw_range!(
+                geometry,
                 scratch_plus_hits,
                 scratch_minus_hits,
                 raw,
@@ -189,7 +191,8 @@ function stream_prefix_hash_scan_chunk(
             plus_hits = scratch_plus_hits
             minus_hits = scratch_minus_hits
         elseif M === :bucketed_reuse
-            motif_candidates = scan_cas9_prefix_hits_raw_range_bucketed!(
+            motif_candidates = scan_prefix_hits_raw_range_bucketed!(
+                geometry,
                 scratch_plus_hits,
                 scratch_minus_hits,
                 lookup_scratch.plus_candidates,
@@ -210,7 +213,8 @@ function stream_prefix_hash_scan_chunk(
             minus_hits = scratch_minus_hits
         else
             plus_hits, minus_hits, motif_candidates =
-                scan_cas9_prefix_hits_raw_range(
+                scan_prefix_hits_raw_range(
+                    geometry,
                     raw,
                     query,
                     local_first,
@@ -225,16 +229,17 @@ function stream_prefix_hash_scan_chunk(
             stats.motif_candidates += motif_candidates
         end
         evaluate_prefix_hash_scan_hits!(
-            plus, raw, plus_hits, global_offset, dbi, false,
+            plus, raw, geometry, plus_hits, global_offset, dbi, false,
             guides_, myers_profiles, distance, stats)
         evaluate_prefix_hash_scan_hits!(
-            minus, raw, minus_hits, global_offset, dbi, true,
+            minus, raw, geometry, minus_hits, global_offset, dbi, true,
             guides_, myers_profiles, distance, stats)
     end
     return PrefixHashScanChromResult(plus, minus, stats)
 end
 
 function stream_prefix_hash_scan_chromosome(
+    geometry::PrefixScanGeometry,
     io,
     buffer::Vector{UInt8},
     index::FASTA.Index,
@@ -254,26 +259,28 @@ function stream_prefix_hash_scan_chromosome(
 
     plus = PrefixHashScanVerifiedHit[]
     minus = PrefixHashScanVerifiedHit[]
-    last_candidate = chromosome_length - prefix_scan_candidate_last_offset(
-        CAS9_D3_PREFIX_SCAN_GEOMETRY)
+    last_candidate =
+        chromosome_length - prefix_scan_candidate_last_offset(geometry)
     for core_first in 1:chunk_bases:last_candidate
         work = PrefixHashScanChunkWork(
             chrom_idx, core_first, min(core_first + chunk_bases - 1, last_candidate))
         stream_prefix_hash_scan_chunk(
-            io, buffer, index, work, chromosome_length, query, dbi, guides_,
+            geometry, io, buffer, index, work, chromosome_length, query, dbi, guides_,
             myers_profiles, distance, scratch_plus_hits, scratch_minus_hits,
             lookup_scratch, mode, stats, plus, minus)
     end
     return PrefixHashScanChromResult(plus, minus, stats)
 end
 
-function prefix_hash_scan_chunk_work(reference_lengths, chunk_bases::Int)
+function prefix_hash_scan_chunk_work(
+    reference_lengths, chunk_bases::Int,
+    geometry::PrefixScanGeometry = CAS9_D3_PREFIX_SCAN_GEOMETRY)
     work = PrefixHashScanChunkWork[]
     chrom_chunk_ranges = Vector{UnitRange{Int}}(undef, length(reference_lengths))
     for chrom_idx in eachindex(reference_lengths)
         range_first = length(work) + 1
         last_candidate = reference_lengths[chrom_idx] -
-            prefix_scan_candidate_last_offset(CAS9_D3_PREFIX_SCAN_GEOMETRY)
+            prefix_scan_candidate_last_offset(geometry)
         for core_first in 1:chunk_bases:last_candidate
             push!(work, PrefixHashScanChunkWork(
                 chrom_idx,
@@ -287,6 +294,7 @@ function prefix_hash_scan_chunk_work(reference_lengths, chunk_bases::Int)
 end
 
 function stream_prefix_hash_scan(
+    geometry::PrefixScanGeometry,
     genome_path::String,
     reference_lengths,
     query,
@@ -303,7 +311,7 @@ function stream_prefix_hash_scan(
     index = FASTA.Index(genome_path * ".fai")
     if Scheduler === :chunk
         work, chrom_chunk_ranges = prefix_hash_scan_chunk_work(
-            reference_lengths, chunk_bases)
+            reference_lengths, chunk_bases, geometry)
     elseif Scheduler === :chromosome
         work = collect(eachindex(reference_lengths))
         chrom_chunk_ranges = [idx:idx for idx in eachindex(reference_lengths)]
@@ -329,14 +337,14 @@ function stream_prefix_hash_scan(
                     if Scheduler === :chunk
                         item = work[work_idx]
                         results[work_idx] = stream_prefix_hash_scan_chunk(
-                            io, buffer, index, item,
+                            geometry, io, buffer, index, item,
                             reference_lengths[item.chrom_idx], query, dbi,
                             guides_, myers_profiles, distance, scratch_plus_hits,
                             scratch_minus_hits, lookup_scratch, mode, worker_stats)
                     else
                         chrom_idx = work[work_idx]
                         results[work_idx] = stream_prefix_hash_scan_chromosome(
-                            io, buffer, index, chrom_idx,
+                            geometry, io, buffer, index, chrom_idx,
                             reference_lengths[chrom_idx], query, dbi, guides_,
                             myers_profiles, distance, chunk_bases,
                             scratch_plus_hits, scratch_minus_hits, lookup_scratch,
@@ -352,3 +360,6 @@ function stream_prefix_hash_scan(
     return results, chrom_chunk_ranges
 end
 
+stream_prefix_hash_scan(genome_path::String, args...) =
+    stream_prefix_hash_scan(
+        CAS9_D3_PREFIX_SCAN_GEOMETRY, genome_path, args...)
