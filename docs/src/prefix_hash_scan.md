@@ -5,21 +5,26 @@ CollapsedDocStrings = true
 # prefixHashScan search
 
 `search_prefixHashScan` searches an indexed FASTA reference directly without
-building a CHOPOFF genome database. Separate Cas9 and Cas12a distance-3 kernels
-amortize one genome scan across all supplied guides.
+building a CHOPOFF genome database. Separate Cas9 and Cas12a kernels serve edit
+distances 0 through 4 and amortize one genome scan across all supplied guides.
 
 ## Supported configuration
 
 - 1-64 unambiguous guides;
 - Cas9: 20-base guide with an `NGG` PAM;
 - Cas12a: 21-base guide with a `TTTV` PAM;
-- edit distance 3;
+- edit distance 0, 1, 2, 3, or 4;
 - 16-base symbolic prefix filter;
 - FASTA reference with a standard `.fai` index;
 - strict ACGT candidate windows.
 
 Any candidate whose complete 23-base Cas9 or 25-base Cas12a guide/PAM window
 contains a non-ACGT base is skipped. Ambiguous query guides are rejected.
+
+Distance 4 is the supported upper-bound and benchmarking mode, not a tuned
+fast path. Its p16 query is substantially larger than d0-d3; a 61-guide Cas9
+query on the development host took 10.8 seconds to build, occupied 1.09 GB, and
+reached 4.51 GB peak process RSS.
 
 ## API
 
@@ -39,6 +44,7 @@ search_prefixHashScan(
     guides,
     "genome.fa",
     "offtargets.csv";
+    distance = 2,
     scan_threads = Threads.nthreads(),
     verbose = true,
 )
@@ -49,6 +55,7 @@ search_prefixHashScan(
     "genome.fa",
     "cas12a_offtargets.csv";
     motif = "Cas12a",
+    distance = 1,
 )
 ```
 
@@ -63,7 +70,7 @@ enable hot-loop statistics.
 ## Command-line usage
 
 ```bash
-CHOPOFF search --distance 3 \
+CHOPOFF search --distance 4 \
   --guides guides.txt \
   --output offtargets.csv \
   prefixHashScan --genome genome.fa --motif Cas12a
@@ -74,7 +81,8 @@ thread count, for example `JULIA_NUM_THREADS=12`.
 
 ## Implementation boundary
 
-The three-argument method defaults to Cas9 and accepts `motif="Cas12a"`. The
-four-argument `Motif` method supports both standard geometries; its tuning
-keywords and generic legacy fallback remain experimental. Geometry dispatch
-happens before separate Cas9 and Cas12a hot loops.
+The three-argument method defaults to Cas9/distance 3 and accepts
+`motif="Cas12a"` plus `distance=0:4`. The four-argument `Motif` method supports
+both standard geometries; its tuning keywords and generic legacy fallback
+remain experimental. Geometry dispatch happens before separate Cas9 and
+Cas12a hot loops.

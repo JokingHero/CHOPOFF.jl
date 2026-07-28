@@ -27,12 +27,12 @@ end
 function resolve_prefix_scan_geometry(
     motif::Motif, distance::Int, hash_len::Int)
 
-    distance == 3 || return nothing
+    distance in 0:4 || return nothing
     1 <= hash_len <= 16 || return nothing
     matches_prefix_scan_motif(motif, "Cas9") &&
-        return CAS9_D3_PREFIX_SCAN_GEOMETRY
+        return PrefixScanGeometry{:cas9}(20, 3, 16, distance)
     hash_len == 16 && matches_prefix_scan_motif(motif, "Cas12a") &&
-        return CAS12A_D3_PREFIX_SCAN_GEOMETRY
+        return PrefixScanGeometry{:cas12a}(21, 4, 16, distance)
     return nothing
 end
 
@@ -198,8 +198,8 @@ include("prefix_hash_scan/streaming.jl")
     search_prefixHashScan(guides, genome_path, motif, output_file; kwargs...)
 
 Indexless search that reuses prefixHashDB's symbolic edit-distance prefix paths.
-Standard Cas9 and Cas12a distance-3/prefix-16 motifs use separate specialized
-scan kernels; other configurations use the generic legacy engine.
+Standard Cas9 and Cas12a distance-0-through-4/prefix-16 motifs use separate
+specialized scan kernels; other configurations use the generic legacy engine.
 """
 function search_prefixHashScan(
     guides::Vector{LongDNA{4}},
@@ -274,7 +274,7 @@ function search_prefixHashScan(
         scan_backend
     end
     if resolved_scan_backend != :legacy && !supports_fused
-        error("Fused scan backends require a supported Cas9 or Cas12a distance-3 geometry and at most 64 guides.")
+        error("Fused scan backends require a supported Cas9 or Cas12a distance-0-through-4 geometry and at most 64 guides.")
     end
     if resolved_scan_backend in (
             :fused_fasta_simd, :streaming_fasta_simd,
@@ -781,11 +781,12 @@ end
 """
     search_prefixHashScan(guides, genome_path, output_file;
         motif="Cas9",
-        early_stopping=fill(1_000_000, 4), scan_threads=Threads.nthreads(),
+        distance=3, early_stopping=fill(1_000_000, distance + 1),
+        scan_threads=Threads.nthreads(),
         verbose=false)
 
 Search an indexed FASTA reference directly for Cas9 or Cas12a off-targets at
-edit distance 3. This supported entrypoint accepts 1-64 unambiguous guides of
+edit distances 0 through 4. This supported entrypoint accepts 1-64 unambiguous guides of
 the selected motif's standard length. Candidate guide/PAM windows containing
 non-ACGT bases are skipped.
 """
@@ -794,14 +795,16 @@ function search_prefixHashScan(
     genome_path::String,
     output_file::String;
     motif::Union{String, Motif} = "Cas9",
-    early_stopping::Vector{Int} = fill(1_000_000, 4),
+    distance::Int = 3,
+    early_stopping::Vector{Int} = fill(1_000_000, distance + 1),
     scan_threads::Int = Threads.nthreads(),
     verbose::Bool = false)
 
-    motif_ = motif isa String ? Motif(motif; distance = 3) : setdist(motif, 3)
-    geometry = resolve_prefix_scan_geometry(motif_, 3, 16)
+    motif_ = motif isa String ? Motif(motif; distance = distance) :
+        setdist(motif, distance)
+    geometry = resolve_prefix_scan_geometry(motif_, distance, 16)
     geometry === nothing &&
-        error("search_prefixHashScan supports only standard Cas9 or Cas12a motifs.")
+        error("search_prefixHashScan supports only standard Cas9 or Cas12a motifs at distances 0 through 4.")
     1 <= length(guides) <= 64 ||
         error("search_prefixHashScan supports 1-64 guides per search.")
     all(==(geometry.guide_bases), length.(guides)) ||
@@ -809,7 +812,7 @@ function search_prefixHashScan(
     any(isambig.(guides)) &&
         error("search_prefixHashScan does not support ambiguous query guides.")
     length(early_stopping) == geometry.distance + 1 ||
-        error("Specify one early stopping condition for each distance from 0 to 3.")
+        error("Specify one early stopping condition for each distance from 0 to $distance.")
     is_fasta(genome_path) ||
         error("search_prefixHashScan currently requires a FASTA reference.")
 

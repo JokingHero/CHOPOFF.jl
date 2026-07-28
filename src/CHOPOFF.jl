@@ -288,7 +288,7 @@ function parse_commandline(args::Array{String})
             help = "vcfDB is a specialized database to handle .vcf files and personalized off-target search."
         "prefixHashScan"
             action = :command
-            help = "Search a FASTA reference directly with optimized Cas9 or Cas12a distance-3 prefix scans."
+            help = "Search a FASTA reference directly with optimized Cas9 or Cas12a distance-0-through-4 prefix scans."
         "sassy"
             action = :command
             help = "Search directly using Sassy (Myers bit-parallel) algorithm."
@@ -352,7 +352,7 @@ function parse_commandline(args::Array{String})
             arg_type = String
             default = "Cas9"
         "--early_stopping"
-            help = "Input four early stopping limits for distances 0 through 3."
+            help = "Input one early stopping limit for each distance from 0 through the requested distance."
             arg_type = Int
             nargs = '*'
             required = false
@@ -564,17 +564,19 @@ function main(args::Array{String})
                     early_stopping = repeat([1000000], args["distance"] + 1))
             end
         elseif args["%COMMAND%"] == "prefixHashScan"
-            args["distance"] == 3 ||
-                error("prefixHashScan currently supports only distance 3.")
+            args["distance"] in 0:4 ||
+                error("prefixHashScan supports distances 0 through 4.")
             scan_args = args["prefixHashScan"]
             early_stopping = isempty(scan_args["early_stopping"]) ?
-                fill(1_000_000, 4) : scan_args["early_stopping"]
+                fill(1_000_000, args["distance"] + 1) :
+                scan_args["early_stopping"]
             search_prefixHashScan(
                 guides,
                 scan_args["genome"],
                 args["output"];
                 motif = scan_args["motif"],
                 early_stopping = early_stopping,
+                distance = args["distance"],
                 verbose = true,
             )
         elseif args["%COMMAND%"] == "sassy"

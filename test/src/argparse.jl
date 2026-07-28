@@ -82,6 +82,20 @@ using BioSequences
         @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(cas12a_args)
         @test read(cas12a_actual) == read(cas12a_expected)
 
+
+        cas12a_d1_expected = joinpath(tdir, "cas12a_d1_expected.csv")
+        cas12a_d1_actual = joinpath(tdir, "cas12a_d1_actual.csv")
+        search_prefixHashScan(
+            [LongDNA{4}(cas12a_guide)], cas12a_genome, cas12a_d1_expected;
+            motif = "Cas12a", distance = 1)
+        cas12a_d1_args = [
+            "search", "--distance", "1", "--guides", cas12a_guides_path,
+            "--output", cas12a_d1_actual, "prefixHashScan",
+            "--genome", cas12a_genome, "--motif", "Cas12a",
+        ]
+        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+            cas12a_d1_args)
+        @test read(cas12a_d1_actual) == read(cas12a_d1_expected)
         sassy_args = [
             "search", "--guides", guides_path, "--output", actual,
             "sassy", "--genome", genome, "--motif", "Cas9",
@@ -94,8 +108,34 @@ using BioSequences
         ]
         @test_throws ErrorException CHOPOFF.main(missing_database)
 
-        wrong_distance = [
+        distance_two_expected = joinpath(tdir, "distance_two_expected.csv")
+        distance_two_actual = joinpath(tdir, "distance_two_actual.csv")
+        search_prefixHashScan(
+            guides, genome, distance_two_expected; distance = 2)
+        distance_two = [
             "search", "--distance", "2", "--guides", guides_path,
+            "--output", distance_two_actual,
+            "prefixHashScan", "--genome", genome,
+        ]
+        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+            distance_two)
+        @test read(distance_two_actual) == read(distance_two_expected)
+
+        distance_four_expected = joinpath(tdir, "distance_four_expected.csv")
+        distance_four_actual = joinpath(tdir, "distance_four_actual.csv")
+        search_prefixHashScan(
+            guides, genome, distance_four_expected; distance = 4)
+        distance_four = [
+            "search", "--distance", "4", "--guides", guides_path,
+            "--output", distance_four_actual,
+            "prefixHashScan", "--genome", genome,
+        ]
+        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+            distance_four)
+        @test read(distance_four_actual) == read(distance_four_expected)
+
+        wrong_distance = [
+            "search", "--distance", "5", "--guides", guides_path,
             "--output", actual, "prefixHashScan", "--genome", genome,
         ]
         @test_throws ErrorException CHOPOFF.main(wrong_distance)

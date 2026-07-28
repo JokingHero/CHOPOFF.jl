@@ -92,11 +92,28 @@ end
             [(2, 1, 1), (3, 1, 2)]
     end
 
-    @testset "supported Cas9 distance-3 API" begin
+    @testset "production Cas9 distance geometries" begin
+        for distance in 0:4
+            resolved = CHOPOFF.resolve_prefix_scan_geometry(
+                Motif("Cas9"; distance = distance), distance, 16)
+            @test CHOPOFF.prefix_scan_kind(resolved) == :cas9
+            @test resolved.guide_bases == 20
+            @test resolved.pam_bases == 3
+            @test resolved.prefix_bases == 16
+            @test resolved.distance == distance
+        end
+        @test CHOPOFF.resolve_prefix_scan_geometry(
+            Motif("Cas9"; distance = 5), 5, 16) === nothing
+    end
+
+    @testset "supported Cas9 API" begin
         guide = LongDNA{4}("ACGTACGTACGTACGTACGT")
         pad = repeat("A", 40)
         genome = joinpath(tdir, "supported_api.fa")
-        write_phs_fasta(genome, "chr1", pad * string(guide) * "AGG" * pad)
+        four_edit = "CCTTCCTTACGTACGTACGT" * "TGG"
+        write_phs_fasta(
+            genome, "chr1",
+            pad * string(guide) * "AGG" * pad * four_edit * pad)
         public_out = joinpath(tdir, "supported_api.csv")
         verbose_out = joinpath(tdir, "supported_api_verbose.csv")
         engine_out = joinpath(tdir, "supported_api_engine.csv")
@@ -112,6 +129,46 @@ end
             distance = 3, early_stopping = fill(100, 4))
         @test read(public_out) == read(verbose_out) == read(engine_out)
 
+
+        for distance in 0:4
+            motif_d = Motif("Cas9"; distance = distance)
+            limits = fill(100, distance + 1)
+            distance_outputs = String[]
+            for backend in (
+                    :legacy, :fused_directory, :streaming_fasta_simd, :auto)
+                output = joinpath(
+                    tdir, "supported_api_d$(distance)_$(backend).csv")
+                stats = CHOPOFF.PrefixHashScanStats()
+                CHOPOFF.search_prefixHashScan(
+                    [guide], genome, motif_d, output;
+                    distance = distance,
+                    hash_len = 16,
+                    early_stopping = limits,
+                    scan_backend = backend,
+                    stream_chunk_bases = 64,
+                    stats = stats,
+                )
+                push!(distance_outputs, read(output, String))
+                @test stats.path_rows == (1, 129, 7873, 302337, 8196801)[distance + 1]
+                @test stats.path_source == :precomputed
+            end
+            @test all(==(first(distance_outputs)), distance_outputs)
+            public_distance_out =
+                joinpath(tdir, "supported_public_d$(distance).csv")
+            search_prefixHashScan(
+                [guide], genome, public_distance_out;
+                distance = distance, early_stopping = limits)
+            @test read(public_distance_out, String) == first(distance_outputs)
+            if distance == 4
+                @test 4 in DataFrame(CSV.File(public_distance_out)).distance
+                brute_out = joinpath(tdir, "supported_bruteforce_d4.csv")
+                CHOPOFF.search_prefixHashScan(
+                    [guide], genome, motif_d, brute_out;
+                    distance = 4, hash_len = 16, early_stopping = limits,
+                    query_variant = :bruteforce, scan_backend = :legacy)
+                @test read(brute_out, String) == first(distance_outputs)
+            end
+        end
         ambiguous_genome = joinpath(tdir, "supported_api_ambiguous.fa")
         ambiguous_guide = "ACGTACGTACNTACGTACGT"
         write_phs_fasta(
@@ -143,7 +200,7 @@ end
             [guide], unindexed, public_out)
     end
 
-    @testset "specialized Cas12a distance-3 geometry and backends" begin
+    @testset "specialized Cas12a geometries and backends" begin
         geometry = CHOPOFF.CAS12A_D3_PREFIX_SCAN_GEOMETRY
         @test CHOPOFF.prefix_scan_kind(geometry) == :cas12a
         @test geometry.guide_bases == 21
@@ -170,7 +227,21 @@ end
         guide = LongDNA{4}("TGCATGCATGCATGCATGCAT")
         forward_site = "TTTA" * string(guide)
         reverse_site = string(reverse_complement(LongDNA{4}(forward_site)))
-        seq = reverse_site * repeat("ACGT", 45) * forward_site
+        four_edit_site = "TTTA" * "ATCCTTCATGCATGCATGCAT"
+        seq = reverse_site * repeat("ACGT", 45) * forward_site *
+            repeat("ACGT", 20) * four_edit_site
+
+        for distance in 0:4
+            resolved = CHOPOFF.resolve_prefix_scan_geometry(
+                Motif("Cas12a"; distance = distance), distance, 16)
+            @test CHOPOFF.prefix_scan_kind(resolved) == :cas12a
+            @test resolved.guide_bases == 21
+            @test resolved.pam_bases == 4
+            @test resolved.prefix_bases == 16
+            @test resolved.distance == distance
+        end
+        @test CHOPOFF.resolve_prefix_scan_geometry(
+            Motif("Cas12a"; distance = 5), 5, 16) === nothing
         genome = joinpath(tdir, "cas12a_specialized.fa")
         write_phs_fasta(genome, "chr1", seq)
         chrom_seq = LongDNA{4}(seq)
@@ -229,6 +300,48 @@ end
         invalid_genome = joinpath(tdir, "cas12a_invalid.fa")
         write_phs_fasta(
             invalid_genome, "chr1", "TTTT" * string(guide))
+
+        for distance in (0, 1, 2, 4)
+            motif_d = Motif("Cas12a"; distance = distance)
+            limits = fill(100, distance + 1)
+            distance_outputs = String[]
+            for backend in (
+                    :legacy, :fused_directory, :streaming_fasta_simd, :auto)
+                output = joinpath(
+                    tdir, "cas12a_d$(distance)_$(backend).csv")
+                stats_d = CHOPOFF.PrefixHashScanStats()
+                CHOPOFF.search_prefixHashScan(
+                    [guide], genome, motif_d, output;
+                    distance = distance,
+                    hash_len = 16,
+                    early_stopping = limits,
+                    scan_backend = backend,
+                    stream_chunk_bases = 64,
+                    stats = stats_d,
+                )
+                push!(distance_outputs, read(output, String))
+                @test stats_d.path_rows ==
+                    (1, 129, 7873, 302337, 8196801)[distance + 1]
+                @test stats_d.path_source == :precomputed
+            end
+            @test all(==(first(distance_outputs)), distance_outputs)
+            public_distance_out =
+                joinpath(tdir, "cas12a_public_d$(distance).csv")
+            search_prefixHashScan(
+                [guide], genome, public_distance_out;
+                motif = "Cas12a", distance = distance,
+                early_stopping = limits)
+            @test read(public_distance_out, String) == first(distance_outputs)
+            if distance == 4
+                @test 4 in DataFrame(CSV.File(public_distance_out)).distance
+                brute_out = joinpath(tdir, "cas12a_bruteforce_d4.csv")
+                CHOPOFF.search_prefixHashScan(
+                    [guide], genome, motif_d, brute_out;
+                    distance = 4, hash_len = 16, early_stopping = limits,
+                    query_variant = :bruteforce, scan_backend = :legacy)
+                @test read(brute_out, String) == first(distance_outputs)
+            end
+        end
         invalid_output = joinpath(tdir, "cas12a_invalid.csv")
         search_prefixHashScan(
             [guide], invalid_genome, invalid_output;
@@ -249,7 +362,27 @@ end
     end
 
 
-    @testset "exact Cas9 asset matches full fallback" begin
+    @testset "precomputed distance assets and Cas9 fallback" begin
+
+    @testset "exact production distance assets" begin
+        expected_rows = (1, 129, 7873, 302337, 8196801)
+        for motif_name in ("Cas9", "Cas12a"), distance in 0:4
+            motif = Motif(motif_name; distance = distance)
+            stats = CHOPOFF.PrefixHashScanStats()
+            paths, source = CHOPOFF.load_prefix_hash_scan_paths(
+                motif, distance, 16, stats)
+            @test source == :precomputed
+            @test stats.path_source == :precomputed
+            @test stats.path_rows == expected_rows[distance + 1]
+            @test size(paths) == (expected_rows[distance + 1], 16)
+
+            loaded = CHOPOFF.load_precomputed_prefix_paths(
+                motif, distance, 16; need_distances = true)
+            @test loaded !== nothing
+            @test size(loaded[1]) == size(paths)
+            @test length(loaded[2]) == expected_rows[distance + 1]
+        end
+    end
         motif = Motif("Cas9"; distance = 3)
         exact = CHOPOFF.load_precomputed_prefix_paths(motif, 3, 16; need_distances = true)
         scan_only = CHOPOFF.load_precomputed_prefix_paths(motif, 3, 16; need_distances = false)

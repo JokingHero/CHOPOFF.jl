@@ -3,8 +3,9 @@
 ## Status and scope
 
 `prefixHashScan` is an indexless CRISPR off-target search. Its supported public
-entrypoint covers separate Cas9/d3 and Cas12a/d3 configurations; broader tuning
-remains an experimental benchmark and parity engine. It reuses the
+entrypoint covers Cas9 and Cas12a at edit distances 0 through 4 with a fixed
+16-base prefix; broader tuning remains an experimental benchmark and parity
+engine. It reuses the
 symbolic prefix paths from `prefixHashDB`, builds a guide-specific query
 structure in memory, and scans the reference genome directly.
 
@@ -12,7 +13,7 @@ The current optimized geometries are:
 
 - Cas9: 20-base guide with an `NGG` PAM;
 - Cas12a: 21-base guide with a `TTTV` PAM;
-- edit distance 3
+- edit distance 0 through 4
 - 16-base prefix
 - at most 64 guides
 - FASTA reference with a standard `.fai` file
@@ -54,7 +55,7 @@ Cas9 and Cas12a constants stay inside separate SIMD hot loops.
 The algorithm moves part of the alignment work to the query side:
 
 1. Enumerate every symbolic way in which a 16-base reference prefix can be
-   produced from a guide while spending at most three edits.
+   produced from a guide while spending at most the requested edits.
 2. Apply those symbolic paths to each concrete guide and encode the resulting
    16-mers as 32-bit integers.
 3. Scan only geometry-compatible genome windows and test whether their 16-mer is in
@@ -79,14 +80,14 @@ window: forward `TTTV + 21N`, reverse `21N + BAAA`, with opposite extension
 and coordinate rules. Both use prefix 16 and shipped precomputed path assets.
 Dispatch occurs before the scalar or SIMD hot loop.
 
-### Cas12a/d3 specialization
+### Cas12a specialization
 
 Cas12a is not implemented by substituting constants into the Cas9 SIMD loop.
-`resolve_prefix_scan_geometry` selects
-`CAS12A_D3_PREFIX_SCAN_GEOMETRY::PrefixScanGeometry{:cas12a}` only for the
-canonical 21-base `TTTV` motif, distance 3, and a 16-base prefix. Dispatch then
-enters the scalar or AVX2/BMI2 functions in `cas12a.jl`; no motif-kind branch is
-executed inside the hot loop.
+`resolve_prefix_scan_geometry` selects `PrefixScanGeometry{:cas12a}` for the
+canonical 21-base `TTTV` motif at distances 0 through 4 with a 16-base prefix.
+The named d3 geometry constant is the historical baseline; resolution constructs
+the requested distance-specific geometry before dispatch. Scalar or AVX2/BMI2
+functions in `cas12a.jl` execute without a motif-kind branch inside the hot loop.
 
 The Cas12a kernel evaluates 25-base candidate windows. It recognizes forward
 `TTTV + 21N` sites and reverse-complement `21N + BAAA` sites, rejects a window
@@ -96,31 +97,32 @@ the opposite direction from Cas9. Shared orchestration obtains candidate span,
 chunk overlap, bounds, and verification orientation from the typed geometry
 rather than from Cas9 literals.
 
-Cas12a reuses the same 302,337 precomputed symbolic distance-3 paths, compact
-`UInt64` guide-mask query, 26-bit presence prefilter, radix/bucket directory,
-global FASTA chunk scheduler, raw Myers rejection, accepted-hit traceback, and
-deterministic commit pipeline described below. `scan_backend=:auto` selects
-`:streaming_fasta_simd` under the same FASTA, guide-count, AVX2, and BMI2
-requirements as Cas9. The public API selects it with `motif="Cas12a"`; the CLI
-uses `--motif Cas12a`.
+Cas12a loads the exact precomputed symbolic paths for the requested distance
+(302,337 rows at d3), then uses the compact `UInt64` guide-mask query, 26-bit
+presence prefilter, radix/bucket directory, global FASTA chunk scheduler, raw
+Myers rejection, accepted-hit traceback, and deterministic commit pipeline
+described below. `scan_backend=:auto` selects `:streaming_fasta_simd` under the
+same FASTA, guide-count, AVX2, and BMI2 requirements as Cas9. The public API
+selects it with `motif="Cas12a"`; the CLI uses `--motif Cas12a`.
 
-## Optimized Cas9/d3 path
+## Optimized streaming path
 
 ### 1. Select the backend
 
 `search_prefixHashScan(...; scan_backend=:auto)` selects
 `:streaming_fasta_simd` when all of the following hold:
 
-- the motif has the Cas9 guide/PAM geometry;
-- `distance == 3`;
+- the motif has the canonical Cas9 or Cas12a guide/PAM geometry;
+- the distance is between 0 and 4;
 - `hash_len == 16`;
 - the query uses the 64-bit guide mask representation;
 - there are no more than 64 guides;
 - the reference is FASTA;
 - AVX2 and BMI2 are available.
 
-If Cas9/d3 is supported but raw FASTA SIMD is unavailable, `:auto` selects the
-intermediate `:fused_directory` backend. Otherwise it selects `:legacy`.
+Canonical Cas9 and Cas12a geometries use the same backend-selection policy. If
+raw FASTA SIMD is unavailable, `:auto` selects the intermediate
+`:fused_directory` backend. Unsupported geometries select `:legacy`.
 
 `:streaming_fasta_simd_fused` is an explicit experimental backend. It verifies
 nonzero guide masks immediately in the SIMD scan loop and avoids
@@ -140,14 +142,15 @@ reference.
 
 ### 2. Load symbolic prefix paths
 
-`load_prefix_hash_scan_paths` loads precomputed Cas9 paths when available. For
-Cas9, paths are available for prefix lengths up to 16 and distances up to 4.
-If an asset is unavailable, the same paths are generated with
+`load_prefix_hash_scan_paths` loads exact precomputed Cas9 or Cas12a paths for
+the requested distance. Cas9 paths are also available for experimental prefix
+lengths up to 16. If an asset is unavailable, the same paths are generated with
 `build_PathTemplates`, restricted to the requested prefix and distance, then
 deduplicated.
 
-For Cas9/d3/hash-length 16, the current asset contains 302,337 distinct symbolic
-paths. These paths are shared by every guide in the query.
+At p16, each motif has 1, 129, 7,873, 302,337, and 8,196,801 distinct
+symbolic paths for d0 through d4 respectively. Paths are shared by every guide
+in the query.
 
 ### 3. Build concrete hashes for each guide
 
@@ -202,7 +205,7 @@ buffer, one plus/minus `PrefixHashScanHit` pair, and compact candidate/radix scr
 The default logical chunk size is 2 MiB.
 
 Each chunk includes a small overlap for the 23-base Cas9 window and the
-three-base edit-distance extension. FASTA newlines are removed in place in the
+requested edit-distance extension. FASTA newlines are removed in place in the
 worker buffer. The entire chromosome is not converted to `LongDNA`.
 
 Global `(chromosome, chunk)` work items are claimed through an atomic counter.
@@ -256,14 +259,16 @@ Every candidate bit is verified with
 `prefix_hash_scan_raw_myers_distance`. Each guide has a precomputed Myers
 equality profile. The verifier reads directly from the reusable raw FASTA
 buffer, handles both strands, evaluates the 20-base guide against the extended
-reference, and returns a value above 3 for rejected candidates.
+reference, and returns a value above the requested distance for rejected
+candidates.
 
 This verifier is allocation-free and does not construct an alignment. It is a
 full Levenshtein/edit-distance filter, including indels.
 
 ### 9. Trace back accepted candidates
 
-Only candidates whose Myers distance is at most 3 are materialized as a
+Only candidates whose Myers distance is at most the requested threshold are
+materialized as a
 `LongDNA` sequence. `align` then computes the exact alignment strings and
 distance used in the output. This preserves prefixHashDB-compatible reporting
 without paying traceback cost for rejected hash hits.
@@ -281,8 +286,8 @@ the streaming backend.
 ## Simplified pseudocode
 
 ```text
-geometry = resolve_geometry(motif, distance=3, prefix=16)
-paths = load_precomputed_symbolic_paths(geometry, distance=3, prefix=16)
+geometry = resolve_geometry(motif, distance=k, prefix=16)
+paths = load_precomputed_symbolic_paths(geometry, distance=k, prefix=16)
 
 for guide in guides:
     hashes[guide] = unique(sort(apply_each_path(paths, orient(guide))))
@@ -317,7 +322,7 @@ parallel workers claim globally scheduled overlapped FASTA chunks:
 
         for hit in strand_hits:
             for guide in set_bits(hit.guide_mask):
-                if raw_myers_distance(guide, bases, hit.candidate_start) <= 3:
+                if raw_myers_distance(guide, bases, hit.candidate_start) <= k:
                     alignment = traceback(
                         guide, materialize_candidate(bases, hit.candidate_start))
                     retain(alignment)
@@ -327,9 +332,9 @@ commit_retained_hits_in_reference_order()
 
 ## Comparison with the general path
 
-| Stage | Optimized Cas9/Cas12a d3 paths | General `:legacy` path |
+| Stage | Optimized Cas9/Cas12a d0-d4 paths | General `:legacy` path |
 |---|---|---|
-| Supported query | Canonical Cas9 or Cas12a, d3, 16-base hash, <=64 guides | Other distances, motifs, hash lengths, and guide counts |
+| Supported query | Canonical Cas9 or Cas12a, d0-d4, 16-base hash, <=64 guides | Other motifs, hash lengths, and guide counts |
 | Query structure | Presence bitmap + compact sorted directory + `UInt64` guide masks | `Dict` from hash to guide mask or guide-index vectors |
 | Reference access | FAI range reads into reusable raw buffers | FASTA/2bit records loaded and converted to `LongDNA` |
 | PAM search | Dedicated Cas9 or Cas12a AVX2 masks evaluate 64 starts | `findguides` over materialized chromosome sequences |
@@ -340,7 +345,7 @@ commit_retained_hits_in_reference_order()
 | Parallelism | Dynamic chromosome workers | Record iteration plus backend-specific range tasks |
 | Main advantage | Specialized sequential scan with cheap SIMD filtering | Generality and compatibility |
 
-There is also an intermediate d3 `:fused_directory` path. It uses the
+There is also an intermediate `:fused_directory` path. It uses the
 compact query directory and geometry-specific direct prefix hashing, but
 operates on converted chromosome sequences rather than streamed raw FASTA SIMD
 blocks. It is useful as a portable fallback and correctness reference for the
@@ -379,6 +384,53 @@ guides, PAM density, and candidate rate. A current fair full-human benchmark
 against Rust Sassy v1 and v2 has not yet been completed.
 
 ## Current measured result
+
+### Full distance 0-4 human sweep
+
+The July 22, 2026 sweep used GRCh38, 24 Julia threads, 61 guides per motif,
+one warmup, and five timed repetitions per algorithm and distance. Algorithm
+order alternated between repetitions. Search used unlimited early-stopping
+thresholds. One distance-4 prefixHashDB was built per motif with one thread and
+reused for all requested distances. The timed `prefixHashScan` runs used the
+normal no-statistics path; a separate untimed pass collected phase counters.
+
+| Motif | Distance | Results | `prefixHashDB` median | `prefixHashScan` median | Scan speedup |
+|---|---:|---:|---:|---:|---:|
+| Cas9 | 0 | 65 | 14.661 s | 0.618 s | 23.7x |
+| Cas9 | 1 | 130 | 14.732 s | 0.686 s | 21.5x |
+| Cas9 | 2 | 1,244 | 15.251 s | 0.742 s | 20.6x |
+| Cas9 | 3 | 25,826 | 22.355 s | 1.875 s | 11.9x |
+| Cas9 | 4 | 381,003 | 136.837 s | 13.131 s | 10.4x |
+| Cas12a | 0 | 8,173 | 7.326 s | 0.499 s | 14.7x |
+| Cas12a | 1 | 26,612 | 8.309 s | 0.574 s | 14.5x |
+| Cas12a | 2 | 95,531 | 9.268 s | 1.229 s | 7.5x |
+| Cas12a | 3 | 364,581 | 14.241 s | 3.532 s | 4.0x |
+| Cas12a | 4 | 1,073,287 | 120.346 s | 18.451 s | 6.5x |
+
+The d4 prefixHashDB builds took 1,419.7 s for Cas9 and 634.6 s for Cas12a.
+Their resulting indexes occupied 4.60 GB and 2.95 GB. These costs are excluded
+from the search table but are relevant for one-shot workflows.
+
+Raw prefixHashDB detail output is the gold standard for this benchmark. The
+initial sweep recorded `parity=false` for Cas12a only because an obsolete
+Cas9-only filtering layer rejected every `extends5=false` row before comparison.
+Sorting the complete raw `prefixHashDB` and `prefixHashScan` CSV rows produced
+identical SHA-256 hashes at every Cas12a distance. Current parity compares exact
+detail-row multisets directly, including duplicate multiplicity; prefixHashDB
+rows are not independently filtered or reinterpreted. The July 23 parity
+repair reports PASS with zero scan-only and zero prefix-only rows for all ten motif/distance cases.
+
+The phase counters explain the d4 step change. Query construction took 7.61 s
+for Cas9 and 7.26 s for Cas12a. Cas9 d4 expanded 8,196,801 symbolic paths into
+111,720,240 guide/hash associations; Cas12a produced 109,038,602. The final
+Cas9 query is about 1.09 GB. D4 is consequently both a query-construction and
+scan/verification problem, rather than a small extension of d3.
+
+Cas12a remains output-heavy. At d3 it performed 364,581 tracebacks, and at d4
+it performed 1,073,287. Count-only output can bypass alignment materialization,
+string construction, detail-row deduplication, and detail CSV writes for these
+accepted candidates. This is a more credible large win than further Cas9
+micro-optimization.
 
 ### Matched Cas9 and Cas12a human benchmark
 
@@ -569,8 +621,9 @@ this host.
 
 ## Current limitations and issues
 
-1. The fastest kernels are separate Cas9/d3 and Cas12a/d3/16-base-prefix
-   geometries; other motifs, distances, and prefix lengths use slower paths.
+1. The fastest kernels are separate Cas9 and Cas12a geometries at distances 0
+   through 4 with a 16-base prefix; other motifs and prefix lengths use slower
+   paths.
    Shared validation, bounds, overlap, and scheduling use
    `PrefixScanGeometry{Kind}` without moving motif branches into SIMD loops.
 2. A `UInt64` guide mask limits the fused path to 64 guides.
@@ -597,7 +650,8 @@ this host.
 13. `PrefixHashScanStats` contains summed worker CPU times and wall-clock fields;
     those values cannot be compared directly without clear labeling.
 14. The exported three-argument `search_prefixHashScan` and standalone CLI
-    support Cas9/d3 and Cas12a/d3. Advanced tuning remains on the experimental
+    support Cas9 and Cas12a at distances 0 through 4. Advanced tuning remains
+    on the experimental
     four-argument method.
 15. Source separates constant-free helpers, Cas9 and Cas12a kernels,
     verification, streaming, and orchestration in the parent `CHOPOFF` module.
@@ -673,7 +727,7 @@ this host.
 Performance work should not be mixed blindly with generalization. Useful next
 features are:
 
-1. **Completed:** export and document the supported Cas9/d3 and Cas12a/d3
+1. **Completed:** export and document Cas9 and Cas12a distances 0 through 4 for
    `search_prefixHashScan`, add a standalone CLI search mode, and report the
    resolved backend and execution modes without enabling statistics.
 2. Support more than 64 guides in one genome pass with a compact hash-to-guide
@@ -681,11 +735,57 @@ features are:
    the main amortization advantage.
 3. Make early stopping cancel future chunks while preserving deterministic
    output semantics.
-4. Add specialized distance 1, 2, and 4 kernels and benchmark prefix lengths
-   independently for each distance.
+4. **Completed:** add distance 4 at p16 as the functional upper bound and
+   benchmark mode.
 5. **Completed:** add Cas12a as a separate specialized scan geometry using its
    precomputed paths without forcing Cas9 constants into a generic SIMD loop.
 6. Add an optimized 2bit reader and define exact IUPAC-reference behavior.
+
+## Recommended next work after the d0-d4 sweep
+
+The following order balances correctness, user-visible value, and measured
+performance. Performance changes retain the existing 10% GRCh38 improvement
+gate unless they provide an independently valuable feature.
+
+1. **Completed: use prefixHashDB as the benchmark oracle.** Compare raw exact
+   detail-row multisets, including duplicate multiplicity, without an
+   intermediate motif-specific validator. Keep core-locus comparison only for
+   external Sassy implementations whose traceback strings may differ.
+2. **Implement count-only output.** Add an `output=:detail|:counts` API and CLI
+   surface in `src/db_prefix_hash_scan.jl`, aggregate raw Myers distances in
+   `src/prefix_hash_scan/verification.jl`, and bypass traceback, strings,
+   detail deduplication, and detail CSV emission. Tests in
+   `test/src/prefix_hash_scan.jl` must compare complete counts with
+   `summarize_offtargets(detail)` across motifs, distances, strands, indels, and
+   chunk boundaries. Capped searches must report `complete=false`. Cas12a d3
+   and d4 are the primary performance gates.
+3. **Run a d4 prefix-length and memory sweep before redesigning the query.**
+   Compare p14, p15, and p16 on GRCh38 and record query-build time, peak RSS,
+   unique hashes, directory hits, verification calls, and end-to-end latency.
+   Exact detail parity is mandatory. Promote a different d4 prefix only if it
+   reduces latency or memory by at least 10%; otherwise retain functional p16.
+4. **Optimize Cas12a detail commit if count mode confirms the attribution.**
+   Target `evaluate_prefix_hash_scan_hits!`,
+   `commit_prefix_hash_scan_verified!`, compact deduplication keys, delayed
+   string construction, and possibly batched traceback. Measure Cas9 separately
+   and allow no more than 3% Cas9 d3 regression.
+5. **Support more than 64 guides in one reference pass.** Preserve the current
+   `UInt64` fast path and add `sorted_hashes`, `hash_offsets`, and
+   `flat_guide_ids` for larger sets. Demonstrate bounded construction and exact,
+   deterministic output for 64, 256, 1,024, and 4,096 guides without rescanning
+   the genome in 64-guide batches.
+6. **Make early stopping cancel unclaimed chunks.** Preserve deterministic
+   detail output and mark partial count output incomplete. This work is valuable
+   only for capped searches and should not complicate the complete-search hot
+   path.
+7. **Keep hardware-specific work evidence-driven.** NUMA pinning and per-socket
+   query replicas are the first Cas9 experiments; cache-conscious prefilters,
+   AVX-512, mmap/2bit streaming, and ARM SIMD remain follow-ups. Do not replace
+   the current path without exact parity and a credible end-to-end gain.
+
+The simplest high-value sequence is therefore: retain direct prefixHashDB
+parity, ship count mode, then use the d4 prefix sweep to decide whether
+compressed or staged d4 query research is justified.
 
 ## Recommended decision rule
 
@@ -725,3 +825,191 @@ unlikely because every exact indexless search must still inspect the reference.
   identical concrete-hash and path counts?
 - Does Cas12a retain its 2.9x advantage for guide sets with fewer accepted
   off-targets, where traceback and CSV output do not dominate?
+
+## Generalization roadmap: primary indexless search
+
+This July 18, 2026 roadmap makes `prefixHashScan` the intended primary CHOPOFF
+algorithm for ordinary reference-genome search. The optimization record above
+is retained as historical evidence; the priorities below supersede its
+speed-first ordering.
+
+The target is an exact production search with:
+
+- no genome-specific CHOPOFF database or build step;
+- only reusable motif path assets and the standard FASTA `.fai`;
+- one reference scan for the complete guide set;
+- deterministic results with prefixHashDB-compatible coordinates and distances;
+- specialized hot loops for important motif geometries, without motif branches
+  inside those loops.
+
+The next work should generalize the useful surface before attempting more
+Cas9 micro-optimization. Count output is the next implementation target.
+
+Implementation order changed July 22, 2026: detailed output for distances 0
+through 3 shipped first at p16, followed by distance 4 as the functional and
+benchmarking ceiling.
+
+### Priority 1: production distances 0 through 4 (completed at p16)
+
+Distances 0, 1, 2, 3, and 4 are supported public configurations for Cas9 and
+Cas12a. A lower requested distance does not run a larger-threshold query and
+discard higher-distance results. Distances 0 through 3 load exact single-file
+p16 assets; distance 4 loads the existing canonical split matrices.
+
+Distance parameterizes path selection, chunk overlap, and the Myers threshold.
+The existing Cas9 and Cas12a PAM/profile kernels remain separate and are not
+copied once per distance. Dispatch resolves the distance before entering each
+hot loop. Production prefix length remains fixed at 16.
+
+Future prefix-length tuning should use a GRCh38 sweep of query-build time, peak
+memory, exact directory hits, verification calls, and end-to-end latency.
+Exact detail parity with prefixHashDB is required at every supported distance;
+count/detail parity becomes a release gate when count mode is implemented.
+
+### Priority 2: count output mode (next)
+
+Only two output modes are needed:
+
+1. `detail` retains the current output with guide, alignment strings, exact
+   distance, chromosome, coordinate, and strand. Accepted candidates require
+   traceback.
+2. `counts` returns one summary row per guide with `D0` through `Dk` and a
+   `complete` flag. It does not produce location-only rows.
+
+Count mode should use the raw Myers result after the prefix filter and avoid
+candidate materialization, alignment strings, traceback, detail-row
+deduplication keys, and detail CSV writes whenever correctness permits. Its
+counts must match `summarize_offtargets(detail; distance=k)` for a complete
+search. This parity is a release gate rather than an assumed property: it must
+cover indels, both strands, chunk boundaries, and sites with competing optimal
+alignments.
+
+`complete=true` means the whole reference was processed for that guide.
+Explicit early-stopping limits may return capped counts, but then `complete`
+must be false. A count must never be presented as exact after work for that
+guide was cancelled. Early stopping should eventually cancel unclaimed chunks,
+instead of only suppressing records during the deterministic commit.
+
+This mode is also a performance feature. In the current 61-guide human
+experiments, detail output performs 25,826 Cas9 tracebacks and 364,581 Cas12a
+tracebacks. Count mode should bypass both workloads while preserving exact
+per-distance counts.
+
+### Priority 3: thousands of guides in one pass
+
+The current `UInt64` guide mask should remain the fast representation for at
+most 64 guides. It should not be widened into a dense mask whose size is paid
+for at every hash, and the genome should not be rescanned in 64-guide batches.
+
+For larger queries, use the same sorted hash directory with a compact
+hash-to-guide-ID representation:
+
+```text
+sorted_hashes
+hash_offsets
+flat_guide_ids
+```
+
+The guide-ID element width can be selected from the guide count. Singleton
+hashes may store one guide ID inline if measurement justifies the added
+representation. Directory lookup should return a contiguous guide-ID slice,
+which the verifier consumes without allocating.
+
+Construction must remain bounded and parallel. Per-guide hash lists can be
+built independently, but merging should stream into the compact directory
+rather than retain unnecessary duplicate associations. The main scale series
+is 64, 256, 1,024, and 4,096 guides, recording:
+
+- query-build wall time and peak RSS;
+- unique hashes and guide/hash associations;
+- scan, lookup, verification, and output time;
+- exact-result parity and deterministic ordering;
+- warm-cache and cold-cache end-to-end latency.
+
+The architecture succeeds only if each guide set is served by one genome pass.
+If the concrete path expansion becomes the limiting memory cost, reduce or
+stage the query representation rather than silently batching reference scans.
+
+### Priority 4: bounded IUPAC ambiguity
+
+Ambiguity support is required, but simple expansion is only one part of the
+solution. Query, prefix, PAM, and verification ambiguity have different costs:
+
+- An ambiguous query base can expand to its compatible A/C/G/T choices while
+  constructing concrete prefix hashes.
+- An ambiguous reference base inside the hashed prefix can generate compatible
+  concrete hashes before directory lookup.
+- PAM ambiguity should be evaluated directly with IUPAC compatibility masks,
+  not by materializing every PAM string.
+- Ambiguity outside the hashed prefix requires an IUPAC-aware Myers profile and
+  exact final verification.
+
+All expansion must be bounded by `motif.ambig_max` and use CHOPOFF's existing
+`iscompatible` semantics. A candidate containing `a` independently ambiguous
+bases can require up to `4^a` concrete hashes, so the optimized path needs an
+explicit expansion bound and a correct scalar/fallback path above it. It must
+never reject a valid candidate merely because expansion would be expensive.
+
+Implement ambiguity first in the portable correctness backend, establish
+linearDB/prefixHashDB parity, and specialize SIMD handling only after candidate
+rates and ambiguity distributions are measured.
+
+### Completed: distance 4 benchmark ceiling
+
+Distance 4 is supported for Cas9 and Cas12a at p16 as the largest functional
+search threshold and as a benchmarking opportunity. It uses the existing split
+d4 matrices: 8,196,801 symbolic paths and about 125 MiB per motif. The loader
+concatenates those canonical matrices directly and skips the generic deduplication
+and threshold-filtering work.
+
+This mode intentionally reuses the d0-d4 compact query and motif-specific scan
+architecture. It is not expected to match lower-distance speed or memory use. In
+an earlier isolated 61-guide Cas9 memory run with 24 query workers, query
+construction took 10.8 seconds, produced 111,720,240 guide/hash associations
+and a 1.09 GB final query, reaching 4.51 GB peak process RSS. No guide-count cap below the existing 64 is imposed; callers must provision memory accordingly. Future compressed or
+staged d4 representations remain benchmark research, not a release requirement.
+
+### Workload-specific performance after generalization
+
+Cas9 and Cas12a now have different remaining costs and should have separate
+performance gates:
+
+- Cas9 work should investigate genome-order presence-bitmap latency,
+  last-level-cache behavior, NUMA-local query copies, and scheduler tail
+  imbalance.
+- Cas12a detail work should target accepted-hit materialization, traceback,
+  string construction, deduplication, and CSV commit.
+- Count mode should be benchmarked independently because it removes most of the
+  Cas12a-specific output cost and exposes the scan/verification ceiling.
+- AVX-512, ARM SIMD, 2bit streaming, and further prefilter experiments remain
+  follow-up portability or speed work, not prerequisites for the first
+  generalized release.
+
+Continue an optimization only when it has a credible route to at least 10%
+end-to-end improvement in its intended workload. Always report detail and
+count modes separately and verify that a motif-specific win does not regress
+the other production geometry.
+
+### Replacement gates for prefixHashDB
+
+`prefixHashScan` can replace prefixHashDB as the documented default reference
+search when all of the following hold:
+
+1. Cas9 and Cas12a distances 0-4 have exact detail parity on sample, randomized,
+   and human-scale fixtures.
+2. Complete count output exactly matches summaries derived from detail output;
+   capped output is marked `complete=false`.
+3. The one-pass large-guide representation is demonstrated through at least
+   4,096 guides with bounded peak memory.
+4. Scalar and optimized backends have identical results, and unsupported CPU or
+   input configurations select a correct fallback rather than fail silently.
+5. Warm-cache, cold-cache, thread-scaling, query-build, scan, verification, and
+   output costs are reported separately.
+6. Existing Cas9/d3 and Cas12a/d3 detail latency regresses by no more than 3%
+   unless the change provides a measured feature-level benefit that justifies
+   it.
+
+After these gates pass, update the README, public documentation, and CLI
+examples to lead with the no-build workflow. Keep prefixHashDB available during
+one compatibility period for validation, repeated-query workloads, VCF-related
+workflows, and configurations not yet supported by the scan path.

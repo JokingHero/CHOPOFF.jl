@@ -428,6 +428,7 @@ function scan_verify_cas12a_prefix_raw_range!(
 
     motif_candidates = 0
     candidate_first > candidate_last && return plus, minus
+    geometry = PrefixScanGeometry{:cas12a}(21, 4, 16, distance)
     n = length(raw)
     block_start = candidate_first
 
@@ -470,7 +471,7 @@ function scan_verify_cas12a_prefix_raw_range!(
                 prefix_hash_scan_pack_codes(low16, high16))
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || evaluate_prefix_hash_scan_candidate!(
-                plus, raw, CAS12A_D3_PREFIX_SCAN_GEOMETRY,
+                plus, raw, geometry,
                 candidate_start, mask, global_offset, dbi, false,
                 guides_, myers_profiles, distance, stats)
         end
@@ -487,7 +488,7 @@ function scan_verify_cas12a_prefix_raw_range!(
                 prefix_hash_scan_pack_codes(low16, high16), typemax(UInt32))
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || evaluate_prefix_hash_scan_candidate!(
-                minus, raw, CAS12A_D3_PREFIX_SCAN_GEOMETRY,
+                minus, raw, geometry,
                 candidate_start, mask, global_offset, dbi, true,
                 guides_, myers_profiles, distance, stats)
         end
@@ -513,7 +514,7 @@ function scan_verify_cas12a_prefix_raw_range!(
             hash = prefix_hash_scan_raw_hash_cas12a(raw, candidate_start, false)
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || evaluate_prefix_hash_scan_candidate!(
-                plus, raw, CAS12A_D3_PREFIX_SCAN_GEOMETRY,
+                plus, raw, geometry,
                 candidate_start, mask, global_offset, dbi, false,
                 guides_, myers_profiles, distance, stats)
         end
@@ -526,7 +527,7 @@ function scan_verify_cas12a_prefix_raw_range!(
             hash = prefix_hash_scan_raw_hash_cas12a(raw, candidate_start, true)
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || evaluate_prefix_hash_scan_candidate!(
-                minus, raw, CAS12A_D3_PREFIX_SCAN_GEOMETRY,
+                minus, raw, geometry,
                 candidate_start, mask, global_offset, dbi, true,
                 guides_, myers_profiles, distance, stats)
         end

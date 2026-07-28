@@ -42,6 +42,12 @@ function load_precomputed_prefix_paths(
     dfile = joinpath(dir, stem * "_distances.bin")
     (isfile(pfile1) && isfile(pfile2) && isfile(dfile)) || return nothing
 
+    if distance == 4 && hash_len == 16
+        paths = vcat(CHOPOFF.load(pfile1), CHOPOFF.load(pfile2))
+        distances = need_distances ? CHOPOFF.load(dfile) : nothing
+        return paths, distances, asset
+    end
+
     paths = vcat(CHOPOFF.load(pfile1), CHOPOFF.load(pfile2))
     distances = CHOPOFF.load(dfile)
     paths = paths[:, 1:hash_len]

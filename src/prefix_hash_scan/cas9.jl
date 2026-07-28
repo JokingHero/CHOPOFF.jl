@@ -440,6 +440,7 @@ function scan_verify_cas9_prefix_raw_range!(
 
     motif_candidates = 0
     candidate_first > candidate_last && return plus, minus
+    geometry = PrefixScanGeometry{:cas9}(20, 3, 16, distance)
     n = length(raw)
     block_start = candidate_first
 
@@ -474,7 +475,7 @@ function scan_verify_cas9_prefix_raw_range!(
             hash = prefix_hash_scan_pack_codes(low16, high16)
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || evaluate_prefix_hash_scan_candidate!(
-                plus, raw, CAS9_D3_PREFIX_SCAN_GEOMETRY,
+                plus, raw, geometry,
                 candidate_start, mask, global_offset, dbi, false,
                 guides_, myers_profiles, distance, stats)
         end
@@ -494,7 +495,7 @@ function scan_verify_cas9_prefix_raw_range!(
             )
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || evaluate_prefix_hash_scan_candidate!(
-                minus, raw, CAS9_D3_PREFIX_SCAN_GEOMETRY,
+                minus, raw, geometry,
                 candidate_start, mask, global_offset, dbi, true,
                 guides_, myers_profiles, distance, stats)
         end
@@ -518,7 +519,7 @@ function scan_verify_cas9_prefix_raw_range!(
             hash = prefix_hash_scan_raw_hash(raw, candidate_start, false)
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || evaluate_prefix_hash_scan_candidate!(
-                plus, raw, CAS9_D3_PREFIX_SCAN_GEOMETRY,
+                plus, raw, geometry,
                 candidate_start, mask, global_offset, dbi, false,
                 guides_, myers_profiles, distance, stats)
         end
@@ -529,7 +530,7 @@ function scan_verify_cas9_prefix_raw_range!(
             hash = prefix_hash_scan_raw_hash(raw, candidate_start, true)
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || evaluate_prefix_hash_scan_candidate!(
-                minus, raw, CAS9_D3_PREFIX_SCAN_GEOMETRY,
+                minus, raw, geometry,
                 candidate_start, mask, global_offset, dbi, true,
                 guides_, myers_profiles, distance, stats)
         end
