@@ -15,7 +15,7 @@ The current optimized geometries are:
 - Cas12a: 21-base guide with a `TTTV` PAM;
 - edit distance 0 through 4
 - 16-base prefix
-- at most 64 guides
+- 64 guides per optimized query batch; larger lists are batched automatically
 - FASTA reference with a standard `.fai` file
 - x86 CPU with AVX2 and BMI2
 
@@ -32,6 +32,11 @@ Current production tuning for this path is:
 `lookup_variant=:inline` remains the genome-order lookup reference. One-guide
 query construction stays serial. Compatible production searches use bucketed
 lookup automatically; multi-guide searches also use parallel query construction.
+
+The public API and CLI accept larger guide lists and search them as sequential
+64-guide batches. Each batch uses the full requested thread count and appends to
+one detail file. This is intentional: a GRCh38 benchmark found batching about
+three times faster than the tested one-pass large-guide representations.
 
 "Indexless" means that no CHOPOFF genome database must be built. The optimized
 FASTA reader still requires the small, standard `.fai` random-access index.
@@ -196,6 +201,28 @@ The optimized lookup is not a Julia `Dict`. Sorted 32-bit hashes are split into:
 A 26-bit presence bitmap is checked first. Most genome hashes fail this cheap
 test and never access the larger directory. The bitmap may create extra work,
 but cannot reject a hash that exists in the directory.
+
+#### Large-guide batching and benchmark decision
+
+Guide lists larger than 64 are partitioned in input order. Every batch runs the
+normal `UInt64` query path, and its rows are appended without another CSV
+header. Early stopping remains independent per guide. Output order is
+deterministic and batch-major.
+
+The selection was measured on GRCh38 with 1,024 Cas9/d3 guides, eight threads,
+seven rotated timed repetitions, and exact detail-row multiset comparison:
+
+| workload | sequential 64-guide batches | best large directory | ratio |
+|---|---:|---:|---:|
+| dispersed guides | 608 s [556, 628] | 1,810 s [1,722, 1,977] | 2.98× |
+| related guides | 407 s [369, 420] | 1,130 s [933, 1,299] | 2.78× |
+
+Brackets are bootstrap 95% intervals for the median. Every comparison passed
+exact output parity. Wider presence filters, a 12-base directory bucket, and a
+reference-aware two-pass query reduced query memory in some cases but did not
+close the end-to-end gap. The large-directory prototype was therefore removed.
+It should only be reconsidered after a bounded-memory design beats batching by
+at least 10% on both workloads.
 
 ### 5. Stream FASTA chunks
 
@@ -626,7 +653,8 @@ this host.
    paths.
    Shared validation, bounds, overlap, and scheduling use
    `PrefixScanGeometry{Kind}` without moving motif branches into SIMD loops.
-2. A `UInt64` guide mask limits the fused path to 64 guides.
+2. Each optimized query holds at most 64 guides. Larger public API and CLI
+   searches rescan the reference once per sequential batch.
 3. AVX2 and BMI2 are required; there is no equivalent ARM or AVX-512 kernel.
 4. FASTA requires `.fai`; optimized streaming is not implemented for 2bit.
 5. Ambiguous query guides are rejected.
@@ -730,9 +758,8 @@ features are:
 1. **Completed:** export and document Cas9 and Cas12a distances 0 through 4 for
    `search_prefixHashScan`, add a standalone CLI search mode, and report the
    resolved backend and execution modes without enabling statistics.
-2. Support more than 64 guides in one genome pass with a compact hash-to-guide
-   ID list. Rescanning the genome in 64-guide batches would be simpler but loses
-   the main amortization advantage.
+2. **Completed:** support more than 64 guides through transparent sequential
+   64-guide batching after the one-pass alternatives lost the GRCh38 benchmark.
 3. Make early stopping cancel future chunks while preserving deterministic
    output semantics.
 4. **Completed:** add distance 4 at p16 as the functional upper bound and
@@ -769,11 +796,9 @@ gate unless they provide an independently valuable feature.
    `commit_prefix_hash_scan_verified!`, compact deduplication keys, delayed
    string construction, and possibly batched traceback. Measure Cas9 separately
    and allow no more than 3% Cas9 d3 regression.
-5. **Support more than 64 guides in one reference pass.** Preserve the current
-   `UInt64` fast path and add `sorted_hashes`, `hash_offsets`, and
-   `flat_guide_ids` for larger sets. Demonstrate bounded construction and exact,
-   deterministic output for 64, 256, 1,024, and 4,096 guides without rescanning
-   the genome in 64-guide batches.
+5. **Completed:** preserve the `UInt64` fast path and use deterministic
+   sequential batching for larger guide lists. Revisit a one-pass
+   representation only if it wins the documented 10% performance gate.
 6. **Make early stopping cancel unclaimed chunks.** Preserve deterministic
    detail output and mark partial count output incomplete. This work is valuable
    only for capped searches and should not complicate the complete-search hot
@@ -895,40 +920,23 @@ experiments, detail output performs 25,826 Cas9 tracebacks and 364,581 Cas12a
 tracebacks. Count mode should bypass both workloads while preserving exact
 per-distance counts.
 
-### Priority 3: thousands of guides in one pass
+### Completed: thousands of guides through batching
 
-The current `UInt64` guide mask should remain the fast representation for at
-most 64 guides. It should not be widened into a dense mask whose size is paid
-for at every hash, and the genome should not be rescanned in 64-guide batches.
+The `UInt64` guide mask remains the fast representation for every optimized
+query. Larger input sets use sequential 64-guide batches, which bounds live
+query and detail-result state while preserving exact per-guide behavior.
 
-For larger queries, use the same sorted hash directory with a compact
-hash-to-guide-ID representation:
+The rejected one-pass experiment used a compact hash-to-guide-ID directory and
+optional reference-aware query filtering. Although filtering reduced the
+dispersed query from roughly 1.45 GB to 242 MB, full-detail latency remained
+about three times slower than batching. The dominant workload contains tens of
+millions of verified detail rows, so retaining one monolithic result and dedup
+state outweighed the saved reference scans.
 
-```text
-sorted_hashes
-hash_offsets
-flat_guide_ids
-```
-
-The guide-ID element width can be selected from the guide count. Singleton
-hashes may store one guide ID inline if measurement justifies the added
-representation. Directory lookup should return a contiguous guide-ID slice,
-which the verifier consumes without allocating.
-
-Construction must remain bounded and parallel. Per-guide hash lists can be
-built independently, but merging should stream into the compact directory
-rather than retain unnecessary duplicate associations. The main scale series
-is 64, 256, 1,024, and 4,096 guides, recording:
-
-- query-build wall time and peak RSS;
-- unique hashes and guide/hash associations;
-- scan, lookup, verification, and output time;
-- exact-result parity and deterministic ordering;
-- warm-cache and cold-cache end-to-end latency.
-
-The architecture succeeds only if each guide set is served by one genome pass.
-If the concrete path expansion becomes the limiting memory cost, reduce or
-stage the query representation rather than silently batching reference scans.
+A future one-pass design must bound result and dedup memory, compare exact
+detail multisets, report peak RSS, and beat sequential batching by at least 10%
+on both dispersed and related 1,024-guide workloads. Until then, batching is
+the production architecture rather than a fallback.
 
 ### Priority 4: bounded IUPAC ambiguity
 

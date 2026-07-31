@@ -219,7 +219,8 @@ function search_prefixHashScan(
     lookup_variant::Symbol = :auto,
     verify_variant::Symbol = :auto,
     verbose::Bool = false,
-    stats::Union{Nothing, PrefixHashScanStats} = nothing)
+    stats::Union{Nothing, PrefixHashScanStats} = nothing,
+    _append_output::Bool = false)
 
     if length(early_stopping) != (distance + 1)
         error("Specify one early stopping condition for a each distance, starting from distance 0.")
@@ -391,8 +392,9 @@ function search_prefixHashScan(
     myers_profiles = use_myers_raw ?
         build_prefix_hash_scan_myers_profiles(guides_) : nothing
     mkpath(dirname(output_file))
-    open(output_file, "w") do out
-        write(out, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
+    open(output_file, _append_output ? "a" : "w") do out
+        _append_output ||
+            write(out, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
 
         if resolved_scan_backend in (
                 :streaming_fasta_simd, :streaming_fasta_simd_fused)
@@ -786,9 +788,9 @@ end
         verbose=false)
 
 Search an indexed FASTA reference directly for Cas9 or Cas12a off-targets at
-edit distances 0 through 4. This supported entrypoint accepts 1-64 unambiguous guides of
-the selected motif's standard length. Candidate guide/PAM windows containing
-non-ACGT bases are skipped.
+edit distances 0 through 4. Guide lists larger than 64 are searched as
+sequential 64-guide batches. Candidate guide/PAM windows containing non-ACGT
+bases are skipped.
 """
 function search_prefixHashScan(
     guides::Vector{LongDNA{4}},
@@ -805,8 +807,8 @@ function search_prefixHashScan(
     geometry = resolve_prefix_scan_geometry(motif_, distance, 16)
     geometry === nothing &&
         error("search_prefixHashScan supports only standard Cas9 or Cas12a motifs at distances 0 through 4.")
-    1 <= length(guides) <= 64 ||
-        error("search_prefixHashScan supports 1-64 guides per search.")
+    isempty(guides) &&
+        error("search_prefixHashScan requires at least one guide.")
     all(==(geometry.guide_bases), length.(guides)) ||
         error("search_prefixHashScan requires $(geometry.guide_bases)-base $(prefix_scan_kind(geometry)) guides.")
     any(isambig.(guides)) &&
@@ -816,23 +818,38 @@ function search_prefixHashScan(
     is_fasta(genome_path) ||
         error("search_prefixHashScan currently requires a FASTA reference.")
 
-    return search_prefixHashScan(
-        guides,
-        genome_path,
-        motif_,
-        output_file;
-        distance = geometry.distance,
-        hash_len = geometry.prefix_bases,
-        early_stopping = early_stopping,
-        query_variant = :bitmask64,
-        scan_backend = :auto,
-        bucket_bases = 11,
-        scan_threads = scan_threads,
-        stream_chunk_bases = 2 * 1024 * 1024,
-        prefilter_bits = 26,
-        query_build_backend = :auto,
-        lookup_variant = :auto,
-        verify_variant = :auto,
-        verbose = verbose,
-    )
+    batch_size = 64
+    batch_count = cld(length(guides), batch_size)
+    if verbose && batch_count > 1
+        @info(
+            "prefixHashScan guide batching",
+            guides = length(guides),
+            batch_size = batch_size,
+            batches = batch_count,
+        )
+    end
+    for (batch_idx, first_idx) in enumerate(1:batch_size:length(guides))
+        last_idx = min(first_idx + batch_size - 1, length(guides))
+        search_prefixHashScan(
+            guides[first_idx:last_idx],
+            genome_path,
+            motif_,
+            output_file;
+            distance = geometry.distance,
+            hash_len = geometry.prefix_bases,
+            early_stopping = early_stopping,
+            query_variant = :bitmask64,
+            scan_backend = :auto,
+            bucket_bases = 11,
+            scan_threads = scan_threads,
+            stream_chunk_bases = 2 * 1024 * 1024,
+            prefilter_bits = 26,
+            query_build_backend = :auto,
+            lookup_variant = :auto,
+            verify_variant = :auto,
+            verbose = verbose && batch_idx == 1,
+            _append_output = batch_idx > 1,
+        )
+    end
+    return nothing
 end

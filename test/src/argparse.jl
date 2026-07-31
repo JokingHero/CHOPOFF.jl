@@ -54,6 +54,22 @@ using BioSequences
         @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(args)
         @test read(actual) == read(expected)
 
+        large_guides_path = joinpath(tdir, "large_guides.txt")
+        write(
+            large_guides_path,
+            join(fill(string(first(guides)), 65), "\n") * "\n")
+        large_expected = joinpath(tdir, "large_expected.csv")
+        large_actual = joinpath(tdir, "large_actual.csv")
+        search_prefixHashScan(
+            fill(first(guides), 65), genome, large_expected)
+        large_args = [
+            "search", "--guides", large_guides_path,
+            "--output", large_actual, "prefixHashScan", "--genome", genome,
+        ]
+        @test_logs (:info, r"prefixHashScan guide batching") (:info, r"prefixHashScan execution") CHOPOFF.main(
+            large_args)
+        @test read(large_actual) == read(large_expected)
+
         cas12a_guide = "TGCATGCATGCATGCATGCAT"
         cas12a_guides_path = joinpath(tdir, "cas12a_guides.txt")
         write(cas12a_guides_path, cas12a_guide * "\n")

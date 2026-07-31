@@ -179,10 +179,38 @@ end
             early_stopping = fill(100, 4))
         @test nrow(DataFrame(CSV.File(ambiguous_out))) == 0
 
+        large_out = joinpath(tdir, "supported_api_large.csv")
+        batch64_out = joinpath(tdir, "supported_api_batch64.csv")
+        batch1_out = joinpath(tdir, "supported_api_batch1.csv")
+        large_guides = fill(guide, 65)
+        search_prefixHashScan(
+            large_guides, genome, large_out;
+            early_stopping = fill(100, 4))
+        CHOPOFF.search_prefixHashScan(
+            large_guides[1:64], genome, motif, batch64_out;
+            distance = 3, early_stopping = fill(100, 4))
+        CHOPOFF.search_prefixHashScan(
+            large_guides[65:65], genome, motif, batch1_out;
+            distance = 3, early_stopping = fill(100, 4))
+        large = DataFrame(CSV.File(large_out))
+        manual_batches = vcat(
+            DataFrame(CSV.File(batch64_out)),
+            DataFrame(CSV.File(batch1_out)))
+        sort!(large, names(large))
+        sort!(manual_batches, names(manual_batches))
+        @test large == manual_batches
+        @test count(
+            ==("guide,alignment_guide,alignment_reference,distance,chromosome,start,strand"),
+            readlines(large_out)) == 1
+
+        large129_out = joinpath(tdir, "supported_api_large129.csv")
+        search_prefixHashScan(
+            fill(guide, 129), genome, large129_out;
+            early_stopping = fill(1, 4))
+        @test nrow(DataFrame(CSV.File(large129_out))) == 129
+
         @test_throws ErrorException search_prefixHashScan(
             LongDNA{4}[], genome, public_out)
-        @test_throws ErrorException search_prefixHashScan(
-            fill(guide, 65), genome, public_out)
         @test_throws ErrorException search_prefixHashScan(
             [LongDNA{4}("ACGTACGTACGTACGTACG")], genome, public_out)
         @test_throws ErrorException search_prefixHashScan(
@@ -296,6 +324,16 @@ end
             [guide], genome, public_output;
             motif = "Cas12a", early_stopping = fill(100, 4))
         @test read(public_output, String) == outputs[:legacy]
+
+        large_public_output = joinpath(tdir, "cas12a_public_large.csv")
+        search_prefixHashScan(
+            fill(guide, 65), genome, large_public_output;
+            motif = "Cas12a", early_stopping = fill(100, 4))
+        @test nrow(DataFrame(CSV.File(large_public_output))) ==
+            65 * nrow(DataFrame(CSV.File(public_output)))
+        @test count(
+            ==("guide,alignment_guide,alignment_reference,distance,chromosome,start,strand"),
+            readlines(large_public_output)) == 1
 
         invalid_genome = joinpath(tdir, "cas12a_invalid.fa")
         write_phs_fasta(
