@@ -61,6 +61,22 @@ EXAMPLE_OUTPUT="$(mktemp --directory)/phDB_16_2.csv"
 CHOPOFF search --database "$EXAMPLE_INDEX_OUTPUT" --guides "$EXAMPLE_GUIDES" --output "$EXAMPLE_OUTPUT" --distance 2 prefixHashDB
 ```
 
+For direct Cas9 or Cas12a search without building a CHOPOFF database, use
+`prefixHashScan` on an indexed FASTA. `--ambig_max` allows zero through three
+ambiguous IUPAC reference positions in each complete guide/PAM window; zero is
+the default. Query guides must be unambiguous.
+
+```bash
+export JULIA_NUM_THREADS=8
+CHOPOFF search --distance 3 \
+  --guides "$EXAMPLE_GUIDES" \
+  --output "$(mktemp --directory)/prefixHashScan.csv" \
+  prefixHashScan --genome "$EXAMPLE_GENOME" --motif Cas9 --ambig_max 3
+```
+
+See the [prefixHashScan documentation](./docs/src/prefix_hash_scan.md)
+for IUPAC semantics, supported configurations, and human-genome benchmarks.
+
 ## R integration with crisprVerse
 
 Visit [crisprCHOPOFF](https://github.com/JokingHero/crisprCHOPOFF) - R package that allows you to use CHOPOFF with crisprVerse.  

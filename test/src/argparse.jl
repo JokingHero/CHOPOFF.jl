@@ -150,6 +150,41 @@ using BioSequences
             distance_four)
         @test read(distance_four_actual) == read(distance_four_expected)
 
+        ambiguous_guide = "ACGTACGTACGTACGTACGT"
+        ambiguous_guides_path = joinpath(tdir, "ambiguous_guides.txt")
+        write(ambiguous_guides_path, ambiguous_guide * "\n")
+        ambiguous_genome = joinpath(tdir, "ambiguous.fa")
+        ambiguous_seq = repeat("A", 40) *
+            ambiguous_guide[1:9] * "N" * ambiguous_guide[11:end] *
+            "AGG" * repeat("A", 40)
+        open(ambiguous_genome, "w") do io
+            write(io, ">chr1\n", ambiguous_seq, "\n")
+        end
+        open(ambiguous_genome * ".fai", "w") do io
+            write(io, "chr1\t", string(length(ambiguous_seq)), "\t6\t",
+                string(length(ambiguous_seq)), "\t",
+                string(length(ambiguous_seq) + 1), "\n")
+        end
+        ambiguous_expected = joinpath(tdir, "ambiguous_expected.csv")
+        ambiguous_actual = joinpath(tdir, "ambiguous_actual.csv")
+        search_prefixHashScan(
+            [LongDNA{4}(ambiguous_guide)], ambiguous_genome,
+            ambiguous_expected;
+            motif = Motif("Cas9"; distance = 0, ambig_max = 1),
+            distance = 0)
+        ambiguous_args = [
+            "search", "--distance", "0", "--guides", ambiguous_guides_path,
+            "--output", ambiguous_actual, "prefixHashScan",
+            "--genome", ambiguous_genome, "--ambig_max", "1",
+        ]
+        @test CHOPOFF.parse_commandline(ambiguous_args)["search"]["prefixHashScan"]["ambig_max"] == 1
+        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+            ambiguous_args)
+        @test read(ambiguous_actual) == read(ambiguous_expected)
+        invalid_ambiguous_args = copy(ambiguous_args)
+        invalid_ambiguous_args[end] = "4"
+        @test_throws ErrorException CHOPOFF.main(invalid_ambiguous_args)
+
         wrong_distance = [
             "search", "--distance", "5", "--guides", guides_path,
             "--output", actual, "prefixHashScan", "--genome", genome,

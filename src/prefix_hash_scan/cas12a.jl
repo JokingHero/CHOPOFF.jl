@@ -362,6 +362,13 @@ function scan_cas12a_prefix_hits_raw(
         append!(minus_hits, local_minus)
         motif_candidates += local_candidates
     end
+    if dbi.motif.ambig_max > 0
+        scan_ambiguous_prefix_hits_range!(
+            plus_hits, minus_hits, raw, CAS12A_D3_PREFIX_SCAN_GEOMETRY,
+            dbi, query, 16, candidate_first, candidate_last,
+            plus_first, plus_last, minus_first, minus_last,
+            Val(dbi.motif.ambig_max), stats)
+    end
     stats !== nothing && (stats.motif_candidates += motif_candidates)
     return plus_hits, minus_hits
 end
@@ -403,6 +410,13 @@ function scan_cas12a_prefix_hits(
             append!(minus_hits, local_minus)
             motif_candidates += local_candidates
         end
+    end
+    if dbi.motif.ambig_max > 0
+        scan_ambiguous_prefix_hits_range!(
+            plus_hits, minus_hits, chrom_seq, CAS12A_D3_PREFIX_SCAN_GEOMETRY,
+            dbi, query, hash_len, candidate_first, candidate_last,
+            plus_first, plus_last, minus_first, minus_last,
+            Val(dbi.motif.ambig_max), stats)
     end
     stats !== nothing && (stats.motif_candidates += motif_candidates)
     return plus_hits, minus_hits

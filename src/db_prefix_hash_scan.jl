@@ -20,8 +20,7 @@ function matches_prefix_scan_motif(motif::Motif, name::String)
         motif.rve == template.rve &&
         motif.pam_loci_fwd == template.pam_loci_fwd &&
         motif.pam_loci_rve == template.pam_loci_rve &&
-        motif.extends5 == template.extends5 &&
-        motif.ambig_max == 0
+        motif.extends5 == template.extends5
 end
 
 function resolve_prefix_scan_geometry(
@@ -200,6 +199,8 @@ include("prefix_hash_scan/streaming.jl")
 Indexless search that reuses prefixHashDB's symbolic edit-distance prefix paths.
 Standard Cas9 and Cas12a distance-0-through-4/prefix-16 motifs use separate
 specialized scan kernels; other configurations use the generic legacy engine.
+Reference windows may contain zero through three IUPAC ambiguity symbols, as
+specified by `motif.ambig_max`. Query guides must be unambiguous.
 """
 function search_prefixHashScan(
     guides::Vector{LongDNA{4}},
@@ -231,6 +232,8 @@ function search_prefixHashScan(
     if hash_len < 1 || hash_len > 16
         error("hash_len must be in 1:16.")
     end
+    motif.ambig_max in 0:3 ||
+        error("search_prefixHashScan supports ambig_max values 0 through 3.")
     scan_threads >= 1 || error("scan_threads must be positive.")
     stream_chunk_bases >= 64 ||
         error("stream_chunk_bases must be at least 64.")
@@ -789,8 +792,9 @@ end
 
 Search an indexed FASTA reference directly for Cas9 or Cas12a off-targets at
 edit distances 0 through 4. Guide lists larger than 64 are searched as
-sequential 64-guide batches. Candidate guide/PAM windows containing non-ACGT
-bases are skipped.
+sequential 64-guide batches. Candidate guide/PAM windows may contain up to
+`motif.ambig_max` ambiguous IUPAC reference bases, where the supported range is
+zero through three. Query guides must be unambiguous.
 """
 function search_prefixHashScan(
     guides::Vector{LongDNA{4}},
@@ -804,6 +808,8 @@ function search_prefixHashScan(
 
     motif_ = motif isa String ? Motif(motif; distance = distance) :
         setdist(motif, distance)
+    motif_.ambig_max in 0:3 ||
+        error("search_prefixHashScan supports ambig_max values 0 through 3.")
     geometry = resolve_prefix_scan_geometry(motif_, distance, 16)
     geometry === nothing &&
         error("search_prefixHashScan supports only standard Cas9 or Cas12a motifs at distances 0 through 4.")

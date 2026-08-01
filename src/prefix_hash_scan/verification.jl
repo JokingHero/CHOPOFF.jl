@@ -546,6 +546,7 @@ function merge_prefix_hash_scan_worker_stats!(
     worker_stats::PrefixHashScanStats)
 
     stats.motif_candidates += worker_stats.motif_candidates
+    stats.ambiguous_prefixes += worker_stats.ambiguous_prefixes
     stats.prefix_hits += worker_stats.prefix_hits
     stats.guide_pairs += worker_stats.guide_pairs
     stats.alignment_calls += worker_stats.alignment_calls

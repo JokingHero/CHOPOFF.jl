@@ -96,6 +96,165 @@ end
     return UInt8(0xff)
 end
 
+@inline prefix_hash_scan_hash_type(
+    ::PrefixHashScanBitmaskQuery{H}) where {H <: Unsigned} = H
+@inline prefix_hash_scan_hash_type(::PrefixHashScanDirectory) = UInt32
+@inline prefix_hash_scan_hash_type(::PrefixHashScanPrefilteredDirectory) = UInt32
+
+@inline function prefix_hash_scan_ambiguous_window_mask(
+    exact::UInt128, window_bases::Int, ::Val{K}) where K
+
+    one_or_more = UInt64(0)
+    two_or_more = UInt64(0)
+    three_or_more = UInt64(0)
+    four_or_more = UInt64(0)
+    ambiguous = ~exact
+    @inbounds for offset in 0:(window_bases - 1)
+        present = UInt64(
+            (ambiguous >> offset) & UInt128(typemax(UInt64)))
+        four_or_more |= three_or_more & present
+        three_or_more |= two_or_more & present
+        two_or_more |= one_or_more & present
+        one_or_more |= present
+    end
+    too_many = K == 1 ? two_or_more : K == 2 ? three_or_more : four_or_more
+    return one_or_more & ~too_many
+end
+
+@inline function prefix_hash_scan_exact_block(
+    raw::AbstractVector{UInt8}, start_pos::Int, required_bases::Int)
+
+    if start_pos + 127 <= length(raw)
+        a0, c0, g0, t0 = prefix_hash_scan_raw_profile64(raw, start_pos)
+        a1, c1, g1, t1 = prefix_hash_scan_raw_profile64(raw, start_pos + 64)
+        return UInt128(a0 | c0 | g0 | t0) |
+            (UInt128(a1 | c1 | g1 | t1) << 64)
+    end
+    exact = UInt128(0)
+    @inbounds for offset in 0:(required_bases - 1)
+        prefix_hash_scan_raw_code(raw[start_pos + offset]) != 0xff &&
+            (exact |= UInt128(1) << offset)
+    end
+    return exact
+end
+
+@inline function prefix_hash_scan_exact_block(
+    chrom_seq::LongDNA{4}, start_pos::Int, required_bases::Int)
+
+    exact = UInt128(0)
+    @inbounds for offset in 0:(required_bases - 1)
+        nibble = UInt8(BioSequences.extract_encoded_element(
+            chrom_seq, start_pos + offset))
+        prefix_hash_scan_twobit_nibble(nibble) != 0xff &&
+            (exact |= UInt128(1) << offset)
+    end
+    return exact
+end
+
+@inline function prefix_hash_scan_candidate_sequence(
+    raw::AbstractVector{UInt8}, candidate_start::Int, candidate_bases::Int)
+
+    @inbounds for pos in candidate_start:(candidate_start + candidate_bases - 1)
+        prefix_hash_scan_iupac_mask(raw[pos]) == 0 && return nothing
+    end
+    return LongDNA{4}(
+        @view raw[candidate_start:(candidate_start + candidate_bases - 1)])
+end
+@inline prefix_hash_scan_candidate_sequence(
+    chrom_seq::LongDNA{4}, candidate_start::Int, candidate_bases::Int) =
+    chrom_seq[candidate_start:(candidate_start + candidate_bases - 1)]
+
+function prefix_hash_scan_window_prefix(
+    candidate::LongDNA{4}, motif::Motif, is_antisense::Bool, hash_len::Int)
+
+    pam_loci = is_antisense ? motif.pam_loci_rve : motif.pam_loci_fwd
+    guide = removepam(candidate, pam_loci)
+    if motif.extends5 && is_antisense
+        guide = complement(guide)
+    elseif motif.extends5 && !is_antisense
+        guide = reverse(guide)
+    elseif !motif.extends5 && is_antisense
+        guide = reverse_complement(guide)
+    end
+    return guide[1:hash_len]
+end
+
+function prefix_hash_scan_ambiguous_candidate_mask(
+    candidate::LongDNA{4}, motif::Motif, is_antisense::Bool,
+    hash_len::Int, query)
+
+    pattern = is_antisense ? motif.rve : motif.fwd
+    @inbounds for idx in eachindex(pattern)
+        iscompatible(pattern[idx], candidate[idx]) || return false, UInt64(0), false
+    end
+    prefix = prefix_hash_scan_window_prefix(
+        candidate, motif, is_antisense, hash_len)
+    hashes = candidate_prefix_hashes(
+        prefix, prefix_hash_scan_hash_type(query), nothing)
+    mask = UInt64(0)
+    @inbounds for hash in hashes
+        mask |= prefix_hash_scan_candidate_mask(query, hash)
+    end
+    return true, mask, isambig(prefix)
+end
+
+function scan_ambiguous_prefix_hits_range!(
+    plus_hits::Vector{PrefixHashScanHit},
+    minus_hits::Vector{PrefixHashScanHit},
+    source,
+    geometry::PrefixScanGeometry,
+    dbi::DBInfo,
+    query,
+    hash_len::Int,
+    candidate_first::Int,
+    candidate_last::Int,
+    plus_first::Int,
+    plus_last::Int,
+    minus_first::Int,
+    minus_last::Int,
+    ::Val{K},
+    stats::Union{Nothing, PrefixHashScanStats} = nothing) where K
+
+    candidate_first > candidate_last && return nothing
+    candidate_bases = prefix_scan_candidate_bases(geometry)
+    for block_start in candidate_first:64:candidate_last
+        count = min(64, candidate_last - block_start + 1)
+        required_bases = count + candidate_bases - 1
+        exact = prefix_hash_scan_exact_block(source, block_start, required_bases)
+        required_mask = (UInt128(1) << required_bases) - UInt128(1)
+        exact & required_mask == required_mask && continue
+        starts = prefix_hash_scan_ambiguous_window_mask(
+            exact, candidate_bases, Val(K))
+        count < 64 && (starts &= (UInt64(1) << count) - UInt64(1))
+        while starts != 0
+            bit = trailing_zeros(starts)
+            starts &= starts - 1
+            candidate_start = block_start + bit
+            candidate = prefix_hash_scan_candidate_sequence(
+                source, candidate_start, candidate_bases)
+            candidate === nothing && continue
+            for (is_antisense, hits, strand_first, strand_last) in (
+                    (false, plus_hits, plus_first, plus_last),
+                    (true, minus_hits, minus_first, minus_last))
+                strand_first <= candidate_start <= strand_last || continue
+                matched, mask, ambiguous_prefix =
+                    prefix_hash_scan_ambiguous_candidate_mask(
+                        candidate, dbi.motif, is_antisense, hash_len, query)
+                matched || continue
+                if stats !== nothing
+                    stats.motif_candidates += 1
+                    stats.ambiguous_prefixes += ambiguous_prefix
+                end
+                mask == 0 || push!(
+                    hits, PrefixHashScanHit(candidate_start, mask))
+            end
+        end
+    end
+    sort!(plus_hits; by = hit -> hit.start, alg = QuickSort)
+    sort!(minus_hits; by = hit -> hit.start, alg = QuickSort)
+    return nothing
+end
+
 @inline function prefix_hash_scan_record_candidate!(
     hits::Vector{PrefixHashScanHit},
     ::Nothing,

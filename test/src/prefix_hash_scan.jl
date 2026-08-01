@@ -399,6 +399,127 @@ end
         @test nrow(DataFrame(CSV.File(ambiguous_output))) == 0
     end
 
+    @testset "reference ambiguity" begin
+        function run_ambiguous_site(
+            label::String, guide::LongDNA{4}, site::String, motif::Motif;
+            backend::Symbol = :auto)
+
+            genome = joinpath(tdir, label * ".fa")
+            output = joinpath(tdir, label * "_" * string(backend) * ".csv")
+            write_phs_fasta(
+                genome, "chr1", repeat("A", 40) * site * repeat("A", 40))
+            stats = CHOPOFF.PrefixHashScanStats()
+            CHOPOFF.search_prefixHashScan(
+                [guide], genome, motif, output;
+                distance = motif.distance,
+                hash_len = 16,
+                early_stopping = fill(100, motif.distance + 1),
+                scan_backend = backend,
+                stream_chunk_bases = 64,
+                stats = stats,
+            )
+            return DataFrame(CSV.File(output)), read(output, String), stats
+        end
+
+        cas9_guide = LongDNA{4}("ACGTACGTACGTACGTACGT")
+        cas9_string = string(cas9_guide)
+        one_n = cas9_string[1:9] * "N" * cas9_string[11:end] * "AGG"
+        motif0 = Motif("Cas9"; distance = 0, ambig_max = 0)
+        motif1 = Motif("Cas9"; distance = 0, ambig_max = 1)
+        rejected, _, _ = run_ambiguous_site(
+            "cas9_ambig_rejected", cas9_guide, one_n, motif0)
+        @test nrow(rejected) == 0
+
+        backend_outputs = String[]
+        for backend in (
+                :legacy, :fused_dict, :fused_directory, :fused_fasta_simd,
+                :streaming_fasta_simd, :streaming_fasta_simd_fused, :auto)
+            accepted, output, stats = run_ambiguous_site(
+                "cas9_ambig_backend", cas9_guide, one_n, motif1;
+                backend = backend)
+            @test nrow(accepted) == 1
+            @test stats.ambiguous_prefixes == 1
+            push!(backend_outputs, output)
+        end
+        @test all(==(first(backend_outputs)), backend_outputs)
+
+        three_n = collect(cas9_string)
+        three_n[[6, 10, 14]] .= 'N'
+        accepted3, _, _ = run_ambiguous_site(
+            "cas9_ambig_three", cas9_guide, String(three_n) * "AGG",
+            Motif("Cas9"; distance = 0, ambig_max = 3))
+        @test nrow(accepted3) == 1
+
+        distance3_site = collect(cas9_string * "AGG")
+        distance3_site[6] = 'Y'
+        distance3_site[18] = 'N'
+        distance3_site[22] = 'R'
+        distance3_outputs = String[]
+        for backend in (:legacy, :streaming_fasta_simd, :auto)
+            result, output, stats = run_ambiguous_site(
+                "cas9_d3_ambig_three", cas9_guide, String(distance3_site),
+                Motif("Cas9"; distance = 3, ambig_max = 3);
+                backend = backend)
+            @test count(==(0), result.distance) == 1
+            @test stats.ambiguous_prefixes >= 1
+            push!(distance3_outputs, output)
+        end
+        @test all(==(first(distance3_outputs)), distance3_outputs)
+
+        four_n = copy(three_n)
+        four_n[18] = 'N'
+        rejected4, _, _ = run_ambiguous_site(
+            "cas9_ambig_four", cas9_guide, String(four_n) * "AGG",
+            Motif("Cas9"; distance = 0, ambig_max = 3))
+        @test nrow(rejected4) == 0
+
+        compatible_pam, _, _ = run_ambiguous_site(
+            "cas9_ambig_pam", cas9_guide, cas9_string * "ARG", motif1)
+        incompatible_pam, _, _ = run_ambiguous_site(
+            "cas9_ambig_bad_pam", cas9_guide, cas9_string * "AYG", motif1)
+        @test nrow(compatible_pam) == 1
+        @test nrow(incompatible_pam) == 0
+        invalid_base, _, _ = run_ambiguous_site(
+            "cas9_invalid_reference", cas9_guide,
+            cas9_string[1:9] * "X" * cas9_string[11:end] * "AGG", motif1)
+        @test nrow(invalid_base) == 0
+
+        compatible_base = Dict(
+            'R' => 'A', 'Y' => 'C', 'S' => 'C', 'W' => 'A', 'K' => 'G',
+            'M' => 'A', 'B' => 'C', 'D' => 'A', 'H' => 'A', 'V' => 'A',
+            'N' => 'A', 'n' => 'A')
+        for (code, base) in compatible_base
+            site = collect(cas9_string)
+            site[findfirst(==(base), site)] = code
+            result, _, _ = run_ambiguous_site(
+                "cas9_iupac_" * string(code), cas9_guide,
+                String(site) * "AGG", motif1)
+            @test nrow(result) == 1
+        end
+
+        cas12a_guide = LongDNA{4}("TGCATGCATGCATGCATGCAT")
+        cas12a_string = string(cas12a_guide)
+        cas12a_site = "TTTR" * cas12a_string[1:7] * "N" * cas12a_string[9:end]
+        cas12a_motif = Motif("Cas12a"; distance = 0, ambig_max = 2)
+        cas12a_outputs = String[]
+        for backend in (:legacy, :fused_directory, :streaming_fasta_simd, :auto)
+            result, output, _ = run_ambiguous_site(
+                "cas12a_ambig_backend", cas12a_guide, cas12a_site,
+                cas12a_motif; backend = backend)
+            @test nrow(result) == 2
+            push!(cas12a_outputs, output)
+        end
+        @test all(==(first(cas12a_outputs)), cas12a_outputs)
+
+        long_n, _, _ = run_ambiguous_site(
+            "cas9_long_n", cas9_guide, repeat("N", 200),
+            Motif("Cas9"; distance = 0, ambig_max = 3))
+        @test nrow(long_n) == 0
+        @test_throws ErrorException run_ambiguous_site(
+            "cas9_ambig_too_high", cas9_guide, one_n,
+            Motif("Cas9"; distance = 0, ambig_max = 4))
+    end
+
 
     @testset "precomputed distance assets and Cas9 fallback" begin
 

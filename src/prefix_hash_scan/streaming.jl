@@ -173,6 +173,23 @@ function stream_prefix_hash_scan_chunk(
             distance,
             stats,
         )
+        if dbi.motif.ambig_max > 0
+            empty!(scratch_plus_hits)
+            empty!(scratch_minus_hits)
+            scan_ambiguous_prefix_hits_range!(
+                scratch_plus_hits, scratch_minus_hits, raw, geometry, dbi,
+                query, geometry.prefix_bases, local_first, local_last,
+                local_first, local_last, local_first, local_last,
+                Val(dbi.motif.ambig_max), stats)
+            evaluate_prefix_hash_scan_hits!(
+                plus, raw, geometry, scratch_plus_hits, global_offset, dbi,
+                false, guides_, myers_profiles, distance, stats)
+            evaluate_prefix_hash_scan_hits!(
+                minus, raw, geometry, scratch_minus_hits, global_offset, dbi,
+                true, guides_, myers_profiles, distance, stats)
+            sort!(plus; by = hit -> hit.pos, alg = QuickSort)
+            sort!(minus; by = hit -> hit.pos, alg = QuickSort)
+        end
     else
         if M === :buffered_reuse
             motif_candidates = scan_prefix_hits_raw_range!(
@@ -224,6 +241,13 @@ function stream_prefix_hash_scan_chunk(
                     local_first,
                     local_last,
                 )
+        end
+        if dbi.motif.ambig_max > 0
+            scan_ambiguous_prefix_hits_range!(
+                plus_hits, minus_hits, raw, geometry, dbi, query,
+                geometry.prefix_bases, local_first, local_last,
+                local_first, local_last, local_first, local_last,
+                Val(dbi.motif.ambig_max), stats)
         end
         if stats !== nothing
             stats.motif_candidates += motif_candidates

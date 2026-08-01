@@ -351,6 +351,10 @@ function parse_commandline(args::Array{String})
             help = "Specialized scan motif: Cas9 or Cas12a."
             arg_type = String
             default = "Cas9"
+        "--ambig_max"
+            help = "Maximum ambiguous reference bases in the guide plus PAM (0 through 3)."
+            arg_type = Int
+            default = 0
         "--early_stopping"
             help = "Input one early stopping limit for each distance from 0 through the requested distance."
             arg_type = Int
@@ -574,7 +578,11 @@ function main(args::Array{String})
                 guides,
                 scan_args["genome"],
                 args["output"];
-                motif = scan_args["motif"],
+                motif = Motif(
+                    scan_args["motif"];
+                    distance = args["distance"],
+                    ambig_max = scan_args["ambig_max"],
+                ),
                 early_stopping = early_stopping,
                 distance = args["distance"],
                 verbose = true,

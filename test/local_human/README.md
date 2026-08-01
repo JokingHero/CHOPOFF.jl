@@ -33,6 +33,32 @@ test/local_human/run_human_sassy.jl
 
 Generated `data/`, `indexes/`, and `outputs/` are ignored.
 
+## prefixHashScan ambiguity benchmark
+
+The tuning runner measures query construction, prepared scanning, and the
+public end-to-end search independently. This command sweeps Cas9 distance 3
+and `ambig_max=0:3` on the 61 standard guides with eight scan threads:
+
+```bash
+CHOPOFF_TUNING_STAGE=final \
+CHOPOFF_TUNING_AMBIG_MAXES=0,1,2,3 \
+CHOPOFF_TUNING_THREADS=8 \
+CHOPOFF_TUNING_WARMUPS=2 \
+CHOPOFF_TUNING_RUNS=11 \
+CHOPOFF_TUNING_ALLOCATION_RUNS=3 \
+CHOPOFF_TUNING_OUT=test/local_human/outputs/prefix_hash_scan_ambiguity \
+JULIA_NUM_THREADS=8 \
+JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
+/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
+  scripts/benchmark_prefix_hash_scan_tuning.jl
+```
+
+The summary reports median, mean, standard deviation, minimum, maximum,
+end-to-end coefficient of variation, and ratios/deltas against `ambig_max=0`.
+The ambiguity parity CSV checks that every lower-level result multiset is
+contained in the next level. Runs, allocations, diagnostics, parity, and final
+result CSVs are written under `CHOPOFF_TUNING_OUT`.
+
 ## Rust SASSY v2 Batch Baseline
 
 This local-only baseline calls Rust SASSY v2 `encode_patterns` +
@@ -153,4 +179,3 @@ JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot
   --project=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl \
   test/local_human/benchmark_human_prefix_sweep.jl
 ```
-
