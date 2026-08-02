@@ -5,21 +5,28 @@ CollapsedDocStrings = true
 # prefixHashScan search
 
 `search_prefixHashScan` searches an indexed FASTA or 2bit reference directly
-without building a CHOPOFF genome database. Separate Cas9 and Cas12a kernels
-serve edit distances 0 through 4 and amortize one genome scan across all
-supplied guides.
+without building a CHOPOFF genome database. Hand-written Cas9 and Cas12a
+kernels remain the canonical fast paths; a motif-specialized generic kernel
+handles other PAM sequences, PAM positions, strand selections, and motifs
+without a PAM.
 
 ## Supported configuration
 
-- 1-64 unambiguous guides;
-- Cas9: 20-base guide with an `NGG` PAM;
-- Cas12a: 21-base guide with a `TTTV` PAM;
+- any number of unambiguous guides, processed in batches of at most 64;
+- any registered motif name or custom `Motif` object;
+- one contiguous PAM block at any position, or no PAM;
 - edit distance 0, 1, 2, 3, or 4;
 - 0 through 3 ambiguous IUPAC reference bases per guide/PAM window;
-- 16-base symbolic prefix filter;
+- a symbolic prefix of up to 16 bases;
 - FASTA reference with a standard `.fai` index, or a `.2bit` reference without
   a sidecar index;
-- any number of guides, processed in batches of at most 64.
+
+The typed generic SIMD engine is selected when the prefix is 16 bases, the
+guide is 16 through 64 bases, the complete motif spans at most 65 bases, and
+the guide retains at least 16 bases at the requested distance
+(`guide length - distance >= 16`). Other valid motifs use the exact legacy
+backend. Guide lists may be larger than 64 because the public method batches
+them automatically.
 
 Ambiguous query guides are rejected. `ambig_max=0` remains the default and
 skips candidate windows containing ambiguous reference bases.
@@ -70,7 +77,39 @@ search_prefixHashScan(
     motif = ambiguous_motif,
     distance = 3,
 )
+
+# No PAM: an all-X PAM description produces an empty PAM range.
+pamless = Motif(
+    "pamless", repeat("N", 20), repeat("X", 20),
+    true, true, 3, true, 0)
+search_prefixHashScan(
+    guides,
+    "genome.fa",
+    "pamless_offtargets.csv";
+    motif = pamless,
+    distance = 3,
+)
+
+# Variable-length guide: 25 guide bases followed by an NNT PAM.
+guide25_nnt = Motif(
+    "25N_NNT",
+    repeat("N", 25) * "NNT",
+    repeat("X", 25) * "NNT",
+    true, true, 4, true, 0,
+)
+search_prefixHashScan(
+    LongDNA{4}.(["ACGTACGTACGTACGTACGTACGTA"]),
+    "genome.fa",
+    "guide25_nnt_offtargets.csv";
+    motif = guide25_nnt,
+    distance = 3,
+)
 ```
+
+The 25-base example resolves to the typed generic fast engine, not `:legacy`.
+Only 20- and 21-base guides currently have shipped symbolic path assets. Other
+eligible lengths generate paths once before guide batching and then use the
+same optimized scanner.
 
 The output uses the normal CHOPOFF detail columns:
 `guide`, `alignment_guide`, `alignment_reference`, `distance`, `chromosome`,
@@ -159,10 +198,26 @@ The runner writes raw timings, allocations, internal diagnostics, a summary
 with control-relative ratios, final result files, and a multiset-inclusion
 parity report.
 
+## Generic engine overhead
+
+A local single-thread microbenchmark forced the identical Cas9/distance-3 motif
+through the hand-written and typed generic scanners over 32 MB of deterministic
+random A/C/G/T reference. Eleven alternating timed runs gave:
+
+| Scanner | Median | Throughput |
+|---|---:|---:|
+| Hand-written Cas9 | 66.7 ms | 480 MB/s |
+| Forced typed generic | 78.6 ms | 407 MB/s |
+
+Candidate counts were identical. The generic scanner took 17.8% longer and
+retained about 85% of specialized Cas9 throughput. This isolates motif scanning,
+prefix packing, and failed hash lookup; end-to-end overhead varies with PAM
+frequency, query hits, verification, I/O, and output volume.
+
 ## Implementation boundary
 
-The three-argument method defaults to Cas9/distance 3 and accepts
-`motif="Cas12a"` plus `distance=0:4`. The four-argument `Motif` method supports
-both standard geometries; its tuning keywords and generic legacy fallback
-remain experimental. Geometry dispatch happens before separate Cas9 and
-Cas12a hot loops.
+The three-argument method defaults to Cas9/distance 3 and accepts any registered
+motif name or custom `Motif` plus `distance=0:4`. Geometry dispatch happens
+before the canonical or typed generic hot loop. Symbolic path assets are reused
+by guide length, distance, and prefix length; scanner specialization remains
+independent of path generation.

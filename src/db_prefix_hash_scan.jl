@@ -1,11 +1,17 @@
 using SIMD
 
-struct PrefixScanGeometry{Kind}
+struct PrefixScanGeometry{Kind, M}
     guide_bases::Int
     pam_bases::Int
     prefix_bases::Int
     distance::Int
+    matcher::M
 end
+
+PrefixScanGeometry{Kind}(
+    guide_bases::Int, pam_bases::Int, prefix_bases::Int, distance::Int) where Kind =
+    PrefixScanGeometry{Kind, Nothing}(
+        guide_bases, pam_bases, prefix_bases, distance, nothing)
 
 const CAS9_D3_PREFIX_SCAN_GEOMETRY =
     PrefixScanGeometry{:cas9}(20, 3, 16, 3)
@@ -32,7 +38,7 @@ function resolve_prefix_scan_geometry(
         return PrefixScanGeometry{:cas9}(20, 3, 16, distance)
     hash_len == 16 && matches_prefix_scan_motif(motif, "Cas12a") &&
         return PrefixScanGeometry{:cas12a}(21, 4, 16, distance)
-    return nothing
+    return resolve_generic_prefix_scan_geometry(motif, distance, hash_len)
 end
 
 @inline prefix_scan_candidate_bases(geometry::PrefixScanGeometry) =
@@ -191,6 +197,7 @@ include("prefix_hash_scan/verification.jl")
 include("prefix_hash_scan/kernel_common.jl")
 include("prefix_hash_scan/cas9.jl")
 include("prefix_hash_scan/cas12a.jl")
+include("prefix_hash_scan/generic.jl")
 include("prefix_hash_scan/twobit.jl")
 include("prefix_hash_scan/streaming.jl")
 
@@ -199,7 +206,9 @@ include("prefix_hash_scan/streaming.jl")
 
 Indexless search that reuses prefixHashDB's symbolic edit-distance prefix paths.
 Standard Cas9 and Cas12a distance-0-through-4/prefix-16 motifs use separate
-specialized scan kernels; other configurations use the generic legacy engine.
+specialized scan kernels. Other compatible 16-base-prefix motifs use a typed
+generic scan kernel; configurations outside its size envelope use the exact
+legacy engine.
 Reference windows may contain zero through three IUPAC ambiguity symbols, as
 specified by `motif.ambig_max`. Query guides must be unambiguous.
 """
@@ -222,7 +231,8 @@ function search_prefixHashScan(
     verify_variant::Symbol = :auto,
     verbose::Bool = false,
     stats::Union{Nothing, PrefixHashScanStats} = nothing,
-    _append_output::Bool = false)
+    _append_output::Bool = false,
+    _paths = nothing)
 
     if length(early_stopping) != (distance + 1)
         error("Specify one early stopping condition for a each distance, starting from distance 0.")
@@ -287,7 +297,7 @@ function search_prefixHashScan(
         :legacy
     end
     if resolved_scan_backend != :legacy && !supports_fused
-        error("Fused scan backends require a supported Cas9 or Cas12a distance-0-through-4 geometry and at most 64 guides.")
+        error("Fused scan backends require an optimized distance-0-through-4, 16-base-prefix geometry and at most 64 guides.")
     end
     if resolved_scan_backend in (
             :fused_fasta_simd, :streaming_fasta_simd,
@@ -368,6 +378,7 @@ function search_prefixHashScan(
                 prefilter_bits : 0,
             query_build_backend = query_build_backend,
             query_threads = scan_threads,
+            paths = _paths,
         )
     elseif resolved_query_variant == :bruteforce
         query = nothing
@@ -384,6 +395,7 @@ function search_prefixHashScan(
             hash_type,
             stats;
             query_variant = resolved_query_variant,
+            paths = _paths,
         )
     end
     if stats !== nothing
@@ -807,8 +819,8 @@ end
         scan_threads=Threads.nthreads(),
         verbose=false)
 
-Search an indexed FASTA or 2bit reference directly for Cas9 or Cas12a
-off-targets at edit distances 0 through 4. Guide lists larger than 64 are
+Search an indexed FASTA or 2bit reference directly for any registered or
+custom `Motif` at edit distances 0 through 4. Guide lists larger than 64 are
 searched as sequential 64-guide batches. Candidate guide/PAM windows may
 contain up to `motif.ambig_max` ambiguous IUPAC reference bases, where the
 supported range is zero through three. Query guides must be unambiguous.
@@ -825,19 +837,24 @@ function search_prefixHashScan(
 
     motif_ = motif isa String ? Motif(motif; distance = distance) :
         setdist(motif, distance)
+    distance in 0:4 ||
+        error("search_prefixHashScan supports distances 0 through 4.")
     motif_.ambig_max in 0:3 ||
         error("search_prefixHashScan supports ambig_max values 0 through 3.")
-    geometry = resolve_prefix_scan_geometry(motif_, distance, 16)
-    geometry === nothing &&
-        error("search_prefixHashScan supports only standard Cas9 or Cas12a motifs at distances 0 through 4.")
     isempty(guides) &&
         error("search_prefixHashScan requires at least one guide.")
-    all(==(geometry.guide_bases), length.(guides)) ||
-        error("search_prefixHashScan requires $(geometry.guide_bases)-base $(prefix_scan_kind(geometry)) guides.")
+    guide_bases = length_noPAM(motif_)
+    all(==(guide_bases), length.(guides)) ||
+        error("search_prefixHashScan requires $guide_bases-base guides for $(motif_.alias).")
+    hash_len = min(guide_bases - distance, 16)
+    hash_len >= 1 ||
+        error("search_prefixHashScan requires guide length greater than distance.")
     any(isambig.(guides)) &&
         error("search_prefixHashScan does not support ambiguous query guides.")
-    length(early_stopping) == geometry.distance + 1 ||
+    length(early_stopping) == distance + 1 ||
         error("Specify one early stopping condition for each distance from 0 to $distance.")
+    prepared_paths, _ = load_prefix_hash_scan_paths(
+        motif_, distance, hash_len)
     batch_size = 64
     batch_count = cld(length(guides), batch_size)
     if verbose && batch_count > 1
@@ -855,8 +872,8 @@ function search_prefixHashScan(
             genome_path,
             motif_,
             output_file;
-            distance = geometry.distance,
-            hash_len = geometry.prefix_bases,
+            distance = distance,
+            hash_len = hash_len,
             early_stopping = early_stopping,
             query_variant = :bitmask64,
             scan_backend = :auto,
@@ -869,6 +886,7 @@ function search_prefixHashScan(
             verify_variant = :auto,
             verbose = verbose && batch_idx == 1,
             _append_output = batch_idx > 1,
+            _paths = prepared_paths,
         )
     end
     return nothing

@@ -288,7 +288,7 @@ function parse_commandline(args::Array{String})
             help = "vcfDB is a specialized database to handle .vcf files and personalized off-target search."
         "prefixHashScan"
             action = :command
-            help = "Search a FASTA or 2bit reference directly with optimized Cas9 or Cas12a distance-0-through-4 prefix scans."
+            help = "Search a FASTA or 2bit reference directly with distance-0-through-4 prefix scans."
         "sassy"
             action = :command
             help = "Search directly using Sassy (Myers bit-parallel) algorithm."
@@ -348,7 +348,7 @@ function parse_commandline(args::Array{String})
             arg_type = String
             required = true
         "--motif"
-            help = "Specialized scan motif: Cas9 or Cas12a."
+            help = "Registered motif name."
             arg_type = String
             default = "Cas9"
         "--ambig_max"

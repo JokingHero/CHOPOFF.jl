@@ -5,15 +5,9 @@ const LociRange = UnitRange{UInt32}
 function prefix_path_asset_name(motif::Motif, hash_len::Int)
     hash_len <= 16 || return nothing
     motif.distance <= 4 || return nothing
-    for name in ("Cas9", "Cas12a")
-        template = Motif(name)
-        if length_noPAM(motif) == length_noPAM(template) &&
-            motif.extends5 == template.extends5 &&
-            motif.pam_loci_fwd == template.pam_loci_fwd &&
-            motif.pam_loci_rve == template.pam_loci_rve
-            return name
-        end
-    end
+    guide_bases = length_noPAM(motif)
+    guide_bases == 20 && return "Cas9"
+    guide_bases == 21 && return "Cas12a"
     return nothing
 end
 
@@ -204,6 +198,7 @@ function findguides(
     is_antisense::Bool) where {K<:BioSequence}
 
     query = is_antisense ? dbi.motif.rve : dbi.motif.fwd
+    isempty(query) && return UnitRange{Int64}[]
     (seq_start, seq_stop) = locate_telomeres(chrom)
     if is_antisense ⊻ dbi.motif.extends5
         seq_start -= dbi.motif.distance

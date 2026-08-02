@@ -136,6 +136,48 @@ end
     prefix_hash_scan_raw_myers_distance(
         CAS9_D3_PREFIX_SCAN_GEOMETRY, args...)
 
+@inline function prefix_hash_scan_raw_myers_distance(
+    geometry::PrefixScanGeometry{:generic},
+    profile::PrefixHashScanMyersProfile,
+    raw::AbstractVector{UInt8},
+    candidate_start::Int,
+    is_antisense::Bool,
+    distance::Int)
+
+    spec = prefix_scan_matcher_spec(geometry.matcher)
+    offsets = is_antisense ? spec.rev_offsets : spec.fwd_offsets
+    step = is_antisense ? spec.rev_step : spec.fwd_step
+    pattern_length = Int(profile.length)
+    reference_length = pattern_length + distance
+    first_scored_prefix = pattern_length - distance
+    pv = typemax(UInt64)
+    mv = UInt64(0)
+    score = pattern_length
+    best = distance + 1
+    @inbounds for ref_idx in 1:reference_length
+        relative_idx = ref_idx <= pattern_length ? offsets[ref_idx] :
+            (step > 0 ? spec.span + ref_idx - pattern_length - 1 :
+                -(ref_idx - pattern_length))
+        raw_idx = candidate_start + relative_idx
+        mask = 1 <= raw_idx <= length(raw) ?
+            prefix_hash_scan_iupac_mask(raw[raw_idx]) : UInt8(0)
+        is_antisense && (mask = prefix_hash_scan_complement_mask(mask))
+        eq = profile.eq_by_iupac[Int(mask) + 1]
+        xv = eq | mv
+        xh = xor((eq & pv) + pv, pv) | eq
+        ph = mv | ~(xh | pv)
+        mh = pv & xh
+        ph & profile.final_bit != 0 && (score += 1)
+        mh & profile.final_bit != 0 && (score -= 1)
+        ph = (ph << 1) | UInt64(1)
+        mh <<= 1
+        pv = mh | ~(xv | ph)
+        mv = ph & xv
+        ref_idx >= first_scored_prefix && (best = min(best, score))
+    end
+    return min(best, distance + 1)
+end
+
 function materialize_normalized_candidate(
     chrom_seq::LongDNA{4},
     candidate_range::UnitRange{Int64},
@@ -317,6 +359,40 @@ materialize_normalized_candidate_specialized(
 materialize_normalized_candidate_specialized(
     ::PrefixScanGeometry{:cas12a}, args...) =
     materialize_normalized_candidate_cas12a(args...)
+
+function materialize_normalized_candidate_specialized(
+    geometry::PrefixScanGeometry{:generic},
+    chrom_seq::LongDNA{4}, candidate_start::Int,
+    dbi::DBInfo, is_antisense::Bool)
+
+    candidate_range = candidate_start:(
+        candidate_start + prefix_scan_candidate_last_offset(geometry))
+    return materialize_normalized_candidate(
+        chrom_seq, candidate_range, dbi, is_antisense)
+end
+
+function materialize_normalized_candidate_specialized(
+    geometry::PrefixScanGeometry{:generic},
+    raw::AbstractVector{UInt8}, candidate_start::Int,
+    dbi::DBInfo, is_antisense::Bool)
+
+    spec = prefix_scan_matcher_spec(geometry.matcher)
+    offsets = is_antisense ? spec.rev_offsets : spec.fwd_offsets
+    step = is_antisense ? spec.rev_step : spec.fwd_step
+    bytes = Vector{UInt8}(undef, geometry.guide_bases + geometry.distance)
+    @inbounds for ref_idx in eachindex(bytes)
+        relative_idx = ref_idx <= geometry.guide_bases ? offsets[ref_idx] :
+            (step > 0 ? spec.span + ref_idx - geometry.guide_bases - 1 :
+                -(ref_idx - geometry.guide_bases))
+        raw_idx = candidate_start + relative_idx
+        bytes[ref_idx] = 1 <= raw_idx <= length(raw) ?
+            raw[raw_idx] : UInt8('-')
+    end
+    ot = LongDNA{4}(String(bytes))
+    is_antisense && (ot = complement(ot))
+    pos_offset = is_antisense ? spec.rev_pos_offset : spec.fwd_pos_offset
+    return ot, candidate_start + pos_offset
+end
 
 function verify_prefix_hash_scan_bitmask_candidate!(
     out,

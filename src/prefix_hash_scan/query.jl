@@ -234,9 +234,15 @@ function build_prefix_hash_scan_map(
     hash_len::Int,
     hash_type::Type{<:Unsigned},
     stats::Union{Nothing, PrefixHashScanStats} = nothing;
-    query_variant::Symbol = prefix_hash_scan_query_variant())
+    query_variant::Symbol = prefix_hash_scan_query_variant(),
+    paths = nothing)
 
-    paths, _ = load_prefix_hash_scan_paths(motif, distance, hash_len, stats)
+    if paths === nothing
+        paths, _ = load_prefix_hash_scan_paths(motif, distance, hash_len, stats)
+    elseif stats !== nothing
+        stats.path_rows = size(paths, 1)
+        stats.path_source = :prepared
+    end
     guides_ = oriented_prefix_hash_scan_guides(guides, motif)
     query = build_prefix_hash_scan_map_from_paths(paths, guides_, hash_type, stats; query_variant = query_variant)
     return query, guides_
@@ -562,14 +568,20 @@ function build_prefix_hash_scan_compact_query(
     bucket_bases::Int,
     prefilter_bits::Int,
     query_build_backend::Symbol = :serial,
-    query_threads::Int = 1)
+    query_threads::Int = 1,
+    paths = nothing)
 
     query_build_backend in (:auto, :serial, :parallel) ||
         error("query_build_backend must be :auto, :serial, or :parallel.")
     query_threads >= 1 || error("query_threads must be positive.")
 
-    paths, _ = load_prefix_hash_scan_paths(
-        motif, distance, hash_len, stats)
+    if paths === nothing
+        paths, _ = load_prefix_hash_scan_paths(
+            motif, distance, hash_len, stats)
+    elseif stats !== nothing
+        stats.path_rows = size(paths, 1)
+        stats.path_source = :prepared
+    end
     guides_ = oriented_prefix_hash_scan_guides(guides, motif)
     lists = Vector{Vector{UInt32}}(undef, length(guides_))
     timings = stats === nothing ? nothing :

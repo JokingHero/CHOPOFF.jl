@@ -237,6 +237,8 @@ function scan_ambiguous_prefix_hits_range!(
                     (false, plus_hits, plus_first, plus_last),
                     (true, minus_hits, minus_first, minus_last))
                 strand_first <= candidate_start <= strand_last || continue
+                pattern = is_antisense ? dbi.motif.rve : dbi.motif.fwd
+                isempty(pattern) && continue
                 matched, mask, ambiguous_prefix =
                     prefix_hash_scan_ambiguous_candidate_mask(
                         candidate, dbi.motif, is_antisense, hash_len, query)

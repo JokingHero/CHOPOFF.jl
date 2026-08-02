@@ -130,21 +130,26 @@ function Motif(alias::String,
         throw("fwd_motif and fwd_pam have to have the same length!")
     end
     merge = combinestrings(fwdmotif, fwdpam)
+    pam_matches = findall(r"[^X]+", fwdpam)
+    length(pam_matches) <= 1 ||
+        error("PAM bases must form one contiguous block.")
+    pam_loci = isempty(pam_matches) ? (1:0) : only(pam_matches)
 
     if forward_strand
-        # where is PAM located?
-        pam_loci_fwd = findall(r"[^X]+", fwdpam)[1]
+        pam_loci_fwd = pam_loci
         fwd = LongDNA{4}(merge)
     else
-        pam_loci_fwd = UnitRange{Int64}()
+        pam_loci_fwd = 1:0
         fwd = LongDNA{4}("")
     end
 
     if reverse_strand
-        pam_loci_rve = findall(r"[^X]+", reverse(fwdpam))[1]
+        pam_loci_rve = isempty(pam_loci) ? (1:0) : (
+            (length(fwdpam) - last(pam_loci) + 1):
+            (length(fwdpam) - first(pam_loci) + 1))
         rve = reverse_complement(LongDNA{4}(merge))
     else
-        pam_loci_rve = UnitRange{Int64}()
+        pam_loci_rve = 1:0
         rve = LongDNA{4}("")
     end
 
@@ -287,7 +292,14 @@ end
 
 
 function visualize_motif(motif::Motif; separator::String = "_")
-    s = string(motif.fwd[motif.pam_loci_fwd])
+    reverse_only = isempty(motif.fwd)
+    pattern, pam_loci = reverse_only ?
+        (motif.rve, motif.pam_loci_rve) :
+        (motif.fwd, motif.pam_loci_fwd)
+    isempty(pam_loci) && return string(length_noPAM(motif)) * "N"
+    pam = pattern[pam_loci]
+    reverse_only && (pam = reverse_complement(pam))
+    s = string(pam)
     if motif.extends5
         s = string(length_noPAM(motif)) * "N" * separator * s
     else

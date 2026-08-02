@@ -198,6 +198,99 @@ end
             Motif("Cas9"; distance = 5), 5, 16) === nothing
     end
 
+    @testset "generic motif geometries and backends" begin
+        guide20 = "ACGTTGCAACGTAGCTTGCA"
+        guide23 = guide20 * "TGC"
+        pamless = Motif(
+            "pamless", repeat("N", 20), repeat("X", 20),
+            true, true, 1, true, 0)
+        internal = Motif(
+            "internal", "NNNNNNNNNNXXXNNNNNNNNNN",
+            "XXXXXXXXXXAGGXXXXXXXXXX", true, true, 1, false, 0)
+        forward_only = Motif(
+            "forward_only", repeat("N", 20) * "XXX",
+            repeat("X", 20) * "AGG", true, false, 1, true, 0)
+        cases = [
+            (Motif("Cas9_NGA"; distance = 1), guide20, guide20 * "AGA"),
+            (Motif("Cas9_NNAGAA"; distance = 1), guide20, guide20 * "AAAGAA"),
+            (Motif("CasX"; distance = 1), guide20, "TTCA" * guide20),
+            (Motif("hfCas12Max"; distance = 1), guide23, "TAC" * guide23),
+            (pamless, guide20, guide20),
+            (internal, guide20, guide20[1:10] * "AGG" * guide20[11:20]),
+            (forward_only, guide20, guide20 * "AGG"),
+        ]
+        for (case_idx, (motif, guide_string, forward_site)) in enumerate(cases)
+            geometry = CHOPOFF.resolve_prefix_scan_geometry(motif, 1, 16)
+            @test CHOPOFF.prefix_scan_kind(geometry) == :generic
+            reverse_site = string(reverse_complement(LongDNA{4}(forward_site)))
+            sequence = repeat("A", 70) * forward_site * repeat("C", 70) *
+                reverse_site * repeat("G", 70)
+            genome = joinpath(tdir, "generic_motif_$case_idx.fa")
+            write_phs_fasta(genome, "chr1", sequence)
+            guide = LongDNA{4}(guide_string)
+            outputs = String[]
+            for backend in (:legacy, :fused_directory, :streaming_fasta_simd)
+                output = joinpath(tdir, "generic_motif_$(case_idx)_$(backend).csv")
+                CHOPOFF.search_prefixHashScan(
+                    [guide], genome, motif, output;
+                    distance = 1, hash_len = 16,
+                    early_stopping = fill(100, 2), scan_backend = backend,
+                    stream_chunk_bases = 64)
+                push!(outputs, read(output, String))
+            end
+            @test all(==(first(outputs)), outputs)
+
+            public_output = joinpath(tdir, "generic_motif_$(case_idx)_public.csv")
+            search_prefixHashScan(
+                [guide], genome, public_output; motif = motif, distance = 1,
+                early_stopping = fill(100, 2))
+            @test read(public_output, String) == first(outputs)
+            if case_idx == 1
+                twobit = joinpath(tdir, "generic_motif.2bit")
+                write_phs_twobit(twobit, "chr1", sequence)
+                twobit_output = joinpath(tdir, "generic_motif_2bit.csv")
+                CHOPOFF.search_prefixHashScan(
+                    [guide], twobit, motif, twobit_output;
+                    distance = 1, hash_len = 16,
+                    early_stopping = fill(100, 2),
+                    scan_backend = :streaming_2bit_simd,
+                    stream_chunk_bases = 64)
+                @test read(twobit_output, String) == first(outputs)
+            end
+            if motif.alias == "forward_only"
+                @test all(==("+"), DataFrame(CSV.File(public_output)).strand)
+            end
+        end
+
+        for name in ("Cas9_NGA", "Cas9_NNAGAA", "CasX")
+            stats = CHOPOFF.PrefixHashScanStats()
+            CHOPOFF.load_prefix_hash_scan_paths(
+                Motif(name; distance = 1), 1, 16, stats)
+            @test stats.path_source == :precomputed
+        end
+
+        ambiguous_motif = Motif(
+            "Cas9_NGA"; distance = 1, ambig_max = 1)
+        ambiguous_site = guide20[1:7] * "R" * guide20[9:20] * "AGA"
+        ambiguous_genome = joinpath(tdir, "generic_motif_ambiguous.fa")
+        write_phs_fasta(
+            ambiguous_genome, "chr1", repeat("A", 70) * ambiguous_site * repeat("C", 70))
+        ambiguous_outputs = String[]
+        for backend in (:legacy, :streaming_fasta_simd)
+            output = joinpath(tdir, "generic_motif_ambiguous_$(backend).csv")
+            CHOPOFF.search_prefixHashScan(
+                [LongDNA{4}(guide20)], ambiguous_genome, ambiguous_motif, output;
+                distance = 1, hash_len = 16,
+                early_stopping = fill(100, 2), scan_backend = backend,
+                stream_chunk_bases = 64)
+            push!(ambiguous_outputs, read(output, String))
+        end
+        @test only(unique(ambiguous_outputs)) == first(ambiguous_outputs)
+
+        short_motif = Motif("test"; distance = 2)
+        @test CHOPOFF.resolve_prefix_scan_geometry(short_motif, 2, 1) === nothing
+    end
+
     @testset "supported Cas9 API" begin
         guide = LongDNA{4}("ACGTACGTACGTACGTACGT")
         pad = repeat("A", 40)

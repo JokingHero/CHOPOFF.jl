@@ -61,7 +61,7 @@ julia --threads 4 --project="." ./src/CHOPOFF.jl --help
 
 For search of off-targets you have a couple of options:
 - **[prefixHashDB](@ref "search_prefixHashDB")** - the fastest, we apply hashes to symbolic alignments for fast filtering of OTs  
-- [prefixHashScan](prefix_hash_scan.md) - direct indexed-FASTA or 2bit search for Cas9/Cas12a, including up to three ambiguous reference bases per candidate
+- [prefixHashScan](prefix_hash_scan.md) - direct indexed-FASTA or 2bit search for registered or custom motifs, including PAMless searches
 - [linearDB](@ref "search_linearDB") - most rigorously tested
 - [motifDB](@ref "search_motifDB") - on top of linearDB we apply pigeonhole principle like filter which you can adjust
 - [treeDB](@ref "search_treeDB") - will work best for longer gRNAs, uses vantage point for filteirng

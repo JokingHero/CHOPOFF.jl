@@ -2,21 +2,26 @@
 
 ## Status and scope
 
-`prefixHashScan` is an indexless CRISPR off-target search. Its supported public
-entrypoint covers Cas9 and Cas12a at edit distances 0 through 4 with a fixed
-16-base prefix; broader tuning remains an experimental benchmark and parity
-engine. It reuses the
+`prefixHashScan` is an indexless CRISPR off-target search. Its public Julia API
+accepts registered motifs and custom `Motif` objects at edit distances 0 through
+4. Hand-written Cas9 and Cas12a kernels remain the canonical fast paths. Other
+eligible motifs use a motif-specialized generic kernel; configurations outside
+that kernel's envelope use the exact legacy engine. The search reuses the
 symbolic prefix paths from `prefixHashDB`, builds a guide-specific query
 structure in memory, and scans the reference genome directly.
 
-The current optimized geometries are:
+The current optimized envelope is:
 
 - Cas9: 20-base guide with an `NGG` PAM;
 - Cas12a: 21-base guide with a `TTTV` PAM;
+- generic: 16 through 64 guide bases, complete motif span at most 65 bases;
+- one contiguous PAM block at any position, or no PAM;
+- forward, reverse, or both strands;
 - edit distance 0 through 4
 - 16-base prefix
+- `guide length - distance >= 16`;
 - 64 guides per optimized query batch; larger lists are batched automatically
-- FASTA reference with a standard `.fai` file
+- FASTA with a standard `.fai`, or a `.2bit` reference
 - x86 CPU with AVX2 and BMI2
 
 Current production tuning for this path is:
@@ -48,12 +53,14 @@ The implementation is split by stable responsibility:
 - `src/prefix_hash_scan/kernel_common.jl`: geometry-neutral SIMD/lookup primitives;
 - `src/prefix_hash_scan/cas9.jl`: scalar and AVX2/BMI2 Cas9 scan kernels;
 - `src/prefix_hash_scan/cas12a.jl`: scalar and AVX2/BMI2 Cas12a scan kernels;
+- `src/prefix_hash_scan/generic.jl`: compiled motif-specialized generic kernel;
 - `src/prefix_hash_scan/verification.jl`: Myers, traceback, and result commit;
-- `src/prefix_hash_scan/streaming.jl`: indexed FASTA reads and global scheduler.
+- `src/prefix_hash_scan/streaming.jl`: FASTA/2bit streaming and global scheduler.
 
-`PrefixScanGeometry{Kind}` supplies guide, PAM, prefix, distance,
-candidate-span, and overlap values to validation and orchestration. Literal
-Cas9 and Cas12a constants stay inside separate SIMD hot loops.
+`PrefixScanGeometry{Kind,Matcher}` supplies guide, PAM, prefix, distance,
+candidate-span, overlap, and optional compiled motif matching to validation and
+orchestration. Literal Cas9 and Cas12a constants stay inside separate SIMD hot
+loops.
 
 ## Core idea
 
@@ -110,6 +117,35 @@ described below. `scan_backend=:auto` selects `:streaming_fasta_simd` under the
 same FASTA, guide-count, AVX2, and BMI2 requirements as Cas9. The public API
 selects it with `motif="Cas12a"`; the CLI uses `--motif Cas12a`.
 
+### Typed generic specialization
+
+`resolve_generic_prefix_scan_geometry` converts eligible motif properties into
+the `PrefixScanMatcher` type: enabled strands, constrained IUPAC positions,
+guide offsets after PAM removal, orientation, and coordinate offsets. Generated
+functions turn that type into straight-line validity, PAM-matching, and prefix
+packing operations. There are no runtime motif branches inside the 64-start
+SIMD block loop.
+
+Guide and motif lengths are not fixed to Cas9 or Cas12a. For example, a
+25-base guide followed by an `NNT` PAM resolves to
+`PrefixScanGeometry{:generic}` with a 28-base candidate span and a 16-base
+prefix at distances 0 through 4:
+
+```julia
+motif = Motif(
+    "25N_NNT",
+    repeat("N", 25) * "NNT",
+    repeat("X", 25) * "NNT",
+    true, true, 4, true, 0,
+)
+```
+
+An all-`X` PAM description produces an empty PAM range and therefore a PAMless
+search. The optimized generic envelope requires a 16-through-64-base guide, a
+complete span no longer than 65 bases, distance 0 through 4, and
+`guide length - distance >= 16`. Other valid motifs remain correct through
+`:legacy`.
+
 ## Optimized streaming path
 
 ### 1. Select the backend
@@ -117,7 +153,7 @@ selects it with `motif="Cas12a"`; the CLI uses `--motif Cas12a`.
 `search_prefixHashScan(...; scan_backend=:auto)` selects
 `:streaming_fasta_simd` when all of the following hold:
 
-- the motif has the canonical Cas9 or Cas12a guide/PAM geometry;
+- the motif has a canonical or eligible typed generic geometry;
 - the distance is between 0 and 4;
 - `hash_len == 16`;
 - the query uses the 64-bit guide mask representation;
@@ -125,7 +161,7 @@ selects it with `motif="Cas12a"`; the CLI uses `--motif Cas12a`.
 - the reference is FASTA;
 - AVX2 and BMI2 are available.
 
-Canonical Cas9 and Cas12a geometries use the same backend-selection policy. If
+Canonical and typed generic geometries use the same backend-selection policy. If
 raw FASTA SIMD is unavailable, `:auto` selects the intermediate
 `:fused_directory` backend. Unsupported geometries select `:legacy`.
 
@@ -147,11 +183,13 @@ reference.
 
 ### 2. Load symbolic prefix paths
 
-`load_prefix_hash_scan_paths` loads exact precomputed Cas9 or Cas12a paths for
-the requested distance. Cas9 paths are also available for experimental prefix
-lengths up to 16. If an asset is unavailable, the same paths are generated with
-`build_PathTemplates`, restricted to the requested prefix and distance, then
-deduplicated.
+`load_prefix_hash_scan_paths` loads exact precomputed paths by guide length,
+distance, and prefix length. Existing 20-base and 21-base assets are reused
+regardless of PAM sequence or position. If an asset is unavailable, as for a
+25-base guide, paths are generated once before guide batching with
+`build_PathTemplates`, restricted to the requested prefix and distance,
+deduplicated, and reused by every batch. Path generation does not select the
+scan kernel and does not force the generic engine to `:legacy`.
 
 At p16, each motif has 1, 129, 7,873, 302,337, and 8,196,801 distinct
 symbolic paths for d0 through d4 respectively. Paths are shared by every guide
@@ -330,8 +368,10 @@ parallel workers claim globally scheduled overlapped FASTA chunks:
     bases = read_and_remove_newlines(chunk)
     pam_masks = if geometry == Cas9:
         simd_find_unambiguous_NGG_and_CCN_windows(bases)
-    else:
+    elseif geometry == Cas12a:
         simd_find_unambiguous_TTTV_and_BAAA_windows(bases)
+    else:
+        generated_simd_match(matcher_type, bases)
     clear(hits, candidates)
 
     for candidate_start in set_bits(pam_masks):
@@ -359,12 +399,12 @@ commit_retained_hits_in_reference_order()
 
 ## Comparison with the general path
 
-| Stage | Optimized Cas9/Cas12a d0-d4 paths | General `:legacy` path |
+| Stage | Optimized canonical/generic d0-d4 paths | General `:legacy` path |
 |---|---|---|
-| Supported query | Canonical Cas9 or Cas12a, d0-d4, 16-base hash, <=64 guides | Other motifs, hash lengths, and guide counts |
+| Supported query | Eligible motifs, d0-d4, 16-base hash, <=64 guides per batch | Other motif sizes and hash lengths |
 | Query structure | Presence bitmap + compact sorted directory + `UInt64` guide masks | `Dict` from hash to guide mask or guide-index vectors |
 | Reference access | FAI range reads into reusable raw buffers | FASTA/2bit records loaded and converted to `LongDNA` |
-| PAM search | Dedicated Cas9 or Cas12a AVX2 masks evaluate 64 starts | `findguides` over materialized chromosome sequences |
+| PAM search | Canonical or compile-time generic AVX2 masks evaluate 64 starts | `findguides` over materialized chromosome sequences |
 | Prefix extraction | Geometry-specific BMI2 packing from raw bytes | Sequence slicing/orientation or direct scalar hashing |
 | Temporary objects | Reused raw/hit buffers and compact verified hits | More sequence objects and generic candidate ranges |
 | Distance rejection | Allocation-free raw Myers before materialization | Usually `align`; some fused modes can use distance-first verification |
@@ -411,6 +451,26 @@ guides, PAM density, and candidate rate. A current fair full-human benchmark
 against Rust Sassy v1 and v2 has not yet been completed.
 
 ## Current measured result
+
+### Generic-kernel cost relative to specialized Cas9
+
+An August 2, 2026 scanner microbenchmark forced the canonical Cas9 motif through
+the generic geometry so both kernels processed identical windows. It used 32 MB
+of deterministic random A/C/G/T reference, distance 3, one thread, an empty
+`UInt32` hash query, and 11 alternating timed runs after warmup. This isolates
+motif scanning, prefix packing, and failed hash lookup; it excludes path/query
+construction, verification, I/O, and result writing.
+
+| Cas9 scanner | Median | Throughput | Relative latency |
+|---|---:|---:|---:|
+| Hand-written Cas9 | 66.7 ms | 480 MB/s | 1.000x |
+| Forced typed generic | 78.6 ms | 407 MB/s | 1.178x |
+
+Both kernels found exactly 4,001,477 motif candidates. The generic kernel took
+17.8% longer and delivered 15.1% lower throughput, or about 85% of specialized
+Cas9 throughput. This is a hot-loop result, not an end-to-end guarantee. Shared
+query construction, verification, I/O, and output usually reduce the relative
+effect; different PAM frequencies change candidate work.
 
 ### Full distance 0-4 human sweep
 
@@ -648,19 +708,19 @@ this host.
 
 ## Current limitations and issues
 
-1. The fastest kernels are separate Cas9 and Cas12a geometries at distances 0
-   through 4 with a 16-base prefix; other motifs and prefix lengths use slower
-   paths.
+1. The fastest kernels remain separate Cas9 and Cas12a geometries at distances
+   0 through 4 with a 16-base prefix. Other eligible motifs use a typed generic
+   SIMD geometry; unsupported sizes use the exact legacy path.
    Shared validation, bounds, overlap, and scheduling use
    `PrefixScanGeometry{Kind}` without moving motif branches into SIMD loops.
 2. Each optimized query holds at most 64 guides. Larger public API and CLI
    searches rescan the reference once per sequential batch.
-3. AVX2 and BMI2 are required; there is no equivalent ARM or AVX-512 kernel.
-4. FASTA requires `.fai`; optimized streaming is not implemented for 2bit.
+3. AVX2 and BMI2 are required for the SIMD backend; unsupported CPUs use the
+   portable fused-directory or legacy path. There is no ARM or AVX-512 kernel.
+4. FASTA requires `.fai`; `.2bit` is streamed directly without a sidecar index.
 5. Ambiguous query guides are rejected.
-6. The supported API intentionally skips any candidate with a non-ACGT base in
-   its complete 23-base Cas9 or 25-base Cas12a guide/PAM window. There is no
-   ambiguous-reference fallback.
+6. `ambig_max` supports zero through three IUPAC-ambiguous reference positions
+   per complete guide/PAM window. Larger ambiguity allowances are unsupported.
 7. Early stopping does not cancel already scheduled scan/verification work.
 8. Global scheduling adds per-chunk result containers and concurrent FASTA
    seeks. Current evidence is for warm-cache GRCh38; cold-cache and networked
@@ -677,10 +737,9 @@ this host.
     bitmap is still probed in genome order and may remain memory-latency bound.
 13. `PrefixHashScanStats` contains summed worker CPU times and wall-clock fields;
     those values cannot be compared directly without clear labeling.
-14. The exported three-argument `search_prefixHashScan` and standalone CLI
-    support Cas9 and Cas12a at distances 0 through 4. Advanced tuning remains
-    on the experimental
-    four-argument method.
+14. The exported three-argument `search_prefixHashScan` accepts registered names
+    or custom Julia `Motif` objects at distances 0 through 4. The standalone CLI
+    accepts registered motif names; custom motifs must first be registered.
 15. Source separates constant-free helpers, Cas9 and Cas12a kernels,
     verification, streaming, and orchestration in the parent `CHOPOFF` module.
 
@@ -755,9 +814,10 @@ this host.
 Performance work should not be mixed blindly with generalization. Useful next
 features are:
 
-1. **Completed:** export and document Cas9 and Cas12a distances 0 through 4 for
-   `search_prefixHashScan`, add a standalone CLI search mode, and report the
-   resolved backend and execution modes without enabling statistics.
+1. **Completed:** export and document registered and custom motifs at distances
+   0 through 4 for `search_prefixHashScan`, add a standalone CLI search mode,
+   and report the resolved backend and execution modes without enabling
+   statistics.
 2. **Completed:** support more than 64 guides through transparent sequential
    64-guide batching after the one-pass alternatives lost the GRCh38 benchmark.
 3. Make early stopping cancel future chunks while preserving deterministic
@@ -766,7 +826,8 @@ features are:
    benchmark mode.
 5. **Completed:** add Cas12a as a separate specialized scan geometry using its
    precomputed paths without forcing Cas9 constants into a generic SIMD loop.
-6. Add an optimized 2bit reader and define exact IUPAC-reference behavior.
+6. **Completed:** add optimized 2bit streaming and bounded IUPAC-reference
+   behavior for `ambig_max=0:3`.
 
 ## Recommended next work after the d0-d4 sweep
 
@@ -805,7 +866,7 @@ gate unless they provide an independently valuable feature.
    path.
 7. **Keep hardware-specific work evidence-driven.** NUMA pinning and per-socket
    query replicas are the first Cas9 experiments; cache-conscious prefilters,
-   AVX-512, mmap/2bit streaming, and ARM SIMD remain follow-ups. Do not replace
+   AVX-512, mmap-backed input, and ARM SIMD remain follow-ups. Do not replace
    the current path without exact parity and a credible end-to-end gain.
 
 The simplest high-value sequence is therefore: retain direct prefixHashDB
@@ -876,10 +937,10 @@ benchmarking ceiling.
 
 ### Priority 1: production distances 0 through 4 (completed at p16)
 
-Distances 0, 1, 2, 3, and 4 are supported public configurations for Cas9 and
-Cas12a. A lower requested distance does not run a larger-threshold query and
-discard higher-distance results. Distances 0 through 3 load exact single-file
-p16 assets; distance 4 loads the existing canonical split matrices.
+Distances 0, 1, 2, 3, and 4 are supported public configurations for registered
+and custom motifs. A lower requested distance does not run a larger-threshold
+query and discard higher-distance results. Guide lengths 20 and 21 reuse exact
+p16 assets; other lengths generate the requested paths once per search.
 
 Distance parameterizes path selection, chunk overlap, and the Myers threshold.
 The existing Cas9 and Cas12a PAM/profile kernels remain separate and are not
@@ -938,37 +999,21 @@ detail multisets, report peak RSS, and beat sequential batching by at least 10%
 on both dispersed and related 1,024-guide workloads. Until then, batching is
 the production architecture rather than a fallback.
 
-### Priority 4: bounded IUPAC ambiguity
+### Completed: bounded IUPAC ambiguity
 
-Ambiguity support is required, but simple expansion is only one part of the
-solution. Query, prefix, PAM, and verification ambiguity have different costs:
-
-- An ambiguous query base can expand to its compatible A/C/G/T choices while
-  constructing concrete prefix hashes.
-- An ambiguous reference base inside the hashed prefix can generate compatible
-  concrete hashes before directory lookup.
-- PAM ambiguity should be evaluated directly with IUPAC compatibility masks,
-  not by materializing every PAM string.
-- Ambiguity outside the hashed prefix requires an IUPAC-aware Myers profile and
-  exact final verification.
-
-All expansion must be bounded by `motif.ambig_max` and use CHOPOFF's existing
-`iscompatible` semantics. A candidate containing `a` independently ambiguous
-bases can require up to `4^a` concrete hashes, so the optimized path needs an
-explicit expansion bound and a correct scalar/fallback path above it. It must
-never reject a valid candidate merely because expansion would be expensive.
-
-Implement ambiguity first in the portable correctness backend, establish
-linearDB/prefixHashDB parity, and specialize SIMD handling only after candidate
-rates and ambiguity distributions are measured.
+`motif.ambig_max=0:3` bounds ambiguous reference positions across the complete
+candidate window. PAM symbols use IUPAC compatibility masks. Ambiguous hashed
+prefixes expand to compatible concrete hashes, and ambiguity outside the prefix
+uses IUPAC-aware Myers verification and traceback. Query guides remain
+unambiguous. FASTA preserves supported IUPAC symbols; 2bit represents ambiguous
+blocks as `N`.
 
 ### Completed: distance 4 benchmark ceiling
 
-Distance 4 is supported for Cas9 and Cas12a at p16 as the largest functional
-search threshold and as a benchmarking opportunity. It uses the existing split
-d4 matrices: 8,196,801 symbolic paths and about 125 MiB per motif. The loader
-concatenates those canonical matrices directly and skips the generic deduplication
-and threshold-filtering work.
+Distance 4 is the largest public search threshold and a benchmarking ceiling.
+For 20- and 21-base guides at p16, it uses the existing split d4 matrices:
+8,196,801 symbolic paths and about 125 MiB. Other guide lengths generate and
+deduplicate their paths before scanning.
 
 This mode intentionally reuses the d0-d4 compact query and motif-specific scan
 architecture. It is not expected to match lower-distance speed or memory use. In
@@ -989,7 +1034,7 @@ performance gates:
   string construction, deduplication, and CSV commit.
 - Count mode should be benchmarked independently because it removes most of the
   Cas12a-specific output cost and exposes the scan/verification ceiling.
-- AVX-512, ARM SIMD, 2bit streaming, and further prefilter experiments remain
+- AVX-512, ARM SIMD, mmap-backed input, and further prefilter experiments remain
   follow-up portability or speed work, not prerequisites for the first
   generalized release.
 
@@ -998,26 +1043,84 @@ end-to-end improvement in its intended workload. Always report detail and
 count modes separately and verify that a motif-specific win does not regress
 the other production geometry.
 
-### Replacement gates for prefixHashDB
+### Successor readiness relative to prefixHashDB
 
-`prefixHashScan` can replace prefixHashDB as the documented default reference
-search when all of the following hold:
+For a one-shot, complete search with at most 64 guides on supported x86
+hardware, `prefixHashScan` is already the likely successor to `prefixHashDB`.
+It avoids database construction and storage, and the measured Cas9/Cas12a
+searches are substantially faster. It cannot yet be described as universally
+superior because the two algorithms amortize genome work differently.
 
-1. Cas9 and Cas12a distances 0-4 have exact detail parity on sample, randomized,
-   and human-scale fixtures.
-2. Complete count output exactly matches summaries derived from detail output;
-   capped output is marked `complete=false`.
-3. The one-pass large-guide representation is demonstrated through at least
-   4,096 guides with bounded peak memory.
-4. Scalar and optimized backends have identical results, and unsupported CPU or
-   input configurations select a correct fallback rather than fail silently.
-5. Warm-cache, cold-cache, thread-scaling, query-build, scan, verification, and
-   output costs are reported separately.
-6. Existing Cas9/d3 and Cas12a/d3 detail latency regresses by no more than 3%
-   unless the change provides a measured feature-level benefit that justifies
-   it.
+`prefixHashScan` scans the reference once for each 64-guide batch. Thus 61,
+1,024, and 4,096 guides require 1, 16, and 64 reference scans respectively.
+`prefixHashDB` pays genome processing once during database construction and can
+reuse that index for arbitrary future searches. A persistent index can therefore
+win for large guide sets or repeated searches even when one scan is faster than
+one indexed search. The crossover must be measured as:
 
-After these gates pass, update the README, public documentation, and CLI
-examples to lead with the no-build workflow. Keep prefixHashDB available during
-one compatibility period for validation, repeated-query workloads, VCF-related
-workflows, and configurations not yet supported by the scan path.
+```text
+prefixHashDB total = database build + searches * indexed search
+prefixHashScan total = searches * ceil(guides / 64) * reference scan
+```
+
+The main remaining gaps are:
+
+1. **Large-guide scaling.** Either develop a bounded-memory one-pass query that
+   beats batching, or automatically route workloads beyond a measured crossover
+   to `prefixHashDB`. The rejected large-directory prototype was about three
+   times slower than sequential 64-guide batches, so merely widening the guide
+   mask is not sufficient.
+2. **Computational early stopping.** `prefixHashDB` can stop processing a guide
+   when its threshold is reached. The streaming scan currently performs
+   scheduled scan/verification work and applies the limit during deterministic
+   commit. Workers need a deterministic live-guide mask, cancellation of
+   unclaimed chunks when all guides stop, and explicit incomplete-output status.
+3. **Generic correctness qualification.** Extend exact prefixHashDB parity from
+   canonical human-scale cases to generic distances 0 through 4, guide lengths
+   16 through 64, PAM-left/PAM-right/internal/PAMless motifs, strand subsets,
+   FASTA/2bit, ambiguity 0 through 3, indels at reference/chunk boundaries,
+   duplicate guides, and multi-batch searches. Use randomized property tests
+   and representative human-scale searches.
+4. **Distance-4 resources.** The measured 61-guide Cas9 d4 query took 10.8
+   seconds to build, occupied 1.09 GB, and reached 4.51 GB peak RSS. Evaluate
+   adaptive prefix lengths or compressed/staged construction, and provide clear
+   resource reporting or routing when the optimized representation is too large.
+5. **Crossover evidence.** Benchmark 1, 8, 61, 64, 65, 256, 1,024, and 4,096
+   guides; one-shot and repeated searches; warm and cold data; canonical and
+   generic motifs; distances 0 through 4; FASTA and 2bit; sparse, dense, capped,
+   and complete output; and local versus slower storage. Separate query build,
+   scan, verification, commit, peak memory, database build, and database storage.
+6. **Portable performance.** AVX2/BMI2 systems use the fastest streaming path.
+   Correct fused-directory and legacy fallbacks exist, but must be qualified
+   against prefixHashDB on unsupported CPUs before claiming a universal win.
+7. **Product completion.** Add count-only output without traceback/detail CSV,
+   `complete=true|false` for capped searches, path/query memory and progress
+   reporting, custom motif definitions in the CLI, and atomic multi-batch output.
+
+The generic kernel's measured 17.8% Cas9 hot-loop latency penalty is not a
+replacement blocker. The decisive limitations are repeated reference scans for
+large guide sets and early stopping that does not yet cancel most computation.
+
+#### Replacement gates
+
+Make `prefixHashScan` the documented default for its qualified workload when:
+
+1. Canonical and representative generic distances 0 through 4 have exact detail
+   parity on sample, randomized, and human-scale fixtures.
+2. Scalar, fused, FASTA SIMD, and 2bit SIMD backends have identical results;
+   unsupported configurations select a correct fallback rather than fail.
+3. Early-stopped output is explicitly incomplete and cancellation saves
+   scheduled work without changing deterministic output semantics.
+4. Large and repeated workloads either use a demonstrated bounded-memory
+   one-pass design or are routed to prefixHashDB using a measured policy.
+5. Distance-4 peak memory has an enforced, documented operating policy.
+6. Warm/cold, thread-scaling, guide-count, repeated-search, query-build, scan,
+   verification, output, and index-amortization costs are reported separately.
+7. Cas9/d3 and Cas12a/d3 detail latency regresses by no more than 3% unless a
+   measured feature-level benefit justifies it.
+
+The initial default should be one-shot, complete searches with eligible motifs
+and at most 64 guides. Keep `prefixHashDB` as the persistent-index backend for
+repeated, heavily capped, very large-guide, or unsupported workloads. This is a
+more useful successor policy than deleting an architecture with a different
+amortization advantage.

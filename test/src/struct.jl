@@ -2,7 +2,7 @@ using Test
 
 using CHOPOFF: DBInfo, Loc, decode, 
     Motif, length_noPAM, removepam, combinestrings, notX,
-    setdist, Offtarget, insert_offtarget!, display_motif
+    setdist, Offtarget, insert_offtarget!, display_motif, visualize_motif
 using BioSequences
 
 @testset "structures" begin
@@ -24,6 +24,27 @@ using BioSequences
         @test length(cas9_d1) == 23
         @test length(cpf1_d1) == 25
         @test isequal(cas9_d1, cas9_2)
+
+        pamless = Motif(
+            "pamless", repeat("N", 20), repeat("X", 20),
+            true, true, 3, true, 0)
+        @test pamless.pam_loci_fwd == 1:0
+        @test pamless.pam_loci_rve == 1:0
+        @test length_noPAM(pamless) == 20
+        @test display_motif(pamless) == "Alias: pamless\nMaximum search distance: 3\nNumber of allowed ambigous bp: 0\n20N"
+
+        forward_only = Motif(
+            "forward", "NNNX", "XXXG", true, false, 1, true, 0)
+        reverse_only = Motif(
+            "reverse", "NNNX", "XXXG", false, true, 1, true, 0)
+        @test isempty(forward_only.rve)
+        @test forward_only.pam_loci_rve == 1:0
+        @test isempty(reverse_only.fwd)
+        @test reverse_only.pam_loci_fwd == 1:0
+        @test length_noPAM(forward_only) == length_noPAM(reverse_only) == 3
+        @test visualize_motif(reverse_only; separator = "-") == "3N-G"
+        @test_throws ErrorException Motif(
+            "split", "NNNNNN", "XXGXXG", true, true, 1, true, 0)
 
         @test isnothing(Base.show(cas9))
         @test isnothing(Base.print(cas9))

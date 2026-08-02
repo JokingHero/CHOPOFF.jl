@@ -61,7 +61,8 @@ EXAMPLE_OUTPUT="$(mktemp --directory)/phDB_16_2.csv"
 CHOPOFF search --database "$EXAMPLE_INDEX_OUTPUT" --guides "$EXAMPLE_GUIDES" --output "$EXAMPLE_OUTPUT" --distance 2 prefixHashDB
 ```
 
-For direct Cas9 or Cas12a search without building a CHOPOFF database, use
+For direct search with any registered motif or a custom Julia `Motif` object,
+without building a CHOPOFF database, use
 `prefixHashScan` on an indexed FASTA or directly on a `.2bit` reference.
 `--ambig_max` allows zero through three
 ambiguous IUPAC reference positions in each complete guide/PAM window; zero is

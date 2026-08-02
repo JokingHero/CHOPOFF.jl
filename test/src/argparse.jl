@@ -122,6 +122,21 @@ using BioSequences
         @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
             cas12a_d1_args)
         @test read(cas12a_d1_actual) == read(cas12a_d1_expected)
+
+        generic_expected = joinpath(tdir, "generic_expected.csv")
+        generic_actual = joinpath(tdir, "generic_actual.csv")
+        search_prefixHashScan(
+            guides, genome, generic_expected;
+            motif = "Cas9_NGA", distance = 1)
+        generic_args = [
+            "search", "--distance", "1", "--guides", guides_path,
+            "--output", generic_actual, "prefixHashScan",
+            "--genome", genome, "--motif", "Cas9_NGA",
+        ]
+        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+            generic_args)
+        @test read(generic_actual) == read(generic_expected)
+
         sassy_args = [
             "search", "--guides", guides_path, "--output", actual,
             "sassy", "--genome", genome, "--motif", "Cas9",
