@@ -191,6 +191,7 @@ include("prefix_hash_scan/verification.jl")
 include("prefix_hash_scan/kernel_common.jl")
 include("prefix_hash_scan/cas9.jl")
 include("prefix_hash_scan/cas12a.jl")
+include("prefix_hash_scan/twobit.jl")
 include("prefix_hash_scan/streaming.jl")
 
 """
@@ -263,19 +264,27 @@ function search_prefixHashScan(
         resolve_prefix_hash_scan_query_variant(query_variant, length(guides))
     scan_backend in (
         :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd,
-        :streaming_fasta_simd, :streaming_fasta_simd_fused) ||
-        error("scan_backend must be :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd, :streaming_fasta_simd, or :streaming_fasta_simd_fused.")
+        :streaming_fasta_simd, :streaming_fasta_simd_fused,
+        :streaming_2bit_simd) ||
+        error("scan_backend must be :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd, :streaming_fasta_simd, :streaming_fasta_simd_fused, or :streaming_2bit_simd.")
     geometry = resolve_prefix_scan_geometry(motif, distance, hash_len)
     supports_fused = geometry !== nothing &&
         resolved_query_variant == :bitmask64
-    supports_fasta_simd = supports_fused && dbi.gi.is_fa &&
+    supports_raw_simd = supports_fused &&
         hash_len == (geometry::PrefixScanGeometry).prefix_bases &&
         can_use_prefix_hash_scan_simd()
-    resolved_scan_backend = if scan_backend == :auto
-        supports_fasta_simd ? :streaming_fasta_simd :
-            (supports_fused ? :fused_directory : :legacy)
-    else
+    supports_fasta_simd = supports_raw_simd && dbi.gi.is_fa
+    supports_twobit_simd = supports_raw_simd && !dbi.gi.is_fa
+    resolved_scan_backend = if scan_backend != :auto
         scan_backend
+    elseif supports_fasta_simd
+        :streaming_fasta_simd
+    elseif supports_twobit_simd
+        :streaming_2bit_simd
+    elseif supports_fused
+        :fused_directory
+    else
+        :legacy
     end
     if resolved_scan_backend != :legacy && !supports_fused
         error("Fused scan backends require a supported Cas9 or Cas12a distance-0-through-4 geometry and at most 64 guides.")
@@ -286,8 +295,11 @@ function search_prefixHashScan(
             !supports_fasta_simd
         resolved_scan_backend = :fused_directory
     end
+    if resolved_scan_backend == :streaming_2bit_simd && !supports_twobit_simd
+        resolved_scan_backend = :fused_directory
+    end
     resolved_lookup_variant = if lookup_variant == :auto
-        resolved_scan_backend == :streaming_fasta_simd &&
+        resolved_scan_backend in (:streaming_fasta_simd, :streaming_2bit_simd) &&
             prefilter_bits != 0 && bucket_bases == 11 &&
             stream_chunk_bases + prefix_scan_candidate_last_offset(
                 geometry::PrefixScanGeometry) + distance <= typemax(UInt32) ?
@@ -296,8 +308,8 @@ function search_prefixHashScan(
         lookup_variant
     end
     if resolved_lookup_variant == :bucketed
-        resolved_scan_backend == :streaming_fasta_simd ||
-            error("lookup_variant=:bucketed requires the buffered streaming FASTA SIMD backend.")
+        resolved_scan_backend in (:streaming_fasta_simd, :streaming_2bit_simd) ||
+            error("lookup_variant=:bucketed requires a buffered streaming SIMD backend.")
         prefilter_bits != 0 ||
             error("lookup_variant=:bucketed requires a nonzero prefilter.")
         bucket_bases == 11 ||
@@ -309,24 +321,27 @@ function search_prefixHashScan(
     if verify_variant == :myers_raw &&
             !(resolved_scan_backend in (
                 :fused_fasta_simd, :streaming_fasta_simd,
-                :streaming_fasta_simd_fused))
-        error("verify_variant=:myers_raw requires a fused FASTA SIMD backend.")
+                :streaming_fasta_simd_fused, :streaming_2bit_simd))
+        error("verify_variant=:myers_raw requires a raw SIMD backend.")
     end
     if resolved_scan_backend in (
-            :streaming_fasta_simd, :streaming_fasta_simd_fused) &&
+            :streaming_fasta_simd, :streaming_fasta_simd_fused,
+            :streaming_2bit_simd) &&
             !(verify_variant in (:auto, :myers_raw))
-        error("The streaming FASTA SIMD backend requires verify_variant=:auto or :myers_raw.")
+        error("Streaming SIMD backends require verify_variant=:auto or :myers_raw.")
     end
     if verbose
         worker_count = min(scan_threads, Threads.nthreads(), length(guides))
         resolved_query_build_backend = resolve_prefix_hash_scan_query_build_backend(
             query_build_backend, worker_count)
         scheduler = resolved_scan_backend in (
-            :streaming_fasta_simd, :streaming_fasta_simd_fused) ?
+            :streaming_fasta_simd, :streaming_fasta_simd_fused,
+            :streaming_2bit_simd) ?
             :chunk : :record
         @info(
             "prefixHashScan execution",
             scan_geometry = geometry === nothing ? :generic : prefix_scan_kind(geometry),
+            reference_format = dbi.gi.is_fa ? :fasta : :twobit,
             scan_backend = resolved_scan_backend,
             lookup_variant = resolved_lookup_variant,
             query_build_backend = resolved_query_build_backend,
@@ -339,7 +354,7 @@ function search_prefixHashScan(
     query_start = prefix_hash_scan_timer(stats)
     if resolved_scan_backend in (
             :fused_directory, :fused_fasta_simd, :streaming_fasta_simd,
-            :streaming_fasta_simd_fused)
+            :streaming_fasta_simd_fused, :streaming_2bit_simd)
         query, guides_ = build_prefix_hash_scan_compact_query(
             guides,
             motif,
@@ -349,7 +364,7 @@ function search_prefixHashScan(
             bucket_bases = bucket_bases,
             prefilter_bits = resolved_scan_backend in (
                 :fused_fasta_simd, :streaming_fasta_simd,
-                :streaming_fasta_simd_fused) ?
+                :streaming_fasta_simd_fused, :streaming_2bit_simd) ?
                 prefilter_bits : 0,
             query_build_backend = query_build_backend,
             query_threads = scan_threads,
@@ -385,11 +400,12 @@ function search_prefixHashScan(
     use_direct_specialized_hash = geometry !== nothing
     use_fused_scan = resolved_scan_backend in (
         :fused_dict, :fused_directory, :fused_fasta_simd,
-        :streaming_fasta_simd, :streaming_fasta_simd_fused)
+        :streaming_fasta_simd, :streaming_fasta_simd_fused,
+        :streaming_2bit_simd)
     use_myers_raw = verify_variant == :myers_raw ||
         (verify_variant == :auto && resolved_scan_backend in (
             :fused_fasta_simd, :streaming_fasta_simd,
-            :streaming_fasta_simd_fused))
+            :streaming_fasta_simd_fused, :streaming_2bit_simd))
     use_distance_first = verify_variant == :distance_first ||
         (verify_variant == :auto && use_fused_scan && !use_myers_raw)
     myers_profiles = use_myers_raw ?
@@ -400,7 +416,8 @@ function search_prefixHashScan(
             write(out, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
 
         if resolved_scan_backend in (
-                :streaming_fasta_simd, :streaming_fasta_simd_fused)
+                :streaming_fasta_simd, :streaming_fasta_simd_fused,
+                :streaming_2bit_simd)
             scan_start = prefix_hash_scan_timer(stats)
             chunk_results, chrom_chunk_ranges = stream_prefix_hash_scan(
                 geometry::PrefixScanGeometry,
@@ -790,11 +807,11 @@ end
         scan_threads=Threads.nthreads(),
         verbose=false)
 
-Search an indexed FASTA reference directly for Cas9 or Cas12a off-targets at
-edit distances 0 through 4. Guide lists larger than 64 are searched as
-sequential 64-guide batches. Candidate guide/PAM windows may contain up to
-`motif.ambig_max` ambiguous IUPAC reference bases, where the supported range is
-zero through three. Query guides must be unambiguous.
+Search an indexed FASTA or 2bit reference directly for Cas9 or Cas12a
+off-targets at edit distances 0 through 4. Guide lists larger than 64 are
+searched as sequential 64-guide batches. Candidate guide/PAM windows may
+contain up to `motif.ambig_max` ambiguous IUPAC reference bases, where the
+supported range is zero through three. Query guides must be unambiguous.
 """
 function search_prefixHashScan(
     guides::Vector{LongDNA{4}},
@@ -821,9 +838,6 @@ function search_prefixHashScan(
         error("search_prefixHashScan does not support ambiguous query guides.")
     length(early_stopping) == geometry.distance + 1 ||
         error("Specify one early stopping condition for each distance from 0 to $distance.")
-    is_fasta(genome_path) ||
-        error("search_prefixHashScan currently requires a FASTA reference.")
-
     batch_size = 64
     batch_count = cld(length(guides), batch_size)
     if verbose && batch_count > 1

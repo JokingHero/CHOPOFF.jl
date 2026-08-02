@@ -54,6 +54,16 @@ using BioSequences
         @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(args)
         @test read(actual) == read(expected)
 
+        twobit_genome = joinpath(
+            root, "test", "sample_data", "genome", "semirandom.2bit")
+        twobit_actual = joinpath(tdir, "actual_2bit.csv")
+        twobit_args = [
+            "search", "--guides", guides_path, "--output", twobit_actual,
+            "prefixHashScan", "--genome", twobit_genome,
+        ]
+        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(twobit_args)
+        @test read(twobit_actual) == read(expected)
+
         large_guides_path = joinpath(tdir, "large_guides.txt")
         write(
             large_guides_path,

@@ -4,9 +4,10 @@ CollapsedDocStrings = true
 
 # prefixHashScan search
 
-`search_prefixHashScan` searches an indexed FASTA reference directly without
-building a CHOPOFF genome database. Separate Cas9 and Cas12a kernels serve edit
-distances 0 through 4 and amortize one genome scan across all supplied guides.
+`search_prefixHashScan` searches an indexed FASTA or 2bit reference directly
+without building a CHOPOFF genome database. Separate Cas9 and Cas12a kernels
+serve edit distances 0 through 4 and amortize one genome scan across all
+supplied guides.
 
 ## Supported configuration
 
@@ -16,7 +17,8 @@ distances 0 through 4 and amortize one genome scan across all supplied guides.
 - edit distance 0, 1, 2, 3, or 4;
 - 0 through 3 ambiguous IUPAC reference bases per guide/PAM window;
 - 16-base symbolic prefix filter;
-- FASTA reference with a standard `.fai` index;
+- FASTA reference with a standard `.fai` index, or a `.2bit` reference without
+  a sidecar index;
 - any number of guides, processed in batches of at most 64.
 
 Ambiguous query guides are rejected. `ambig_max=0` remains the default and
@@ -43,7 +45,7 @@ guides = LongDNA{4}.([
 
 search_prefixHashScan(
     guides,
-    "genome.fa",
+    "genome.2bit",
     "offtargets.csv";
     distance = 2,
     scan_threads = Threads.nthreads(),
@@ -86,6 +88,11 @@ window: 23 bases for Cas9 or 25 bases for Cas12a. Supported IUPAC symbols are
 input. Each ambiguous position counts once, regardless of how many nucleotides
 its code represents.
 
+FASTA preserves all listed IUPAC symbols. The 2bit format preserves ambiguity
+only as `N` blocks, so other symbols converted to 2bit are handled as `N`.
+Soft-mask blocks do not suppress candidates; prefixHashScan searches them as
+their uppercase bases.
+
 - A window with more than `ambig_max` ambiguous positions is skipped.
 - PAM ambiguity must be compatible with the motif. For example, `ARG` is
   compatible with the Cas9 `NGG` PAM, while `AYG` is not.
@@ -108,7 +115,7 @@ do not expand the hash lookup.
 CHOPOFF search --distance 4 \
   --guides guides.txt \
   --output offtargets.csv \
-  prefixHashScan --genome genome.fa --motif Cas12a --ambig_max 3
+  prefixHashScan --genome genome.2bit --motif Cas12a --ambig_max 3
 ```
 
 The CLI always reports the resolved execution mode. It uses Julia's configured

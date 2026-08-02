@@ -1,4 +1,4 @@
-# Indexed FASTA reading and global chunk scheduling.
+# Indexed reference reading and global chunk scheduling.
 
 struct PrefixHashScanFASTARecords{R, C, L}
     reader::R
@@ -8,7 +8,18 @@ end
 
 function prefix_hash_scan_dbinfo(filepath::String, motif::Motif)
     if !is_fasta(filepath)
-        return DBInfo(filepath, "prefixHashScan", motif), nothing
+        index = read_prefix_hash_scan_twobit_index(filepath)
+        maxchromlen = isempty(index.lengths) ? 0 : maximum(index.lengths)
+        gi = GenomeInfo(
+            now(Dates.UTC),
+            filepath,
+            UInt32(0),
+            index.names,
+            smallestutype(unsigned(length(index.names))),
+            smallestutype(unsigned(maxchromlen)),
+            false,
+        )
+        return DBInfo("prefixHashScan", now(Dates.UTC), gi, "", motif), index.lengths
     end
 
     fai_path = filepath * ".fai"
@@ -117,11 +128,19 @@ function read_prefix_hash_scan_fasta_range!(
     return buffer
 end
 
+read_prefix_hash_scan_range!(
+    buffer::Vector{UInt8}, io, index::FASTA.Index, args...) =
+    read_prefix_hash_scan_fasta_range!(buffer, io, index, args...)
+
+read_prefix_hash_scan_range!(
+    buffer::Vector{UInt8}, io, index::PrefixHashScanTwoBitIndex, args...) =
+    read_prefix_hash_scan_twobit_range!(buffer, io, index, args...)
+
 function stream_prefix_hash_scan_chunk(
     geometry::PrefixScanGeometry,
     io,
     buffer::Vector{UInt8},
-    index::FASTA.Index,
+    index,
     work::PrefixHashScanChunkWork,
     chromosome_length::Int,
     query,
@@ -142,7 +161,7 @@ function stream_prefix_hash_scan_chunk(
     read_last = min(
         chromosome_length, work.core_last + candidate_last_offset + distance)
     read_start = prefix_hash_scan_timer(stats)
-    raw = read_prefix_hash_scan_fasta_range!(
+    raw = read_prefix_hash_scan_range!(
         buffer, io, index, work.chrom_idx, read_first, read_last)
     if stats !== nothing
         read_ns = time_ns() - read_start
@@ -266,7 +285,7 @@ function stream_prefix_hash_scan_chromosome(
     geometry::PrefixScanGeometry,
     io,
     buffer::Vector{UInt8},
-    index::FASTA.Index,
+    index,
     chrom_idx::Int,
     chromosome_length::Int,
     query,
@@ -332,7 +351,9 @@ function stream_prefix_hash_scan(
     stats::S,
     ::Val{Scheduler} = Val(:chunk)) where {M, S, Scheduler}
 
-    index = FASTA.Index(genome_path * ".fai")
+    index = is_fasta(genome_path) ?
+        FASTA.Index(genome_path * ".fai") :
+        read_prefix_hash_scan_twobit_index(genome_path)
     if Scheduler === :chunk
         work, chrom_chunk_ranges = prefix_hash_scan_chunk_work(
             reference_lengths, chunk_bases, geometry)

@@ -2,6 +2,7 @@ using Test
 using CHOPOFF
 using BioSequences
 using FASTX
+using TwoBit
 using CSV
 using DataFrames
 using Logging
@@ -73,9 +74,100 @@ function write_phs_fasta(path::String, name::String, seq::String)
     end
 end
 
+function write_phs_twobit(
+    path::String, name::String, seq::String;
+    masks::Union{Nothing, Vector{UnitRange{Int}}} = nothing)
+
+    writer = TwoBit.Writer(open(path, "w"), [name])
+    write(writer, TwoBit.Record(name, LongDNA{4}(seq), masks))
+    close(writer)
+end
+
+function write_phs_swapped_twobit(path::String, name::String, seq::String)
+    starts = UInt32[]
+    sizes = UInt32[]
+    idx = 1
+    while idx <= length(seq)
+        if seq[idx] == 'N'
+            first_idx = idx
+            while idx <= length(seq) && seq[idx] == 'N'
+                idx += 1
+            end
+            push!(starts, UInt32(first_idx - 1))
+            push!(sizes, UInt32(idx - first_idx))
+        else
+            idx += 1
+        end
+    end
+    codes = Dict('T' => UInt8(0), 'N' => UInt8(0), 'C' => UInt8(1),
+        'A' => UInt8(2), 'G' => UInt8(3))
+    packed = UInt8[]
+    for first_idx in 1:4:length(seq)
+        byte = UInt8(0)
+        for offset in 0:3
+            idx = first_idx + offset
+            code = idx <= length(seq) ? codes[seq[idx]] : UInt8(0)
+            byte |= code << (6 - 2 * offset)
+        end
+        push!(packed, byte)
+    end
+    write_u32(io, value) = write(io, bswap(UInt32(value)))
+    open(path, "w") do io
+        write_u32(io, CHOPOFF.PREFIX_HASH_SCAN_TWOBIT_SIGNATURE)
+        write_u32(io, 0)
+        write_u32(io, 1)
+        write_u32(io, 0)
+        write(io, UInt8(ncodeunits(name)))
+        write(io, name)
+        write_u32(io, 16 + 1 + ncodeunits(name) + 4)
+        write_u32(io, length(seq))
+        write_u32(io, length(starts))
+        foreach(value -> write_u32(io, value), starts)
+        foreach(value -> write_u32(io, value), sizes)
+        write_u32(io, 0)
+        write_u32(io, 0)
+        write(io, packed)
+    end
+end
+
 @testset "prefixHashScan" begin
     tdir = tempname()
     mkpath(tdir)
+
+    @testset "2bit range decoding" begin
+        root = normpath(joinpath(dirname(pathof(CHOPOFF)), ".."))
+        genome = joinpath(root, "test", "sample_data", "genome", "semirandom.2bit")
+        index = CHOPOFF.read_prefix_hash_scan_twobit_index(genome)
+        @test index.names == ["semirandom$i" for i in 1:8]
+        @test index.lengths == fill(108326, 8)
+
+        io = open(genome, "r")
+        reader = TwoBit.Reader(io)
+        buffer = UInt8[]
+        sequence = TwoBit.sequence(reader[index.names[1]])
+        for range in (1:1, 2:101, 63:191, 1021:4099,
+                (length(sequence) - 130):length(sequence))
+            observed = CHOPOFF.read_prefix_hash_scan_twobit_range!(
+                buffer, io, index, 1, first(range), last(range))
+            @test String(observed) == string(sequence[range])
+        end
+        close(io)
+
+        sequence_string = "ACGTACNNNTGCATGCATGC"
+        native = joinpath(tdir, "range_native.2bit")
+        swapped = joinpath(tdir, "range_swapped.2bit")
+        write_phs_twobit(native, "chr1", sequence_string; masks = [2:5])
+        write_phs_swapped_twobit(swapped, "chr1", sequence_string)
+        for path in (native, swapped)
+            path_index = CHOPOFF.read_prefix_hash_scan_twobit_index(path)
+            @test path_index.names == ["chr1"]
+            @test path_index.lengths == [length(sequence_string)]
+            open(path, "r") do path_io
+                @test String(CHOPOFF.read_prefix_hash_scan_twobit_range!(
+                    UInt8[], path_io, path_index, 1, 2, 19)) == sequence_string[2:19]
+            end
+        end
+    end
 
     @testset "Cas9 distance-3 geometry" begin
         geometry = CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY
@@ -110,11 +202,14 @@ end
         guide = LongDNA{4}("ACGTACGTACGTACGTACGT")
         pad = repeat("A", 40)
         genome = joinpath(tdir, "supported_api.fa")
+        twobit_genome = joinpath(tdir, "supported_api.2bit")
         four_edit = "CCTTCCTTACGTACGTACGT" * "TGG"
-        write_phs_fasta(
-            genome, "chr1",
-            pad * string(guide) * "AGG" * pad * four_edit * pad)
+        supported_sequence =
+            pad * string(guide) * "AGG" * pad * four_edit * pad
+        write_phs_fasta(genome, "chr1", supported_sequence)
+        write_phs_twobit(twobit_genome, "chr1", supported_sequence)
         public_out = joinpath(tdir, "supported_api.csv")
+        twobit_out = joinpath(tdir, "supported_api_2bit.csv")
         verbose_out = joinpath(tdir, "supported_api_verbose.csv")
         engine_out = joinpath(tdir, "supported_api_engine.csv")
 
@@ -127,7 +222,14 @@ end
         CHOPOFF.search_prefixHashScan(
             [guide], genome, motif, engine_out;
             distance = 3, early_stopping = fill(100, 4))
-        @test read(public_out) == read(verbose_out) == read(engine_out)
+        twobit_stats = CHOPOFF.PrefixHashScanStats()
+        CHOPOFF.search_prefixHashScan(
+            [guide], twobit_genome, motif, twobit_out;
+            distance = 3, early_stopping = fill(100, 4), stats = twobit_stats)
+        @test read(public_out) == read(verbose_out) == read(engine_out) == read(twobit_out)
+        expected_twobit_backend = CHOPOFF.can_use_prefix_hash_scan_simd() ?
+            :streaming_2bit_simd : :fused_directory
+        @test twobit_stats.scan_backend == expected_twobit_backend
 
 
         for distance in 0:4
@@ -159,6 +261,12 @@ end
                 [guide], genome, public_distance_out;
                 distance = distance, early_stopping = limits)
             @test read(public_distance_out, String) == first(distance_outputs)
+            twobit_distance_out =
+                joinpath(tdir, "supported_public_2bit_d$(distance).csv")
+            search_prefixHashScan(
+                [guide], twobit_genome, twobit_distance_out;
+                distance = distance, early_stopping = limits)
+            @test read(twobit_distance_out, String) == first(distance_outputs)
             if distance == 4
                 @test 4 in DataFrame(CSV.File(public_distance_out)).distance
                 brute_out = joinpath(tdir, "supported_bruteforce_d4.csv")
@@ -217,7 +325,7 @@ end
             [LongDNA{4}("ACGTACGTACGTACGTACGN")], genome, public_out)
         @test_throws ErrorException search_prefixHashScan(
             [guide], genome, public_out; early_stopping = fill(100, 3))
-        @test_throws ErrorException search_prefixHashScan(
+        @test_throws SystemError search_prefixHashScan(
             [guide], joinpath(tdir, "reference.2bit"), public_out)
 
         unindexed = joinpath(tdir, "unindexed.fa")
@@ -271,7 +379,9 @@ end
         @test CHOPOFF.resolve_prefix_scan_geometry(
             Motif("Cas12a"; distance = 5), 5, 16) === nothing
         genome = joinpath(tdir, "cas12a_specialized.fa")
+        twobit_genome = joinpath(tdir, "cas12a_specialized.2bit")
         write_phs_fasta(genome, "chr1", seq)
+        write_phs_twobit(twobit_genome, "chr1", seq)
         chrom_seq = LongDNA{4}(seq)
         dbi = DBInfo(genome, "cas12a_specialized", motif)
 
@@ -324,6 +434,11 @@ end
             [guide], genome, public_output;
             motif = "Cas12a", early_stopping = fill(100, 4))
         @test read(public_output, String) == outputs[:legacy]
+        twobit_output = joinpath(tdir, "cas12a_public_2bit.csv")
+        search_prefixHashScan(
+            [guide], twobit_genome, twobit_output;
+            motif = "Cas12a", early_stopping = fill(100, 4))
+        @test read(twobit_output, String) == outputs[:legacy]
 
         large_public_output = joinpath(tdir, "cas12a_public_large.csv")
         search_prefixHashScan(
@@ -370,6 +485,13 @@ end
                 motif = "Cas12a", distance = distance,
                 early_stopping = limits)
             @test read(public_distance_out, String) == first(distance_outputs)
+            twobit_distance_out =
+                joinpath(tdir, "cas12a_public_2bit_d$(distance).csv")
+            search_prefixHashScan(
+                [guide], twobit_genome, twobit_distance_out;
+                motif = "Cas12a", distance = distance,
+                early_stopping = limits)
+            @test read(twobit_distance_out, String) == first(distance_outputs)
             if distance == 4
                 @test 4 in DataFrame(CSV.File(public_distance_out)).distance
                 brute_out = joinpath(tdir, "cas12a_bruteforce_d4.csv")
@@ -402,12 +524,17 @@ end
     @testset "reference ambiguity" begin
         function run_ambiguous_site(
             label::String, guide::LongDNA{4}, site::String, motif::Motif;
-            backend::Symbol = :auto)
+            backend::Symbol = :auto,
+            twobit::Bool = false)
 
-            genome = joinpath(tdir, label * ".fa")
+            genome = joinpath(tdir, label * (twobit ? ".2bit" : ".fa"))
             output = joinpath(tdir, label * "_" * string(backend) * ".csv")
-            write_phs_fasta(
-                genome, "chr1", repeat("A", 40) * site * repeat("A", 40))
+            sequence = repeat("A", 40) * site * repeat("A", 40)
+            if twobit
+                write_phs_twobit(genome, "chr1", sequence)
+            else
+                write_phs_fasta(genome, "chr1", sequence)
+            end
             stats = CHOPOFF.PrefixHashScanStats()
             CHOPOFF.search_prefixHashScan(
                 [guide], genome, motif, output;
@@ -429,6 +556,15 @@ end
         rejected, _, _ = run_ambiguous_site(
             "cas9_ambig_rejected", cas9_guide, one_n, motif0)
         @test nrow(rejected) == 0
+        rejected_twobit, _, _ = run_ambiguous_site(
+            "cas9_ambig_rejected_2bit", cas9_guide, one_n, motif0;
+            twobit = true)
+        accepted_twobit, _, accepted_twobit_stats = run_ambiguous_site(
+            "cas9_ambig_accepted_2bit", cas9_guide, one_n, motif1;
+            twobit = true)
+        @test nrow(rejected_twobit) == 0
+        @test nrow(accepted_twobit) == 1
+        @test accepted_twobit_stats.ambiguous_prefixes == 1
 
         backend_outputs = String[]
         for backend in (

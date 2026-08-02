@@ -62,7 +62,8 @@ CHOPOFF search --database "$EXAMPLE_INDEX_OUTPUT" --guides "$EXAMPLE_GUIDES" --o
 ```
 
 For direct Cas9 or Cas12a search without building a CHOPOFF database, use
-`prefixHashScan` on an indexed FASTA. `--ambig_max` allows zero through three
+`prefixHashScan` on an indexed FASTA or directly on a `.2bit` reference.
+`--ambig_max` allows zero through three
 ambiguous IUPAC reference positions in each complete guide/PAM window; zero is
 the default. Query guides must be unambiguous.
 
