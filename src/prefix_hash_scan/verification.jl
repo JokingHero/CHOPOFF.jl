@@ -54,6 +54,19 @@ function build_prefix_hash_scan_myers_profiles(guides::Vector{LongDNA{4}})
     return build_prefix_hash_scan_myers_profile.(guides)
 end
 
+@inline function reserve_prefix_hash_scan_detail_hit!(
+    es_acc, is_es, guide_idx::Int, dist::Int,
+    early_stopping::Vector{Int})
+
+    dist_idx = dist + 1
+    if es_acc[guide_idx, dist_idx] >= early_stopping[dist_idx]
+        is_es[guide_idx] = true
+        return false
+    end
+    es_acc[guide_idx, dist_idx] += 1
+    return true
+end
+
 @inline function prefix_hash_scan_raw_myers_distance(
     ::PrefixScanGeometry{:cas9},
     profile::PrefixHashScanMyersProfile,
@@ -497,6 +510,8 @@ function verify_prefix_hash_scan_bitmask_candidate!(
         )
         key in seen[guide_idx] && continue
         push!(seen[guide_idx], key)
+        reserve_prefix_hash_scan_detail_hit!(
+            es_acc, is_es, guide_idx, aln.dist, early_stopping) || continue
 
         emit_start = time_ns()
         print(out, guides[guide_idx], ",", aln_guide, ",", aln_ref, ",",
@@ -504,10 +519,6 @@ function verify_prefix_hash_scan_bitmask_candidate!(
         if stats !== nothing
             stats.emit_ns += time_ns() - emit_start
             stats.emitted_rows += 1
-        end
-        es_acc[guide_idx, aln.dist + 1] += 1
-        if es_acc[guide_idx, aln.dist + 1] >= early_stopping[aln.dist + 1]
-            is_es[guide_idx] = true
         end
     end
     if stats !== nothing
@@ -528,8 +539,13 @@ function evaluate_prefix_hash_scan_candidate!(
     guides_::Vector{LongDNA{4}},
     myers_profiles::Vector{PrefixHashScanMyersProfile},
     distance::Int,
-    stats::S) where {S <: Union{Nothing, PrefixHashScanStats}}
+    stats::S,
+    early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
+    chunk_counts::Union{Nothing, Matrix{Int}} = nothing,
+    ) where {S <: Union{Nothing, PrefixHashScanStats}}
 
+    candidate_mask &= prefix_hash_scan_active_mask(early_stop_state)
+    candidate_mask == 0 && return output
     if stats !== nothing
         stats.prefix_hits += 1
         stats.guide_pairs += count_ones(candidate_mask)
@@ -555,6 +571,8 @@ function evaluate_prefix_hash_scan_candidate!(
             end
             continue
         end
+        reserve_prefix_hash_scan_hit!(
+            early_stop_state, chunk_counts, guide_idx, dist) || continue
 
         if isempty(ot)
             materialize_start = prefix_hash_scan_timer(stats)
@@ -607,14 +625,90 @@ function evaluate_prefix_hash_scan_hits!(
     guides_::Vector{LongDNA{4}},
     myers_profiles::Vector{PrefixHashScanMyersProfile},
     distance::Int,
-    stats::S) where {S <: Union{Nothing, PrefixHashScanStats}}
+    stats::S,
+    early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
+    chunk_counts::Union{Nothing, Matrix{Int}} = nothing,
+    ) where {S <: Union{Nothing, PrefixHashScanStats}}
 
     for hit in hits
         evaluate_prefix_hash_scan_candidate!(
             output, raw, geometry, hit.start, hit.mask, global_offset, dbi,
-            is_antisense, guides_, myers_profiles, distance, stats)
+            is_antisense, guides_, myers_profiles, distance, stats,
+            early_stop_state, chunk_counts)
     end
     return output
+end
+
+function evaluate_prefix_hash_scan_count_candidate!(
+    counts::Matrix{Int},
+    raw::AbstractVector{UInt8},
+    geometry::PrefixScanGeometry,
+    candidate_start::Int,
+    candidate_mask::UInt64,
+    is_antisense::Bool,
+    myers_profiles::Vector{PrefixHashScanMyersProfile},
+    distance::Int,
+    stats::S,
+    early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
+    chunk_counts::Union{Nothing, Matrix{Int}} = nothing,
+    ) where {S <: Union{Nothing, PrefixHashScanStats}}
+
+    candidate_mask &= prefix_hash_scan_active_mask(early_stop_state)
+    candidate_mask == 0 && return counts
+    if stats !== nothing
+        stats.prefix_hits += 1
+        stats.guide_pairs += count_ones(candidate_mask)
+    end
+    verify_start = prefix_hash_scan_timer(stats)
+    mask = candidate_mask
+    while mask != 0
+        guide_idx = trailing_zeros(mask) + 1
+        mask &= mask - 1
+        align_start = prefix_hash_scan_timer(stats)
+        if stats !== nothing
+            stats.alignment_calls += 1
+            stats.distance_calls += 1
+        end
+        dist = prefix_hash_scan_raw_myers_distance(
+            geometry, myers_profiles[guide_idx], raw, candidate_start,
+            is_antisense, distance)
+        if stats !== nothing
+            stats.align_ns += time_ns() - align_start
+        end
+        if dist <= distance
+            if early_stop_state === nothing
+                counts[guide_idx, dist + 1] += 1
+            else
+                reserve_prefix_hash_scan_hit!(
+                    early_stop_state, chunk_counts, guide_idx, dist)
+            end
+        end
+    end
+    if stats !== nothing
+        stats.verify_ns += time_ns() - verify_start
+    end
+    return counts
+end
+
+function evaluate_prefix_hash_scan_count_hits!(
+    counts::Matrix{Int},
+    raw::AbstractVector{UInt8},
+    geometry::PrefixScanGeometry,
+    hits::Vector{PrefixHashScanHit},
+    is_antisense::Bool,
+    myers_profiles::Vector{PrefixHashScanMyersProfile},
+    distance::Int,
+    stats::S,
+    early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
+    chunk_counts::Union{Nothing, Matrix{Int}} = nothing,
+    ) where {S <: Union{Nothing, PrefixHashScanStats}}
+
+    for hit in hits
+        evaluate_prefix_hash_scan_count_candidate!(
+            counts, raw, geometry, hit.start, hit.mask, is_antisense,
+            myers_profiles, distance, stats, early_stop_state, chunk_counts)
+    end
+    return counts
 end
 
 function merge_prefix_hash_scan_worker_stats!(
@@ -645,10 +739,11 @@ function commit_prefix_hash_scan_verified!(
     es_acc,
     is_es,
     seen,
-    stats::Union{Nothing, PrefixHashScanStats})
+    stats::Union{Nothing, PrefixHashScanStats};
+    prelimited::Bool = false)
 
     guide_idx = hit.guide_idx
-    is_es[guide_idx] && return nothing
+    !prelimited && is_es[guide_idx] && return nothing
     strand = hit.is_antisense ? "-" : "+"
     key = (
         string(guide),
@@ -661,6 +756,14 @@ function commit_prefix_hash_scan_verified!(
     )
     key in seen[guide_idx] && return nothing
     push!(seen[guide_idx], key)
+    dist_idx = hit.dist + 1
+    if prelimited
+        es_acc[guide_idx, dist_idx] >= early_stopping[dist_idx] && return nothing
+        es_acc[guide_idx, dist_idx] += 1
+    else
+        reserve_prefix_hash_scan_detail_hit!(
+            es_acc, is_es, guide_idx, hit.dist, early_stopping) || return nothing
+    end
 
     emit_start = prefix_hash_scan_timer(stats)
     print(out, guide, ",", hit.aln_guide, ",", hit.aln_ref, ",",
@@ -668,10 +771,6 @@ function commit_prefix_hash_scan_verified!(
     if stats !== nothing
         stats.emit_ns += time_ns() - emit_start
         stats.emitted_rows += 1
-    end
-    es_acc[guide_idx, hit.dist + 1] += 1
-    if es_acc[guide_idx, hit.dist + 1] >= early_stopping[hit.dist + 1]
-        is_es[guide_idx] = true
     end
     return nothing
 end

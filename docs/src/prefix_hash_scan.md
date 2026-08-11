@@ -59,6 +59,15 @@ search_prefixHashScan(
     verbose = true,
 )
 
+# Count-only output: guide,D0,D1,D2,complete
+search_prefixHashScan(
+    guides,
+    "genome.2bit",
+    "offtarget_counts.csv";
+    distance = 2,
+    output = :counts,
+)
+
 # Cas12a
 search_prefixHashScan(
     LongDNA{4}.(["TGCATGCATGCATGCATGCAT"]),
@@ -111,9 +120,29 @@ Only 20- and 21-base guides currently have shipped symbolic path assets. Other
 eligible lengths generate paths once before guide batching and then use the
 same optimized scanner.
 
-The output uses the normal CHOPOFF detail columns:
-`guide`, `alignment_guide`, `alignment_reference`, `distance`, `chromosome`,
-`start`, and `strand`.
+`output=:detail` uses the normal CHOPOFF columns: `guide`, `alignment_guide`,
+`alignment_reference`, `distance`, `chromosome`, `start`, and `strand`.
+
+`output=:counts` writes one row per unique guide with `D0` through the requested
+distance and `complete`. It uses raw Myers distances on the optimized backend
+and skips traceback, alignment strings, locations, and detail deduplication.
+Duplicate input guides are combined in first-input order; guides with zero hits
+remain present. Counts above an explicit `early_stopping` bucket limit are
+capped and `complete=false`. A count exactly equal to its limit remains complete
+when no additional hit exists.
+
+Finite limits enable computational early stopping. A guide becomes inactive
+only after a `(limit + 1)`th hit proves that one exact-distance bucket is
+incomplete. Its bit is then removed before subsequent Myers verification. Once
+all guides are inactive, workers stop claiming genome chunks. An incomplete
+count row can contain partial lower bounds in its other distance buckets.
+
+Detail mode uses the same guide retirement. It writes at most each requested
+bucket limit and avoids traceback for hits beyond the cap. Because workers may
+retire a guide concurrently, the retained valid loci are not guaranteed to be
+the same across thread schedules. The seven-column detail schema is unchanged.
+
+The standalone equivalent is `prefixHashScan --output_mode counts`.
 
 With `verbose=true`, the search reports the resolved scan backend, lookup mode,
 query-build mode, scheduler, thread count, and chunk size. Reporting does not
@@ -197,6 +226,32 @@ julia --project=. scripts/benchmark_prefix_hash_scan_tuning.jl
 The runner writes raw timings, allocations, internal diagnostics, a summary
 with control-relative ratios, final result files, and a multiset-inclusion
 parity report.
+
+## Count output benchmark
+
+A GRCh38 check with 61 guides, 24 Julia threads, one warmup, and three
+alternating timed runs produced exact count/detail parity:
+
+| Motif | Distance | Detail median | Count median | Speedup |
+|---|---:|---:|---:|---:|
+| Cas9 | 3 | 1.556 s | 1.446 s | 1.08x |
+| Cas9 | 4 | 14.376 s | 12.556 s | 1.14x |
+| Cas12a | 3 | 3.819 s | 1.069 s | 3.57x |
+| Cas12a | 4 | 20.819 s | 10.758 s | 1.94x |
+
+Count-mode diagnostic runs performed zero tracebacks. The larger Cas12a gain
+comes from avoiding alignment materialization for its result-heavy workload.
+
+## Early-stopping benchmark
+
+Early stopping uses chunk-local counters merged after each 2 MiB work item. A
+five-run GRCh38 selection at distance 3 and 24 threads found this implementation
+within 3% of per-hit atomic reservation, so chunk reduction won the declared tie
+rule. With prefixHashDB-style caps it reduced verified guide/window pairs from
+1,583,279 to 122,692 for Cas9. Median detail time changed from 1.418 s to 1.359 s.
+All completed count/detail and cap-profile correctness checks passed. Default
+one-million caps regressed no median by more than 3%. A later Cas9 distance-4
+single-thread run measured a 2.27x count-search speedup with prefixHash caps.
 
 ## Generic engine overhead
 

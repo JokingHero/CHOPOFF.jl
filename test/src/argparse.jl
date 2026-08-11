@@ -54,6 +54,21 @@ using BioSequences
         @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(args)
         @test read(actual) == read(expected)
 
+        counts_expected = joinpath(tdir, "counts_expected.csv")
+        counts_actual = joinpath(tdir, "counts_actual.csv")
+        search_prefixHashScan(
+            guides, genome, counts_expected; output = :counts)
+        counts_args = [
+            "search", "--guides", guides_path, "--output", counts_actual,
+            "prefixHashScan", "--genome", genome,
+            "--output_mode", "counts",
+        ]
+        parsed_counts = CHOPOFF.parse_commandline(counts_args)
+        @test parsed_counts["search"]["prefixHashScan"]["output_mode"] ==
+            "counts"
+        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(counts_args)
+        @test read(counts_actual) == read(counts_expected)
+
         twobit_genome = joinpath(
             root, "test", "sample_data", "genome", "semirandom.2bit")
         twobit_actual = joinpath(tdir, "actual_2bit.csv")

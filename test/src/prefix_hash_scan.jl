@@ -21,6 +21,39 @@ function phs_core(path::String)
     return core
 end
 
+function phs_counts(path::String)
+    df = DataFrame(CSV.File(path))
+    df.guide = String.(df.guide)
+    for name in names(df)
+        startswith(name, "D") && (df[!, name] = Int.(df[!, name]))
+    end
+    df.complete = Bool.(df.complete)
+    return df
+end
+
+function phs_expected_counts(
+    detail_path::String, guides::Vector{LongDNA{4}}, distance::Int)
+
+    guide_strings = unique(string.(guides))
+    expected = DataFrame(guide = guide_strings)
+    for dist in 0:distance
+        expected[!, Symbol("D$dist")] = zeros(Int, length(guide_strings))
+    end
+    detail = DataFrame(CSV.File(detail_path))
+    if nrow(detail) > 0
+        summary = summarize_offtargets(detail; distance = distance)
+        row_by_guide = Dict(guide => idx for (idx, guide) in enumerate(guide_strings))
+        for row in eachrow(summary)
+            row_idx = row_by_guide[string(row.guide)]
+            for dist in 0:distance
+                expected[row_idx, Symbol("D$dist")] = row[Symbol("D$dist")]
+            end
+        end
+    end
+    expected.complete = fill(true, length(guide_strings))
+    return expected
+end
+
 
 function check_prefix_helper_matches_materialized(tdir::String, seq::String, motif::Motif, hash_len::Int, label::String)
     genome = joinpath(tdir, label * ".fa")
@@ -246,6 +279,12 @@ end
                 early_stopping = fill(100, 2))
             @test read(public_output, String) == first(outputs)
             if case_idx == 1
+                count_output = joinpath(tdir, "generic_motif_counts.csv")
+                search_prefixHashScan(
+                    [guide], genome, count_output; motif = motif, distance = 1,
+                    early_stopping = fill(100, 2), output = :counts)
+                @test phs_counts(count_output) == phs_expected_counts(
+                    public_output, [guide], 1)
                 twobit = joinpath(tdir, "generic_motif.2bit")
                 write_phs_twobit(twobit, "chr1", sequence)
                 twobit_output = joinpath(tdir, "generic_motif_2bit.csv")
@@ -354,6 +393,13 @@ end
                 [guide], genome, public_distance_out;
                 distance = distance, early_stopping = limits)
             @test read(public_distance_out, String) == first(distance_outputs)
+            count_out = joinpath(tdir, "supported_counts_d$(distance).csv")
+            search_prefixHashScan(
+                [guide], genome, count_out;
+                distance = distance, early_stopping = limits,
+                output = :counts)
+            @test phs_counts(count_out) == phs_expected_counts(
+                public_distance_out, [guide], distance)
             twobit_distance_out =
                 joinpath(tdir, "supported_public_2bit_d$(distance).csv")
             search_prefixHashScan(
@@ -427,6 +473,143 @@ end
         end
         @test_throws ErrorException search_prefixHashScan(
             [guide], unindexed, public_out)
+    end
+
+    @testset "count output semantics" begin
+        guide = LongDNA{4}("ACGTACGTACGTACGTACGT")
+        absent = LongDNA{4}("TGCATGCATGCATGCATGCA")
+        site = string(guide) * "AGG"
+        reverse_site = string(reverse_complement(LongDNA{4}(site)))
+        sequence = repeat("A", 41) * site * repeat("C", 43) * site *
+            repeat("G", 47) * reverse_site * repeat("T", 41)
+        genome = joinpath(tdir, "count_semantics.fa")
+        twobit = joinpath(tdir, "count_semantics.2bit")
+        write_phs_fasta(genome, "chr1", sequence)
+        write_phs_twobit(twobit, "chr1", sequence)
+        guides = vcat(fill(guide, 65), [absent])
+        limits = fill(1_000, 3)
+        detail_output = joinpath(tdir, "count_semantics_detail.csv")
+        count_output = joinpath(tdir, "count_semantics_counts.csv")
+        search_prefixHashScan(
+            guides, genome, detail_output;
+            distance = 2, early_stopping = limits)
+        search_prefixHashScan(
+            guides, genome, count_output;
+            distance = 2, early_stopping = limits, output = :counts)
+        @test phs_counts(count_output) == phs_expected_counts(
+            detail_output, guides, 2)
+        @test nrow(phs_counts(count_output)) == 2
+
+        single_detail_output = joinpath(tdir, "count_semantics_single_detail.csv")
+        search_prefixHashScan(
+            [guide, absent], genome, single_detail_output;
+            distance = 2, early_stopping = limits)
+        legacy_output = joinpath(tdir, "count_semantics_legacy.csv")
+        legacy_stats = CHOPOFF.PrefixHashScanStats()
+        CHOPOFF.search_prefixHashScan(
+            [guide, absent], genome, Motif("Cas9"; distance = 2),
+            legacy_output;
+            distance = 2, early_stopping = limits, output = :counts,
+            scan_backend = :legacy, stats = legacy_stats)
+        @test phs_counts(legacy_output) == phs_expected_counts(
+            single_detail_output, [guide, absent], 2)
+        @test legacy_stats.traceback_calls == 0
+        for query_variant in (:columnwise, :bruteforce)
+            variant_output = joinpath(
+                tdir, "count_semantics_$(query_variant).csv")
+            CHOPOFF.search_prefixHashScan(
+                [guide, absent], genome, Motif("Cas9"; distance = 2),
+                variant_output;
+                distance = 2, early_stopping = limits, output = :counts,
+                query_variant = query_variant, scan_backend = :legacy)
+            @test phs_counts(variant_output) == phs_expected_counts(
+                single_detail_output, [guide, absent], 2)
+        end
+
+        twobit_output = joinpath(tdir, "count_semantics_2bit.csv")
+        search_prefixHashScan(
+            [guide, absent], twobit, twobit_output;
+            distance = 2, early_stopping = limits, output = :counts)
+        @test phs_counts(twobit_output) == phs_expected_counts(
+            single_detail_output, [guide, absent], 2)
+
+        capped_output = joinpath(tdir, "count_semantics_capped.csv")
+        search_prefixHashScan(
+            [guide], genome, capped_output;
+            distance = 2, early_stopping = [1, 100, 100], output = :counts)
+        capped = phs_counts(capped_output)
+        @test only(capped.D0) == 1
+        @test !only(capped.complete)
+
+        exact_cap_output = joinpath(tdir, "count_semantics_exact_cap.csv")
+        exact_d0 = only(phs_counts(legacy_output).D0[1:1])
+        search_prefixHashScan(
+            [guide], genome, exact_cap_output;
+            distance = 2, early_stopping = [exact_d0, 100, 100],
+            output = :counts)
+        @test only(phs_counts(exact_cap_output).complete)
+
+        stats_output = joinpath(tdir, "count_semantics_stats.csv")
+        count_stats = CHOPOFF.PrefixHashScanStats()
+        CHOPOFF.search_prefixHashScan(
+            [guide], genome, Motif("Cas9"; distance = 2), stats_output;
+            distance = 2, early_stopping = limits, output = :counts,
+            scan_backend = :streaming_fasta_simd,
+            stream_chunk_bases = 64, stats = count_stats)
+        @test count_stats.traceback_calls == 0
+        if count_stats.scan_backend == :streaming_fasta_simd
+            @test count_stats.candidate_materialize_ns == 0
+        end
+        @test count_stats.emitted_rows == 1
+        early_genome = joinpath(tdir, "count_early_stop.fa")
+        write_phs_fasta(
+            early_genome, "chr1",
+            repeat("A", 16) * site * repeat("A", 16) * site *
+                repeat("A", 8_192))
+        let
+            zero_counts = joinpath(tdir, "count_early_stop_counts.csv")
+            zero_stats = CHOPOFF.PrefixHashScanStats()
+            CHOPOFF.search_prefixHashScan(
+                [guide], early_genome, Motif("Cas9"; distance = 2),
+                zero_counts;
+                distance = 2, early_stopping = zeros(Int, 3),
+                output = :counts, scan_backend = :streaming_fasta_simd,
+                scan_threads = 1, stream_chunk_bases = 64,
+                stats = zero_stats)
+            zero = phs_counts(zero_counts)
+            @test only(zero.D0) == 0
+            @test !only(zero.complete)
+            @test zero_stats.retired_guides == 1
+            @test 0 < zero_stats.work_items_claimed < zero_stats.work_items_total
+            @test zero_stats.traceback_calls == 0
+
+            zero_detail = joinpath(tdir, "count_early_stop_detail.csv")
+            detail_stats = CHOPOFF.PrefixHashScanStats()
+            CHOPOFF.search_prefixHashScan(
+                [guide], early_genome, Motif("Cas9"; distance = 2),
+                zero_detail;
+                distance = 2, early_stopping = zeros(Int, 3),
+                scan_backend = :streaming_fasta_simd,
+                scan_threads = 1, stream_chunk_bases = 64,
+                stats = detail_stats)
+            @test nrow(DataFrame(CSV.File(zero_detail))) == 0
+            @test detail_stats.retired_guides == 1
+            @test detail_stats.work_items_claimed < detail_stats.work_items_total
+            @test detail_stats.traceback_calls == 0
+        end
+
+        capped_detail = joinpath(tdir, "count_early_stop_capped_hits.csv")
+        search_prefixHashScan(
+            [guide], early_genome, capped_detail;
+            distance = 2, early_stopping = [1, 100, 100], scan_threads = 1)
+        capped_detail_df = DataFrame(CSV.File(capped_detail))
+        @test count(==(0), capped_detail_df.distance) == 1
+
+        @test_throws ErrorException search_prefixHashScan(
+            [guide], genome, count_output;
+            distance = 2, early_stopping = [-1, 1, 1])
+        @test_throws ErrorException search_prefixHashScan(
+            [guide], genome, count_output; output = :invalid)
     end
 
     @testset "specialized Cas12a geometries and backends" begin
@@ -527,6 +710,13 @@ end
             [guide], genome, public_output;
             motif = "Cas12a", early_stopping = fill(100, 4))
         @test read(public_output, String) == outputs[:legacy]
+        count_output = joinpath(tdir, "cas12a_counts.csv")
+        search_prefixHashScan(
+            [guide], genome, count_output;
+            motif = "Cas12a", early_stopping = fill(100, 4),
+            output = :counts)
+        @test phs_counts(count_output) == phs_expected_counts(
+            public_output, [guide], 3)
         twobit_output = joinpath(tdir, "cas12a_public_2bit.csv")
         search_prefixHashScan(
             [guide], twobit_genome, twobit_output;
@@ -1502,14 +1692,19 @@ end
     prefix_out = joinpath(tdir, "prefixhash.csv")
     scan_out = joinpath(tdir, "scan.csv")
     brute_out = joinpath(tdir, "bruteforce.csv")
+    count_out = joinpath(tdir, "counts.csv")
     search_prefixHashDB(db_path, [guide], prefix_out; distance = 2, early_stopping = fill(100, 3))
     CHOPOFF.search_prefixHashScan([guide], genome, motif, scan_out; distance = 2, early_stopping = fill(100, 3), query_variant = :bitmask64)
     CHOPOFF.search_prefixHashScan([guide], genome, motif, brute_out; distance = 2, early_stopping = fill(100, 3), query_variant = :bruteforce)
+    search_prefixHashScan(
+        [guide], genome, count_out;
+        distance = 2, early_stopping = fill(100, 3), output = :counts)
 
     @testset "parity vs prefixHashDB" begin
         @test phs_core(scan_out) == phs_core(prefix_out)
         @test phs_core(brute_out) == phs_core(prefix_out)
         @test phs_core(brute_out) == phs_core(scan_out)
+        @test phs_counts(count_out) == phs_expected_counts(scan_out, [guide], 2)
     end
 
     @testset "indel candidates survive prefix scan" begin

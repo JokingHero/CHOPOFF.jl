@@ -360,6 +360,11 @@ function parse_commandline(args::Array{String})
             arg_type = Int
             nargs = '*'
             required = false
+        "--output_mode"
+            help = "Write detailed hits or one count row per guide."
+            arg_type = String
+            range_tester = x -> x in ("detail", "counts")
+            default = "detail"
     end
 
     @add_arg_table! s["search"]["sassy"] begin
@@ -585,6 +590,7 @@ function main(args::Array{String})
                 ),
                 early_stopping = early_stopping,
                 distance = args["distance"],
+                output = Symbol(scan_args["output_mode"]),
                 verbose = true,
             )
         elseif args["%COMMAND%"] == "sassy"

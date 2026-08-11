@@ -154,7 +154,12 @@ function stream_prefix_hash_scan_chunk(
     ::Val{M},
     stats::S,
     plus::Vector{PrefixHashScanVerifiedHit} = PrefixHashScanVerifiedHit[],
-    minus::Vector{PrefixHashScanVerifiedHit} = PrefixHashScanVerifiedHit[]) where {M, S}
+    minus::Vector{PrefixHashScanVerifiedHit} = PrefixHashScanVerifiedHit[],
+    early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
+    ) where {M, S}
+
+    chunk_counts = early_stop_state === nothing ? nothing :
+        zeros(Int, length(guides_), distance + 1)
 
     candidate_last_offset = prefix_scan_candidate_last_offset(geometry)
     read_first = max(1, work.core_first - distance)
@@ -202,10 +207,12 @@ function stream_prefix_hash_scan_chunk(
                 Val(dbi.motif.ambig_max), stats)
             evaluate_prefix_hash_scan_hits!(
                 plus, raw, geometry, scratch_plus_hits, global_offset, dbi,
-                false, guides_, myers_profiles, distance, stats)
+                false, guides_, myers_profiles, distance, stats,
+                early_stop_state, chunk_counts)
             evaluate_prefix_hash_scan_hits!(
                 minus, raw, geometry, scratch_minus_hits, global_offset, dbi,
-                true, guides_, myers_profiles, distance, stats)
+                true, guides_, myers_profiles, distance, stats,
+                early_stop_state, chunk_counts)
             sort!(plus; by = hit -> hit.pos, alg = QuickSort)
             sort!(minus; by = hit -> hit.pos, alg = QuickSort)
         end
@@ -273,12 +280,88 @@ function stream_prefix_hash_scan_chunk(
         end
         evaluate_prefix_hash_scan_hits!(
             plus, raw, geometry, plus_hits, global_offset, dbi, false,
-            guides_, myers_profiles, distance, stats)
+            guides_, myers_profiles, distance, stats,
+            early_stop_state, chunk_counts)
         evaluate_prefix_hash_scan_hits!(
             minus, raw, geometry, minus_hits, global_offset, dbi, true,
-            guides_, myers_profiles, distance, stats)
+            guides_, myers_profiles, distance, stats,
+            early_stop_state, chunk_counts)
     end
+    chunk_counts === nothing ||
+        merge_prefix_hash_scan_chunk_counts!(early_stop_state, chunk_counts)
     return PrefixHashScanChromResult(plus, minus, stats)
+end
+
+function stream_prefix_hash_scan_count_chunk(
+    geometry::PrefixScanGeometry,
+    io,
+    buffer::Vector{UInt8},
+    index,
+    work::PrefixHashScanChunkWork,
+    chromosome_length::Int,
+    query,
+    dbi::DBInfo,
+    guides_::Vector{LongDNA{4}},
+    myers_profiles::Vector{PrefixHashScanMyersProfile},
+    distance::Int,
+    scratch_plus_hits::Vector{PrefixHashScanHit},
+    scratch_minus_hits::Vector{PrefixHashScanHit},
+    lookup_scratch::PrefixHashScanLookupScratch,
+    ::Val{M},
+    stats::S,
+    early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
+    ) where {M, S}
+
+    candidate_last_offset = prefix_scan_candidate_last_offset(geometry)
+    read_first = max(1, work.core_first - distance)
+    read_last = min(
+        chromosome_length, work.core_last + candidate_last_offset + distance)
+    read_start = prefix_hash_scan_timer(stats)
+    raw = read_prefix_hash_scan_range!(
+        buffer, io, index, work.chrom_idx, read_first, read_last)
+    if stats !== nothing
+        read_ns = time_ns() - read_start
+        stats.record_io_ns += read_ns
+        stats.chrom_load_ns += read_ns
+    end
+
+    local_first = work.core_first - read_first + 1
+    local_last = work.core_last - read_first + 1
+    if M === :buffered_reuse
+        motif_candidates = scan_prefix_hits_raw_range!(
+            geometry, scratch_plus_hits, scratch_minus_hits, raw, query,
+            local_first, local_last, local_first, local_last,
+            local_first, local_last)
+    elseif M === :bucketed_reuse
+        motif_candidates = scan_prefix_hits_raw_range_bucketed!(
+            geometry, scratch_plus_hits, scratch_minus_hits,
+            lookup_scratch.plus_candidates, lookup_scratch.minus_candidates,
+            lookup_scratch.plus_radix, lookup_scratch.minus_radix,
+            lookup_scratch.radix_counts, raw, query,
+            local_first, local_last, local_first, local_last,
+            local_first, local_last)
+    else
+        error("Unknown prefixHashScan count mode: $M")
+    end
+    if dbi.motif.ambig_max > 0
+        scan_ambiguous_prefix_hits_range!(
+            scratch_plus_hits, scratch_minus_hits, raw, geometry, dbi, query,
+            geometry.prefix_bases, local_first, local_last,
+            local_first, local_last, local_first, local_last,
+            Val(dbi.motif.ambig_max), stats)
+    end
+    stats === nothing || (stats.motif_candidates += motif_candidates)
+
+    counts = zeros(Int, length(guides_), distance + 1)
+    evaluate_prefix_hash_scan_count_hits!(
+        counts, raw, geometry, scratch_plus_hits, false,
+        myers_profiles, distance, stats, early_stop_state, counts)
+    evaluate_prefix_hash_scan_count_hits!(
+        counts, raw, geometry, scratch_minus_hits, true,
+        myers_profiles, distance, stats, early_stop_state, counts)
+    early_stop_state === nothing ||
+        merge_prefix_hash_scan_chunk_counts!(early_stop_state, counts)
+    return PrefixHashScanCountResult(counts, stats)
 end
 
 function stream_prefix_hash_scan_chromosome(
@@ -349,7 +432,9 @@ function stream_prefix_hash_scan(
     scan_threads::Int,
     mode::Val{M},
     stats::S,
-    ::Val{Scheduler} = Val(:chunk)) where {M, S, Scheduler}
+    ::Val{Scheduler} = Val(:chunk),
+    early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
+    ) where {M, S, Scheduler}
 
     index = is_fasta(genome_path) ?
         FASTA.Index(genome_path * ".fai") :
@@ -362,6 +447,9 @@ function stream_prefix_hash_scan(
         chrom_chunk_ranges = [idx:idx for idx in eachindex(reference_lengths)]
     else
         error("Unknown prefixHashScan stream scheduler: $Scheduler")
+    end
+    if early_stop_state !== nothing
+        early_stop_state.work_items_total = length(work)
     end
     results = Vector{Union{Nothing, PrefixHashScanChromResult}}(
         nothing, length(work))
@@ -376,8 +464,11 @@ function stream_prefix_hash_scan(
             lookup_scratch = PrefixHashScanLookupScratch()
             try
                 while true
+                    prefix_hash_scan_active_mask(early_stop_state) == 0 && break
                     work_idx = Threads.atomic_add!(next_work, 1)
                     work_idx > length(work) && break
+                    early_stop_state === nothing ||
+                        Threads.atomic_add!(early_stop_state.work_items_claimed, 1)
                     worker_stats = prefix_hash_scan_worker_stats(stats)
                     if Scheduler === :chunk
                         item = work[work_idx]
@@ -385,7 +476,9 @@ function stream_prefix_hash_scan(
                             geometry, io, buffer, index, item,
                             reference_lengths[item.chrom_idx], query, dbi,
                             guides_, myers_profiles, distance, scratch_plus_hits,
-                            scratch_minus_hits, lookup_scratch, mode, worker_stats)
+                            scratch_minus_hits, lookup_scratch, mode, worker_stats,
+                            PrefixHashScanVerifiedHit[], PrefixHashScanVerifiedHit[],
+                            early_stop_state)
                     else
                         chrom_idx = work[work_idx]
                         results[work_idx] = stream_prefix_hash_scan_chromosome(
@@ -403,6 +496,66 @@ function stream_prefix_hash_scan(
     end
     fetch.(workers)
     return results, chrom_chunk_ranges
+end
+
+function stream_prefix_hash_scan_counts(
+    geometry::PrefixScanGeometry,
+    genome_path::String,
+    reference_lengths,
+    query,
+    dbi::DBInfo,
+    guides_::Vector{LongDNA{4}},
+    myers_profiles::Vector{PrefixHashScanMyersProfile},
+    distance::Int,
+    chunk_bases::Int,
+    scan_threads::Int,
+    mode::Val{M},
+    stats::S,
+    early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
+    ) where {M, S}
+
+    index = is_fasta(genome_path) ?
+        FASTA.Index(genome_path * ".fai") :
+        read_prefix_hash_scan_twobit_index(genome_path)
+    work, _ = prefix_hash_scan_chunk_work(
+        reference_lengths, chunk_bases, geometry)
+    if early_stop_state !== nothing
+        early_stop_state.work_items_total = length(work)
+    end
+    results = Vector{Union{Nothing, PrefixHashScanCountResult}}(
+        nothing, length(work))
+    next_work = Threads.Atomic{Int}(1)
+    worker_count = min(scan_threads, length(work))
+    workers = map(1:worker_count) do _
+        Threads.@spawn begin
+            io = open(genome_path, "r")
+            buffer = UInt8[]
+            scratch_plus_hits = PrefixHashScanHit[]
+            scratch_minus_hits = PrefixHashScanHit[]
+            lookup_scratch = PrefixHashScanLookupScratch()
+            try
+                while true
+                    prefix_hash_scan_active_mask(early_stop_state) == 0 && break
+                    work_idx = Threads.atomic_add!(next_work, 1)
+                    work_idx > length(work) && break
+                    early_stop_state === nothing ||
+                        Threads.atomic_add!(early_stop_state.work_items_claimed, 1)
+                    item = work[work_idx]
+                    worker_stats = prefix_hash_scan_worker_stats(stats)
+                    results[work_idx] = stream_prefix_hash_scan_count_chunk(
+                        geometry, io, buffer, index, item,
+                        reference_lengths[item.chrom_idx], query, dbi, guides_,
+                        myers_profiles, distance, scratch_plus_hits,
+                        scratch_minus_hits, lookup_scratch, mode, worker_stats,
+                        early_stop_state)
+                end
+            finally
+                close(io)
+            end
+        end
+    end
+    fetch.(workers)
+    return results
 end
 
 stream_prefix_hash_scan(genome_path::String, args...) =

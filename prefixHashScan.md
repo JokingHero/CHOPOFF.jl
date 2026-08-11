@@ -39,8 +39,9 @@ query construction stays serial. Compatible production searches use bucketed
 lookup automatically; multi-guide searches also use parallel query construction.
 
 The public API and CLI accept larger guide lists and search them as sequential
-64-guide batches. Each batch uses the full requested thread count and appends to
-one detail file. This is intentional: a GRCh38 benchmark found batching about
+64-guide batches. Detail mode appends batches to one file. Count mode merges
+batch matrices and writes one row per unique guide after applying deterministic
+per-distance caps. This is intentional: a GRCh38 benchmark found batching about
 three times faster than the tested one-pass large-guide representations.
 
 "Indexless" means that no CHOPOFF genome database must be built. The optimized
@@ -344,9 +345,21 @@ Workers retain accepted hits by chromosome and strand. The main task commits
 them in chromosome, strand, and position order, deduplicates complete output
 records, applies early-stopping counters, and writes CSV rows.
 
-Early stopping currently affects committed output, but workers have already
-scanned and verified the genome. It therefore does not save most computation in
-the streaming backend.
+Finite early-stopping limits activate chunk-local guide counters. Workers mask
+inactive guide bits before Myers verification and stop claiming chunks when all
+guides are inactive. A guide retires only when a `(limit + 1)`th accepted hit
+proves one exact-distance bucket incomplete. Detail output retains any valid
+capped subset; its seven-column schema is unchanged.
+
+#### Early-stopping benchmark result
+
+GRCh38 benchmarks selected chunk-local reduction as the production design. For
+61 Cas9 guides at distance 3 and 24 threads, prefixHash-style caps reduced
+guide/window verification pairs from 1,583,279 to 122,692 and retired 51 guides;
+detail median improved from 1.418 s to 1.359 s. An 11-run, single-thread Cas9
+distance-4 count test measured a 2.27x paired speedup (84.94 s versus 36.80 s
+median). Unlimited and default one-million caps remained near baseline. All
+completed correctness comparisons passed.
 
 ## Simplified pseudocode
 
@@ -721,7 +734,8 @@ this host.
 5. Ambiguous query guides are rejected.
 6. `ambig_max` supports zero through three IUPAC-ambiguous reference positions
    per complete guide/PAM window. Larger ambiguity allowances are unsupported.
-7. Early stopping does not cancel already scheduled scan/verification work.
+7. Early stopping cannot cancel chunks already claimed by workers. Chunk-local
+   reduction bounds this overshoot.
 8. Global scheduling adds per-chunk result containers and concurrent FASTA
    seeks. Current evidence is for warm-cache GRCh38; cold-cache and networked
    filesystems have not been measured.
@@ -744,6 +758,10 @@ this host.
     verification, streaming, and orchestration in the parent `CHOPOFF` module.
 
 ## Potential speed optimizations
+
+Unfinished items in this section are optional research directions. They do not
+precede early stopping, generic correctness qualification, product completion,
+or portability work.
 
 ### Highest-priority experiments
 
@@ -809,10 +827,10 @@ this host.
     low priority for the 25,826-row Cas9 workload but credible for the
     364,581-row Cas12a workload.
 
-## Usability and feature work
+## Feature status
 
-Performance work should not be mixed blindly with generalization. Useful next
-features are:
+Performance work should not be mixed blindly with generalization. Current
+feature status is:
 
 1. **Completed:** export and document registered and custom motifs at distances
    0 through 4 for `search_prefixHashScan`, add a standalone CLI search mode,
@@ -820,58 +838,43 @@ features are:
    statistics.
 2. **Completed:** support more than 64 guides through transparent sequential
    64-guide batching after the one-pass alternatives lost the GRCh38 benchmark.
-3. Make early stopping cancel future chunks while preserving deterministic
-   output semantics.
+3. **Completed:** computational early stopping masks retired guides and cancels
+   future chunk claims. Detail subsets may vary with scheduling by design.
 4. **Completed:** add distance 4 at p16 as the functional upper bound and
    benchmark mode.
 5. **Completed:** add Cas12a as a separate specialized scan geometry using its
    precomputed paths without forcing Cas9 constants into a generic SIMD loop.
 6. **Completed:** add optimized 2bit streaming and bounded IUPAC-reference
    behavior for `ambig_max=0:3`.
+7. **Completed:** add count-only output without traceback or detail rows.
 
-## Recommended next work after the d0-d4 sweep
+## Remaining implementation priorities
 
-The following order balances correctness, user-visible value, and measured
-performance. Performance changes retain the existing 10% GRCh38 improvement
-gate unless they provide an independently valuable feature.
+The following decisions are closed:
 
-1. **Completed: use prefixHashDB as the benchmark oracle.** Compare raw exact
-   detail-row multisets, including duplicate multiplicity, without an
-   intermediate motif-specific validator. Keep core-locus comparison only for
-   external Sassy implementations whose traceback strings may differ.
-2. **Implement count-only output.** Add an `output=:detail|:counts` API and CLI
-   surface in `src/db_prefix_hash_scan.jl`, aggregate raw Myers distances in
-   `src/prefix_hash_scan/verification.jl`, and bypass traceback, strings,
-   detail deduplication, and detail CSV emission. Tests in
-   `test/src/prefix_hash_scan.jl` must compare complete counts with
-   `summarize_offtargets(detail)` across motifs, distances, strands, indels, and
-   chunk boundaries. Capped searches must report `complete=false`. Cas12a d3
-   and d4 are the primary performance gates.
-3. **Run a d4 prefix-length and memory sweep before redesigning the query.**
-   Compare p14, p15, and p16 on GRCh38 and record query-build time, peak RSS,
-   unique hashes, directory hits, verification calls, and end-to-end latency.
-   Exact detail parity is mandatory. Promote a different d4 prefix only if it
-   reduces latency or memory by at least 10%; otherwise retain functional p16.
-4. **Optimize Cas12a detail commit if count mode confirms the attribution.**
-   Target `evaluate_prefix_hash_scan_hits!`,
-   `commit_prefix_hash_scan_verified!`, compact deduplication keys, delayed
-   string construction, and possibly batched traceback. Measure Cas9 separately
-   and allow no more than 3% Cas9 d3 regression.
-5. **Completed:** preserve the `UInt64` fast path and use deterministic
-   sequential batching for larger guide lists. Revisit a one-pass
-   representation only if it wins the documented 10% performance gate.
-6. **Make early stopping cancel unclaimed chunks.** Preserve deterministic
-   detail output and mark partial count output incomplete. This work is valuable
-   only for capped searches and should not complicate the complete-search hot
-   path.
-7. **Keep hardware-specific work evidence-driven.** NUMA pinning and per-socket
-   query replicas are the first Cas9 experiments; cache-conscious prefilters,
-   AVX-512, mmap-backed input, and ARM SIMD remain follow-ups. Do not replace
-   the current path without exact parity and a credible end-to-end gain.
+- Distance 4 remains fixed at p16. The p14/p15/p16 work selected p16, and d4 is
+  intentionally a stretch configuration rather than an optimization target.
+- Sequential 64-guide batching remains the large-guide architecture. It was
+  the fastest of the tested multi-guide designs; no new one-pass representation
+  or automatic routing policy is planned.
+- Count-only output and direct prefixHashDB parity are complete.
 
-The simplest high-value sequence is therefore: retain direct prefixHashDB
-parity, ship count mode, then use the d4 prefix sweep to decide whether
-compressed or staged d4 query research is justified.
+Remaining work, in priority order:
+
+1. **Generic correctness qualification.** Add randomized and representative
+   human-scale prefixHashDB parity across distances 0 through 4, guide lengths
+   16 through 64, PAM positions and PAMless motifs, strand subsets, FASTA/2bit,
+   ambiguity, indels, duplicate guides, and multi-batch searches.
+2. **Product completion.** Add atomic multi-batch detail output, custom motif
+   definitions in the standalone CLI, and clearer path/query memory and progress
+   reporting.
+3. **Portable performance.** Qualify scalar and fused fallbacks on CPUs without
+   AVX2/BMI2, then add an ARM SIMD path if profiling justifies it.
+
+Further Cas9/Cas12a micro-optimization, NUMA experiments, alternative
+prefilters, AVX-512, mmap-backed FASTA, and vectorized traceback remain
+lower-priority research directions. Continue one only with exact parity and a
+credible end-to-end gain.
 
 ## Recommended decision rule
 
@@ -884,18 +887,19 @@ are now measured.
 Cache-local directory lookup passed, but its paired end-to-end gain was 6.2-6.7%
 and lookup is only 7.9% of cumulative samples at 24 CPUs. Cas12a specialization
 is now complete and confirms that motif geometries should remain separate.
-Future Cas9 work should target genome-order presence-bitmap probes or explain
-worker wait through NUMA/pinning measurements. Future Cas12a work should first
-target accepted-candidate verification, alignment materialization, deduplication,
-and commit. Require exact parity and report both motifs so an optimization for
-the result-heavy Cas12a workload does not regress Cas9.
+If performance research resumes, Cas9 work should target genome-order
+presence-bitmap probes or explain worker wait through NUMA/pinning measurements.
+Cas12a detail work should target accepted-candidate verification, alignment
+materialization, deduplication, and commit. Require exact parity and report both
+motifs so an optimization for the result-heavy Cas12a workload does not regress
+Cas9.
 
 The likely remaining gain without a genome index is meaningful but smaller than
 the previous 10x improvement. Another 1.5-3x is plausible only if profiling
 confirms avoidable lookup, scheduling, or temporary-data costs. Another 10x is
 unlikely because every exact indexless search must still inspect the reference.
 
-## Open questions
+## Open research questions
 
 - How much of the remaining 0.32-0.34 s query build is the serial heap merge
   and directory construction?
@@ -923,13 +927,13 @@ The target is an exact production search with:
 
 - no genome-specific CHOPOFF database or build step;
 - only reusable motif path assets and the standard FASTA `.fai`;
-- one reference scan for the complete guide set;
+- one bounded reference scan per 64-guide batch;
 - deterministic results with prefixHashDB-compatible coordinates and distances;
 - specialized hot loops for important motif geometries, without motif branches
   inside those loops.
 
-The next work should generalize the useful surface before attempting more
-Cas9 micro-optimization. Count output is the next implementation target.
+The useful output surface and computational early stopping are now generalized.
+Generic correctness qualification is the next implementation priority.
 
 Implementation order changed July 22, 2026: detailed output for distances 0
 through 3 shipped first at p16, followed by distance 4 as the functional and
@@ -947,12 +951,12 @@ The existing Cas9 and Cas12a PAM/profile kernels remain separate and are not
 copied once per distance. Dispatch resolves the distance before entering each
 hot loop. Production prefix length remains fixed at 16.
 
-Future prefix-length tuning should use a GRCh38 sweep of query-build time, peak
-memory, exact directory hits, verification calls, and end-to-end latency.
-Exact detail parity with prefixHashDB is required at every supported distance;
-count/detail parity becomes a release gate when count mode is implemented.
+The p14/p15/p16 evaluation retained p16 as the final production prefix length.
+Distance 4 is supported as a stretch configuration, not as an optimization
+target. Exact detail and count parity with prefixHashDB remain release gates at
+every supported distance.
 
-### Priority 2: count output mode (next)
+### Priority 2: count output mode (completed)
 
 Only two output modes are needed:
 
@@ -970,16 +974,27 @@ search. This parity is a release gate rather than an assumed property: it must
 cover indels, both strands, chunk boundaries, and sites with competing optimal
 alignments.
 
-`complete=true` means the whole reference was processed for that guide.
-Explicit early-stopping limits may return capped counts, but then `complete`
-must be false. A count must never be presented as exact after work for that
-guide was cancelled. Early stopping should eventually cancel unclaimed chunks,
-instead of only suppressing records during the deterministic commit.
+Finite limits use chunk-local counters. A guide retires after a `(cap + 1)`th
+hit proves incompleteness in any exact-distance bucket. Subsequent candidates
+mask that guide before Myers verification, and workers stop claiming chunks
+when every guide retires. Count output caps each bucket and reports
+`complete=false`; non-triggering buckets may then be partial lower bounds.
 
 This mode is also a performance feature. In the current 61-guide human
 experiments, detail output performs 25,826 Cas9 tracebacks and 364,581 Cas12a
-tracebacks. Count mode should bypass both workloads while preserving exact
+tracebacks. Count mode bypasses both workloads while preserving exact
 per-distance counts.
+
+An August 8, 2026 GRCh38 check used 61 guides, 24 Julia threads, one warmup,
+and three alternating timed runs per mode. Count/detail summaries had exact
+parity and count diagnostics performed zero tracebacks:
+
+| Motif | Distance | Detail median | Count median | Speedup |
+|---|---:|---:|---:|---:|
+| Cas9 | 3 | 1.556 s | 1.446 s | 1.08x |
+| Cas9 | 4 | 14.376 s | 12.556 s | 1.14x |
+| Cas12a | 3 | 3.819 s | 1.069 s | 3.57x |
+| Cas12a | 4 | 20.819 s | 10.758 s | 1.94x |
 
 ### Completed: thousands of guides through batching
 
@@ -994,10 +1009,9 @@ about three times slower than batching. The dominant workload contains tens of
 millions of verified detail rows, so retaining one monolithic result and dedup
 state outweighed the saved reference scans.
 
-A future one-pass design must bound result and dedup memory, compare exact
-detail multisets, report peak RSS, and beat sequential batching by at least 10%
-on both dispersed and related 1,024-guide workloads. Until then, batching is
-the production architecture rather than a fallback.
+Sequential batching is the production architecture rather than a fallback.
+The tested one-pass and large-directory alternatives were slower, so large-guide
+query redesign is not active work.
 
 ### Completed: bounded IUPAC ambiguity
 
@@ -1019,13 +1033,15 @@ This mode intentionally reuses the d0-d4 compact query and motif-specific scan
 architecture. It is not expected to match lower-distance speed or memory use. In
 an earlier isolated 61-guide Cas9 memory run with 24 query workers, query
 construction took 10.8 seconds, produced 111,720,240 guide/hash associations
-and a 1.09 GB final query, reaching 4.51 GB peak process RSS. No guide-count cap below the existing 64 is imposed; callers must provision memory accordingly. Future compressed or
-staged d4 representations remain benchmark research, not a release requirement.
+and a 1.09 GB final query, reaching 4.51 GB peak process RSS. No guide-count cap
+below the existing 64 is imposed. The p14/p15/p16 evaluation retained p16;
+compressed or staged d4 representations are out of scope because d4 is already
+at the practical edge of the algorithm.
 
 ### Workload-specific performance after generalization
 
-Cas9 and Cas12a now have different remaining costs and should have separate
-performance gates:
+After the core implementation priorities, Cas9 and Cas12a performance research
+should retain separate gates:
 
 - Cas9 work should investigate genome-order presence-bitmap latency,
   last-level-cache behavior, NUMA-local query copies, and scheduler tail
@@ -1034,9 +1050,9 @@ performance gates:
   string construction, deduplication, and CSV commit.
 - Count mode should be benchmarked independently because it removes most of the
   Cas12a-specific output cost and exposes the scan/verification ceiling.
-- AVX-512, ARM SIMD, mmap-backed input, and further prefilter experiments remain
-  follow-up portability or speed work, not prerequisites for the first
-  generalized release.
+- Non-AVX2 fallback qualification and ARM SIMD belong to the portability
+  priority. AVX-512, mmap-backed input, and further prefilter experiments remain
+  optional speed research.
 
 Continue an optimization only when it has a credible route to at least 10%
 end-to-end improvement in its intended workload. Always report detail and
@@ -1055,8 +1071,8 @@ superior because the two algorithms amortize genome work differently.
 1,024, and 4,096 guides require 1, 16, and 64 reference scans respectively.
 `prefixHashDB` pays genome processing once during database construction and can
 reuse that index for arbitrary future searches. A persistent index can therefore
-win for large guide sets or repeated searches even when one scan is faster than
-one indexed search. The crossover must be measured as:
+win for repeated searches even when one scan is faster than one indexed search.
+The architectural comparison remains:
 
 ```text
 prefixHashDB total = database build + searches * indexed search
@@ -1065,41 +1081,23 @@ prefixHashScan total = searches * ceil(guides / 64) * reference scan
 
 The main remaining gaps are:
 
-1. **Large-guide scaling.** Either develop a bounded-memory one-pass query that
-   beats batching, or automatically route workloads beyond a measured crossover
-   to `prefixHashDB`. The rejected large-directory prototype was about three
-   times slower than sequential 64-guide batches, so merely widening the guide
-   mask is not sufficient.
-2. **Computational early stopping.** `prefixHashDB` can stop processing a guide
-   when its threshold is reached. The streaming scan currently performs
-   scheduled scan/verification work and applies the limit during deterministic
-   commit. Workers need a deterministic live-guide mask, cancellation of
-   unclaimed chunks when all guides stop, and explicit incomplete-output status.
-3. **Generic correctness qualification.** Extend exact prefixHashDB parity from
+1. **Generic correctness qualification.** Extend exact prefixHashDB parity from
    canonical human-scale cases to generic distances 0 through 4, guide lengths
    16 through 64, PAM-left/PAM-right/internal/PAMless motifs, strand subsets,
    FASTA/2bit, ambiguity 0 through 3, indels at reference/chunk boundaries,
    duplicate guides, and multi-batch searches. Use randomized property tests
    and representative human-scale searches.
-4. **Distance-4 resources.** The measured 61-guide Cas9 d4 query took 10.8
-   seconds to build, occupied 1.09 GB, and reached 4.51 GB peak RSS. Evaluate
-   adaptive prefix lengths or compressed/staged construction, and provide clear
-   resource reporting or routing when the optimized representation is too large.
-5. **Crossover evidence.** Benchmark 1, 8, 61, 64, 65, 256, 1,024, and 4,096
-   guides; one-shot and repeated searches; warm and cold data; canonical and
-   generic motifs; distances 0 through 4; FASTA and 2bit; sparse, dense, capped,
-   and complete output; and local versus slower storage. Separate query build,
-   scan, verification, commit, peak memory, database build, and database storage.
-6. **Portable performance.** AVX2/BMI2 systems use the fastest streaming path.
+2. **Product completion.** Add path/query memory and progress reporting, custom
+   motif definitions in the CLI, and atomic multi-batch detail output.
+3. **Portable performance.** AVX2/BMI2 systems use the fastest streaming path.
    Correct fused-directory and legacy fallbacks exist, but must be qualified
-   against prefixHashDB on unsupported CPUs before claiming a universal win.
-7. **Product completion.** Add count-only output without traceback/detail CSV,
-   `complete=true|false` for capped searches, path/query memory and progress
-   reporting, custom motif definitions in the CLI, and atomic multi-batch output.
+   against prefixHashDB on unsupported CPUs. ARM SIMD is the primary missing
+   optimized backend.
 
 The generic kernel's measured 17.8% Cas9 hot-loop latency penalty is not a
-replacement blocker. The decisive limitations are repeated reference scans for
-large guide sets and early stopping that does not yet cancel most computation.
+replacement blocker. The decisive implementation limitation is incomplete
+generic correctness qualification. Sequential batching, computational early
+stopping, and d4/p16 are closed design decisions.
 
 #### Replacement gates
 
@@ -1109,18 +1107,17 @@ Make `prefixHashScan` the documented default for its qualified workload when:
    parity on sample, randomized, and human-scale fixtures.
 2. Scalar, fused, FASTA SIMD, and 2bit SIMD backends have identical results;
    unsupported configurations select a correct fallback rather than fail.
-3. Early-stopped output is explicitly incomplete and cancellation saves
-   scheduled work without changing deterministic output semantics.
-4. Large and repeated workloads either use a demonstrated bounded-memory
-   one-pass design or are routed to prefixHashDB using a measured policy.
-5. Distance-4 peak memory has an enforced, documented operating policy.
-6. Warm/cold, thread-scaling, guide-count, repeated-search, query-build, scan,
-   verification, output, and index-amortization costs are reported separately.
-7. Cas9/d3 and Cas12a/d3 detail latency regresses by no more than 3% unless a
+3. Count output marks early-stopped rows incomplete; detail output documents its
+   scheduling-dependent valid subset. Cancellation reduces verification or
+   unclaimed work.
+4. Multi-batch detail output is atomic, custom CLI motifs are supported, and
+   progress/memory reporting is clear enough for production use.
+5. Non-AVX2 fallbacks are qualified, with ARM SIMD tracked as the primary
+   portability extension.
+6. Cas9/d3 and Cas12a/d3 detail latency regresses by no more than 3% unless a
    measured feature-level benefit justifies it.
 
-The initial default should be one-shot, complete searches with eligible motifs
-and at most 64 guides. Keep `prefixHashDB` as the persistent-index backend for
-repeated, heavily capped, very large-guide, or unsupported workloads. This is a
-more useful successor policy than deleting an architecture with a different
-amortization advantage.
+The initial default should be one-shot searches with eligible motifs. Larger
+guide sets continue through the measured sequential batching path. Keep
+`prefixHashDB` as the persistent-index backend for repeated or heavily capped
+workloads; no automatic crossover policy is currently planned.

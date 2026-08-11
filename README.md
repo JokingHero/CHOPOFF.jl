@@ -74,6 +74,12 @@ CHOPOFF search --distance 3 \
   --guides "$EXAMPLE_GUIDES" \
   --output "$(mktemp --directory)/prefixHashScan.csv" \
   prefixHashScan --genome "$EXAMPLE_GENOME" --motif Cas9 --ambig_max 3
+
+# Write guide,D0,D1,D2,D3,complete without alignment traceback.
+CHOPOFF search --distance 3 \
+  --guides "$EXAMPLE_GUIDES" \
+  --output "$(mktemp --directory)/prefixHashScan_counts.csv" \
+  prefixHashScan --genome "$EXAMPLE_GENOME" --motif Cas9 --output_mode counts
 ```
 
 See the [prefixHashScan documentation](./docs/src/prefix_hash_scan.md)
