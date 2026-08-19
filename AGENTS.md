@@ -83,14 +83,14 @@ Local profiling runner, artifacts, guides, and human outputs live under ignored 
 ```bash
 # CPU flamegraph/profile on the human benchmark
 CHOPOFF_PROFILE_MODE=cpu \
-CHOPOFF_PROFILE_USE_AVX512=1 \
+CHOPOFF_PROFILE_BACKEND=auto \
 JULIA_NUM_THREADS=8 \
 JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
 /home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
   test/local_human/profile_human_sassy.jl
 
 # Allocation profile
-CHOPOFF_PROFILE_MODE=allocs CHOPOFF_PROFILE_USE_AVX512=1 JULIA_NUM_THREADS=8 \
+CHOPOFF_PROFILE_MODE=allocs CHOPOFF_PROFILE_BACKEND=auto JULIA_NUM_THREADS=8 \
 JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
 /home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
   test/local_human/profile_human_sassy.jl
@@ -98,6 +98,7 @@ JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot
 
 Useful env controls:
 - `CHOPOFF_PROFILE_MODE`: `baseline`, `cpu`, `allocs`, `all`, `scaling`
+- `CHOPOFF_PROFILE_BACKEND`: `auto`, `avx512`, `avx2_pext`, or `avx2_safe`
 - `CHOPOFF_PROFILE_GUIDE_LIMIT`: limit guides for smoke runs (`0` means all)
 - `CHOPOFF_PROFILE_OUTPUT_PARENT`: output directory override
 - `CHOPOFF_PROFILE_GENOME`: defaults to `/home/rstudio/livemount/Bio_data/references/homo_sapiens/Homo_sapiens.GRCh38.dna.primary_assembly.fa`
@@ -107,7 +108,7 @@ Profiler outputs:
 - CPU: `profiles/cpu.pb.gz`, `profiles/cpu_flat.txt`, `profiles/cpu_top.txt`, `profiles/statprof/index.html`
 - Allocations: `profiles/allocs.pb.gz`, `profiles/allocs_top.txt`
 
-Current human CPU profile (`61` guides, Cas9 distance `3`, AVX512, `8` threads) shows `search_sassy_impl` dominates active work, with `encode_block_avx2!` a major inner-loop cost. Traceback is not dominant after the reference-ambiguity filter. There is also substantial thread wait/idle time, so investigate architecture/batching before micro-optimizing traceback.
+Current human CPU profile (`61` guides, Cas9 distance `3`, `auto` resolving to AVX-512, `8` threads) shows `search_sassy_impl` dominates active work, with text encoding a major inner-loop cost. Traceback is not dominant after the reference-ambiguity filter. There is also substantial thread wait/idle time, so investigate architecture/batching before micro-optimizing traceback.
 
 ### Standalone Binary Usage (after build)
 

@@ -8,91 +8,112 @@ using Random
 using Statistics
 
 const TEST_DIR = mktempdir()
+const PARITY_COLS = [
+    :guide, :alignment_guide, :alignment_reference, :distance,
+    :chromosome, :start, :strand,
+]
 
-function build_genome(genome_seq::String; chrom::String = "chr1")
+function build_fixture(n_bases::Int, n_guides::Int)
+    rng = MersenneTwister(0x5a55)
+    genome_seq = String(rand(rng, ['A', 'C', 'G', 'T'], n_bases))
+    guides = LongDNA{4}.([
+        String(rand(rng, ['A', 'C', 'G', 'T'], 20)) for _ in 1:n_guides
+    ])
     genome_path = joinpath(TEST_DIR, "bench_genome.fa")
-    len = length(genome_seq)
-    open(genome_path, "w") do f
-        write(f, ">$chrom\n$genome_seq\n")
+    open(genome_path, "w") do io
+        write(io, ">chr1\n", genome_seq, "\n")
     end
-    header_len = length(">$chrom\n")
-    open(genome_path * ".fai", "w") do f
-        write(f, "$chrom\t$len\t$header_len\t$len\t$(len + 1)\n")
+    open(genome_path * ".fai", "w") do io
+        write(io, "chr1\t$n_bases\t6\t$n_bases\t$(n_bases + 1)\n")
     end
-    return genome_path
+    return genome_path, guides
 end
 
-function run_once(
-    guides::Vector{LongDNA{4}},
-    genome_path::String,
-    motif::Motif;
-    distance::Int,
-    force_safe_minima::Bool,
-)
-    output_path = joinpath(TEST_DIR, "bench_$(randstring(10)).csv")
-    elapsed = @elapsed CHOPOFF.search_sassy(
-        guides,
-        genome_path,
-        motif,
-        output_path;
-        distance = distance,
-        force_safe_minima = force_safe_minima,
+function run_once(guides, genome_path, motif, backend::Symbol, run_id::Int)
+    output_path = joinpath(TEST_DIR, "$(backend)_$(run_id).csv")
+    elapsed = @elapsed search_sassy(
+        guides, genome_path, motif, output_path;
+        distance = motif.distance,
+        backend = backend,
     )
-    if isfile(output_path)
-        rm(output_path; force = true)
-    end
-    return elapsed
+    frame = CSV.read(output_path, DataFrame)
+    return elapsed, sort(select(frame, PARITY_COLS), PARITY_COLS)
+end
+
+function supported_backends()
+    backends = Symbol[:auto, :avx2_safe]
+    CHOPOFF.Sassy.can_use_bmi2_pext() && push!(backends, :avx2_pext)
+    CHOPOFF.Sassy.can_use_avx512() &&
+        CHOPOFF.Sassy.can_use_bmi2_pext() && push!(backends, :avx512)
+    return backends
 end
 
 function main()
     runs = parse(Int, get(ENV, "SASSY_BENCH_RUNS", "7"))
+    n_bases = parse(Int, get(ENV, "SASSY_BENCH_BASES", "8000000"))
+    n_guides = parse(Int, get(ENV, "SASSY_BENCH_GUIDES", "8"))
+    tolerance = parse(Float64, get(ENV, "SASSY_BENCH_TOLERANCE", "0.03"))
     enforce = get(ENV, "SASSY_BENCH_ENFORCE_NO_REGRESSION", "0") == "1"
+    output_path = get(ENV, "SASSY_BENCH_OUT", "")
 
-    pad = repeat("TACG", 64)
-    guide1 = "TTTTTTTTTTTTTTTTTTTT"
-    guide2 = "ACGTACGTACGTACGTACGT"
-    guides = [LongDNA{4}(guide1), LongDNA{4}(guide2)]
-
-    hit1 = guide1 * "AGG"
-    hit2 = "ATTTTTTTTTTTTTTTTTTT" * "AGG"
-    hit3 = guide2 * "TGG"
-    hit4 = "ACGTACGTACGTACGTACGA" * "AGG"
-    genome_seq = pad * hit1 * pad * hit2 * pad * hit3 * pad * hit4 * pad
-    genome_path = build_genome(genome_seq)
+    genome_path, guides = build_fixture(n_bases, n_guides)
     motif = Motif("Cas9"; distance = 3)
+    backends = supported_backends()
+    resolved_auto = CHOPOFF.Sassy.resolve_sassy_backend()
 
-    println("Sassy minima backend benchmark")
-    println("CPU architecture: $(Sys.ARCH)")
-    println("BMI2 available: $(CHOPOFF.Sassy.can_use_bmi2_pext())")
-    println("Runs per backend: $runs")
+    println("SASSY backend benchmark")
+    println("cpu: ", Sys.CPU_NAME)
+    println("threads: ", Threads.nthreads())
+    println("avx2: ", CHOPOFF.Sassy.can_use_avx2())
+    println("bmi2: ", CHOPOFF.Sassy.can_use_bmi2_pext())
+    println("avx512f_bw: ", CHOPOFF.Sassy.can_use_avx512())
+    println("auto backend: ", resolved_auto)
+    println("fixture: $(n_bases) bases, $(n_guides) guides")
 
-    # Warmup compile + I/O once per backend.
-    run_once(guides, genome_path, motif; distance = 3, force_safe_minima = true)
-    run_once(guides, genome_path, motif; distance = 3, force_safe_minima = false)
-
-    safe_times = Float64[]
-    auto_times = Float64[]
-    for _ in 1:runs
-        push!(safe_times, run_once(guides, genome_path, motif; distance = 3, force_safe_minima = true))
-        push!(auto_times, run_once(guides, genome_path, motif; distance = 3, force_safe_minima = false))
+    for backend in backends
+        run_once(guides, genome_path, motif, backend, 0)
     end
 
-    safe_median = median(safe_times)
-    auto_median = median(auto_times)
-    delta_pct = safe_median == 0.0 ? 0.0 : (auto_median - safe_median) / safe_median * 100
-
-    println("Safe minima median (s): ", round(safe_median; digits = 6))
-    println("Auto minima median (s): ", round(auto_median; digits = 6))
-    println("Delta (auto-safe) %: ", round(delta_pct; digits = 2))
-
-    if enforce && auto_median > safe_median
-        error("No-regression gate failed: auto minima is slower than safe minima.")
+    rows = NamedTuple[]
+    expected = nothing
+    timings = Dict(backend => Float64[] for backend in backends)
+    for run_id in 1:runs
+        order = isodd(run_id) ? backends : reverse(backends)
+        for backend in order
+            elapsed, frame = run_once(guides, genome_path, motif, backend, run_id)
+            expected === nothing && (expected = frame)
+            parity = frame == expected
+            parity || error("Output parity failed for backend=$backend run=$run_id")
+            push!(timings[backend], elapsed)
+            push!(rows, (
+                cpu = Sys.CPU_NAME,
+                threads = Threads.nthreads(),
+                requested_backend = backend,
+                resolved_backend = CHOPOFF.Sassy.resolve_sassy_backend(backend),
+                run = run_id,
+                elapsed_s = elapsed,
+                bases = n_bases,
+                guides = n_guides,
+                parity = parity,
+            ))
+        end
     end
 
-    try
-        rm(TEST_DIR; recursive = true, force = true)
-    catch
+    for backend in backends
+        println(backend, " median_s=", round(median(timings[backend]); digits = 6))
     end
+
+    reference = :avx2_pext
+    if reference in backends && resolved_auto in backends
+        ratio = median(timings[resolved_auto]) / median(timings[reference])
+        println("auto/reference ratio: ", round(ratio; digits = 4))
+        if enforce && ratio > 1 + tolerance
+            error("Backend regression: ratio=$ratio exceeds $(1 + tolerance)")
+        end
+    end
+
+    isempty(output_path) || CSV.write(output_path, DataFrame(rows))
+    rm(TEST_DIR; recursive = true, force = true)
 end
 
 main()

@@ -100,7 +100,7 @@ function count_ambiguous_reference_rows(path::String)
     return rows
 end
 
-function warmup_compile(distance::Int)
+function warmup_compile(distance::Int, backend::Symbol)
     isfile(SAMPLE_GENOME) || return
     isfile(SAMPLE_GENOME * ".fai") || return
     isfile(SAMPLE_GUIDES) || return
@@ -116,6 +116,7 @@ function warmup_compile(distance::Int)
             joinpath(tmp, "warmup.csv");
             distance = min(distance, 3),
             early_stopping = fill(10, min(distance, 3) + 1),
+            backend = backend,
         )
     finally
         rm(tmp; recursive = true, force = true)
@@ -137,8 +138,7 @@ function main()
     scan_verify_variant = Symbol(strip(get(ENV, "CHOPOFF_HUMAN_SCAN_VERIFY_VARIANT", "auto")))
     rebuild_prefix = parse_bool_env("CHOPOFF_HUMAN_REBUILD_PREFIX", false)
     keep_outputs = parse_bool_env("CHOPOFF_HUMAN_KEEP_OUTPUTS", true)
-    use_avx512 = parse_bool_env("CHOPOFF_HUMAN_USE_AVX512", false)
-    force_safe_minima = parse_bool_env("CHOPOFF_HUMAN_FORCE_SAFE_MINIMA", false)
+    backend = Symbol(strip(get(ENV, "CHOPOFF_HUMAN_BACKEND", "auto")))
 
     motif = Motif(motif_name; distance = distance)
     guides = load_guides(guides_path, motif)
@@ -166,9 +166,11 @@ function main()
     println("scan_threads: ", scan_threads)
     println("scan_prefilter_bits: ", scan_prefilter_bits)
     println("scan_verify_variant: ", scan_verify_variant)
+    println("sassy_backend: ", backend)
+    println("sassy_backend_resolved: ", CHOPOFF.Sassy.resolve_sassy_backend(backend))
     println("output_dir: ", output_dir)
 
-    warmup_compile(distance)
+    warmup_compile(distance, backend)
 
     sassy_path = joinpath(output_dir, "sassy.csv")
     sassy_elapsed = @elapsed search_sassy(
@@ -178,8 +180,7 @@ function main()
         sassy_path;
         distance = distance,
         early_stopping = early_stopping,
-        use_avx512 = use_avx512,
-        force_safe_minima = force_safe_minima,
+        backend = backend,
     )
     sassy_rows = count_result_rows(sassy_path)
     sassy_bytes = filesize_bytes(sassy_path)
@@ -290,8 +291,8 @@ function main()
         motif = motif_name,
         distance = distance,
         threads = Threads.nthreads(),
-        use_avx512 = use_avx512,
-        force_safe_minima = force_safe_minima,
+        sassy_backend = backend,
+        sassy_backend_resolved = CHOPOFF.Sassy.resolve_sassy_backend(backend),
         early_stopping = join(early_stopping, ","),
         sassy_elapsed_s = sassy_elapsed,
         sassy_rows = sassy_rows,

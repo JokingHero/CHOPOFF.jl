@@ -1,8 +1,6 @@
 using JSON
 using Test
-
-# Point this to where you saved your split files
-include("../../../src/sassy/core.jl") 
+using CHOPOFF.Sassy
 
 # Helper to format numbers as hex for debugging
 hex(x) = "0x" * string(x, base=16, pad=16)

@@ -104,7 +104,7 @@ function write_kv(path::String, pairs)
     end
 end
 
-function warmup_compile(distance::Int, use_avx512::Bool, force_safe_minima::Bool, algorithm::Symbol = :sassy)
+function warmup_compile(distance::Int, backend::Symbol, algorithm::Symbol = :sassy)
     isfile(SAMPLE_GENOME) || return
     isfile(SAMPLE_GENOME * ".fai") || return
     isfile(SAMPLE_GUIDES) || return
@@ -121,8 +121,7 @@ function warmup_compile(distance::Int, use_avx512::Bool, force_safe_minima::Bool
                 joinpath(tmp, "warmup.csv");
                 distance = min(distance, 3),
                 early_stopping = fill(10, min(distance, 3) + 1),
-                use_avx512 = use_avx512,
-                force_safe_minima = force_safe_minima,
+                backend = backend,
             )
         elseif algorithm == :prefixHashScan
             CHOPOFF.search_prefixHashScan(
@@ -146,8 +145,7 @@ Base.@kwdef struct ProfileConfig
     motif_name::String
     distance::Int
     guide_limit::Int
-    use_avx512::Bool
-    force_safe_minima::Bool
+    backend::Symbol
     algorithm::Symbol
     output_parent::String
     run_label::String
@@ -162,8 +160,7 @@ function load_config(mode::String)
     motif_name = String(strip(get(ENV, "CHOPOFF_PROFILE_MOTIF", "Cas9")))
     distance = parse_int_env("CHOPOFF_PROFILE_DISTANCE", 3)
     guide_limit = parse_int_env("CHOPOFF_PROFILE_GUIDE_LIMIT", 0)
-    use_avx512 = parse_bool_env("CHOPOFF_PROFILE_USE_AVX512", true)
-    force_safe_minima = parse_bool_env("CHOPOFF_PROFILE_FORCE_SAFE_MINIMA", false)
+    backend = Symbol(strip(get(ENV, "CHOPOFF_PROFILE_BACKEND", "auto")))
     algorithm = Symbol(strip(get(ENV, "CHOPOFF_PROFILE_ALGORITHM", "sassy")))
     algorithm in (:sassy, :prefixHashScan) || error("CHOPOFF_PROFILE_ALGORITHM must be sassy or prefixHashScan")
     sample_rate = parse_float_env("CHOPOFF_PROFILE_ALLOC_SAMPLE_RATE", 0.01)
@@ -180,8 +177,7 @@ function load_config(mode::String)
         motif_name = motif_name,
         distance = distance,
         guide_limit = guide_limit,
-        use_avx512 = use_avx512,
-        force_safe_minima = force_safe_minima,
+        backend = backend,
         algorithm = algorithm,
         output_parent = output_parent,
         run_label = run_label,
@@ -209,8 +205,8 @@ function prepare_run(cfg::ProfileConfig, mode::String)
     println("motif: ", cfg.motif_name)
     println("distance: ", cfg.distance)
     println("threads: ", Threads.nthreads())
-    println("use_avx512: ", cfg.use_avx512)
-    println("force_safe_minima: ", cfg.force_safe_minima)
+    println("backend: ", cfg.backend)
+    println("backend_resolved: ", CHOPOFF.Sassy.resolve_sassy_backend(cfg.backend))
     println("algorithm: ", cfg.algorithm)
 
     return run_dir, motif, guides
@@ -225,8 +221,7 @@ function run_search(cfg::ProfileConfig, motif::Motif, guides::Vector{LongDNA{4}}
             out_csv;
             distance = cfg.distance,
             early_stopping = fill(1_000_000, cfg.distance + 1),
-            use_avx512 = cfg.use_avx512,
-            force_safe_minima = cfg.force_safe_minima,
+            backend = cfg.backend,
         )
     elseif cfg.algorithm == :prefixHashScan
         CHOPOFF.search_prefixHashScan(
@@ -252,8 +247,8 @@ function write_run_summary(path::String, cfg::ProfileConfig, mode::String, elaps
         "motif" => cfg.motif_name,
         "distance" => cfg.distance,
         "threads" => Threads.nthreads(),
-        "use_avx512" => cfg.use_avx512,
-        "force_safe_minima" => cfg.force_safe_minima,
+        "backend" => cfg.backend,
+        "backend_resolved" => CHOPOFF.Sassy.resolve_sassy_backend(cfg.backend),
         "algorithm" => cfg.algorithm,
         "elapsed_s" => elapsed,
         "rows" => rows,
@@ -262,7 +257,7 @@ end
 
 function run_baseline(cfg::ProfileConfig; label::String = "baseline")
     run_dir, motif, guides = prepare_run(cfg, label)
-    warmup_compile(cfg.distance, cfg.use_avx512, cfg.force_safe_minima, cfg.algorithm)
+    warmup_compile(cfg.distance, cfg.backend, cfg.algorithm)
     out_csv = joinpath(run_dir, "$(cfg.algorithm).csv")
     rows_ref = Ref(0)
     elapsed = @elapsed rows_ref[] = run_search(cfg, motif, guides, out_csv)
@@ -287,8 +282,7 @@ function with_label(cfg::ProfileConfig, label::String)
         motif_name = cfg.motif_name,
         distance = cfg.distance,
         guide_limit = cfg.guide_limit,
-        use_avx512 = cfg.use_avx512,
-        force_safe_minima = cfg.force_safe_minima,
+        backend = cfg.backend,
         algorithm = cfg.algorithm,
         output_parent = cfg.output_parent,
         run_label = label,
@@ -300,7 +294,7 @@ end
 
 function run_cpu_profile(cfg::ProfileConfig)
     run_dir, motif, guides = prepare_run(cfg, "cpu")
-    warmup_compile(cfg.distance, cfg.use_avx512, cfg.force_safe_minima, cfg.algorithm)
+    warmup_compile(cfg.distance, cfg.backend, cfg.algorithm)
     out_csv = joinpath(run_dir, "$(cfg.algorithm).csv")
     rows_ref = Ref(0)
 
@@ -328,7 +322,7 @@ end
 
 function run_alloc_profile(cfg::ProfileConfig)
     run_dir, motif, guides = prepare_run(cfg, "allocs")
-    warmup_compile(cfg.distance, cfg.use_avx512, cfg.force_safe_minima, cfg.algorithm)
+    warmup_compile(cfg.distance, cfg.backend, cfg.algorithm)
     out_csv = joinpath(run_dir, "$(cfg.algorithm).csv")
     rows_ref = Ref(0)
 

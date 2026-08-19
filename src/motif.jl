@@ -196,7 +196,8 @@ end
 """
 `setambig(motif::Motif, ambig::Int)`
 
-Set the ambiguity (how many ambiguous bases are allowed, not counting PAM, not counting extension) level for `motif`.
+Set the ambiguity limit across the complete guide and PAM window. Ambiguous
+bases in the edit-distance extension are not counted.
 
 # Examples
 ```jldoctest

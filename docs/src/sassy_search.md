@@ -67,21 +67,53 @@ This is the default parity mode used for CHOPOFF SASSY verification.
 search_sassy
 ```
 
+```julia
+using BioSequences, CHOPOFF
+
+guides = LongDNA{4}.["GAGTCCGAGCAGAAGAAGAA"]
+search_sassy(
+    guides,
+    "genome.fa",
+    Motif("Cas9"; distance = 3),
+    "sassy_hits.csv";
+    distance = 3,
+    backend = :auto,
+)
+```
+
 ## Command-line usage
 
 Search with SASSY directly:
 
 ```bash
-julia --threads 8 --project=. src/CHOPOFF.jl search sassy \
+julia --threads 8 --project=. src/CHOPOFF.jl search \
   --guides test/sample_data/guides.txt \
-  --genome test/sample_data/genome/semirandom.fa \
   --output /tmp/sassy_hits.csv \
-  --distance 3
+  --distance 3 \
+  sassy \
+  --genome test/sample_data/genome/semirandom.fa \
+  --motif Cas9 \
+  --backend auto
 ```
 
-Notes:
+## SIMD backends
 
-- `--force_safe_minima` disables BMI2/PEXT minima and forces the safe fallback.
+| Backend | Requirements | Behavior |
+| --- | --- | --- |
+| `auto` | AVX2 minimum | Selects the best supported backend. Recommended. |
+| `avx512` | AVX-512F, AVX-512BW, BMI2 | Eight 64-bit lanes and AVX-512 text encoding. |
+| `avx2_pext` | AVX2, BMI2 | Four lanes with BMI2/PEXT minima extraction. |
+| `avx2_safe` | AVX2 | Four lanes without PEXT. Intended for Zen 1/2 and CPUs without BMI2. |
+
+`auto` selects `avx512` when all required features are available. On Julia CPU
+names `znver1` and `znver2`, it deliberately selects `avx2_safe`; otherwise it
+uses `avx2_pext` when BMI2 is available and `avx2_safe` as the AVX2 fallback.
+Forcing an unsupported backend fails before genome scanning.
+
+The standalone application contains multiversioned images for `x86-64-v3`,
+`znver1`, `znver2`, and `skylake-avx512`. Julia selects the compatible image at
+startup, then SASSY performs the backend selection above. Consequently the
+standalone SASSY CPU floor is AVX2 (`x86-64-v3`).
 
 ## Current parity contract
 
@@ -104,15 +136,32 @@ Useful checks:
 julia --project=. -e 'include("test/src/test_sassy_correctness.jl")'
 julia --project=. -e 'include("test/src/test_sassy_traceback_parity.jl")'
 julia --project=. -e 'ENV["CHOPOFF_VERIFY_TRACEBACK_BACKENDS"]="1"; include("test/src/verify_sassy_core.jl")'
+julia --project=. scripts/verify_simd_codegen.jl auto
 ```
 
 Useful benchmarks:
 
 ```bash
-julia --project=. scripts/benchmark_sassy_minima_backend.jl
+SASSY_BENCH_OUT=/tmp/sassy_backends.csv \
+  julia --project=. scripts/benchmark_sassy_minima_backend.jl
 julia --project=. scripts/benchmark_sassy_traceback.jl
 julia --project=. scripts/benchmark_sassy_vs_prefixhash.jl
 ```
+
+The backend benchmark checks result parity across all supported backends and
+reports median time. Controls are `SASSY_BENCH_RUNS`, `SASSY_BENCH_BASES`,
+`SASSY_BENCH_GUIDES`, `SASSY_BENCH_TOLERANCE`,
+`SASSY_BENCH_ENFORCE_NO_REGRESSION`, and `SASSY_BENCH_OUT`.
+
+To validate the older-EPYC code path without executing AVX-512 instructions:
+
+```bash
+julia -C znver2 --project=. scripts/verify_simd_codegen.jl avx2_safe
+```
+
+This validates code generation and correctness, not performance. Final Zen 1/2
+qualification must run the benchmark on real hardware; `auto` must resolve to
+`avx2_safe` there.
 
 
 ## Human Profiling
@@ -132,7 +181,7 @@ Typical CPU profile:
 
 ```bash
 CHOPOFF_PROFILE_MODE=cpu \
-CHOPOFF_PROFILE_USE_AVX512=1 \
+CHOPOFF_PROFILE_BACKEND=auto \
 JULIA_NUM_THREADS=8 \
 JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
 /home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
@@ -155,8 +204,7 @@ Key outputs:
 - `profiles/allocs.pb.gz`
 
 Current finding from the human profile: active CPU time is dominated by
-`search_sassy_impl`, especially text block encoding (`encode_block_avx2!`) and
-the Myers/minima loop. Traceback is not the main bottleneck after filtering
-ambiguous reference windows. The current implementation still scans the genome
-per guide/strand, so batching/pattern-tiling should be evaluated before small
-traceback optimizations.
+`search_sassy_impl`, especially text block encoding and the Myers/minima loop.
+Traceback is not the main bottleneck after filtering ambiguous reference
+windows. The implementation still scans the genome per guide/strand, so
+batching/pattern-tiling should be evaluated before small traceback optimizations.

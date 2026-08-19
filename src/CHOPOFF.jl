@@ -348,9 +348,30 @@ function parse_commandline(args::Array{String})
             arg_type = String
             required = true
         "--motif"
-            help = "Registered motif name."
+            help = "Registered motif name. Omit all motif options for Cas9; cannot be combined with custom motif options."
             arg_type = String
-            default = "Cas9"
+            default = ""
+        "--name"
+            help = "Short name for a custom motif."
+            arg_type = String
+            default = "prefixHashScan_motif"
+        "--fwd_motif"
+            help = "Custom motif layout; use X at PAM positions."
+            arg_type = String
+            default = ""
+        "--fwd_pam"
+            help = "Custom 5'-to-3' PAM pattern; use X at guide positions."
+            arg_type = String
+            default = ""
+        "--not_forward"
+            help = "Do not search the forward reference strand for a custom motif."
+            action = :store_true
+        "--not_reverse"
+            help = "Do not search the reverse reference strand for a custom motif."
+            action = :store_true
+        "--extend3"
+            help = "Extend alignments toward the 3' end for a custom motif."
+            action = :store_true
         "--ambig_max"
             help = "Maximum ambiguous reference bases in the guide plus PAM (0 through 3)."
             arg_type = Int
@@ -372,9 +393,11 @@ function parse_commandline(args::Array{String})
             help = "Path to the genome (fasta or 2bit)."
             arg_type = String
             required = true
-        "--force_safe_minima"
-            help = "Disable BMI2/PEXT minima scanning and force legacy safe minima path."
-            action = :store_true
+        "--backend"
+            help = "SASSY backend: auto, avx512, avx2_pext, or avx2_safe."
+            arg_type = String
+            range_tester = x -> x in ("auto", "avx512", "avx2_pext", "avx2_safe")
+            default = "auto"
         "--early_stopping"
             help = "Input a vector of length of distance + 1 with early stopping conditions. If not supplied we will look up to 1e6 OTs for each distance."
             arg_type = Int
@@ -457,6 +480,51 @@ function parse_commandline(args::Array{String})
     end
 
     return parse_args(args, s)
+end
+
+
+function prefix_hash_scan_cli_motif(args, distance::Int)
+    default_name = "prefixHashScan_motif"
+    registered = !isempty(args["motif"])
+    has_fwd_motif = !isempty(args["fwd_motif"])
+    has_fwd_pam = !isempty(args["fwd_pam"])
+    has_custom_options = has_fwd_motif || has_fwd_pam ||
+        args["not_forward"] || args["not_reverse"] || args["extend3"] ||
+        args["name"] != default_name
+
+    if registered && has_custom_options
+        error("--motif cannot be combined with custom motif options.")
+    elseif registered
+        haskey(motif_db, args["motif"]) ||
+            error("Unknown motif '$(args["motif"])'. Run `CHOPOFF list` to see registered motifs.")
+        return Motif(
+            args["motif"];
+            distance = distance,
+            ambig_max = args["ambig_max"],
+        )
+    elseif has_custom_options
+        has_fwd_motif && has_fwd_pam ||
+            error("Custom motifs require both --fwd_motif and --fwd_pam.")
+        args["not_forward"] && args["not_reverse"] &&
+            error("A custom motif must enable at least one strand.")
+        isempty(args["name"]) && error("--name cannot be empty.")
+        return Motif(
+            args["name"],
+            args["fwd_motif"],
+            args["fwd_pam"],
+            !args["not_forward"],
+            !args["not_reverse"],
+            distance,
+            !args["extend3"],
+            args["ambig_max"],
+        )
+    end
+
+    return Motif(
+        "Cas9";
+        distance = distance,
+        ambig_max = args["ambig_max"],
+    )
 end
 
 
@@ -583,11 +651,8 @@ function main(args::Array{String})
                 guides,
                 scan_args["genome"],
                 args["output"];
-                motif = Motif(
-                    scan_args["motif"];
-                    distance = args["distance"],
-                    ambig_max = scan_args["ambig_max"],
-                ),
+                motif = prefix_hash_scan_cli_motif(
+                    scan_args, args["distance"]),
                 early_stopping = early_stopping,
                 distance = args["distance"],
                 output = Symbol(scan_args["output_mode"]),
@@ -609,15 +674,23 @@ function main(args::Array{String})
             end
 
             # Handle early_stopping
+            sassy_backend = Symbol(sassy_args["backend"])
+            resolved_sassy_backend = Sassy.resolve_sassy_backend(sassy_backend)
+            @info(
+                "SASSY execution",
+                cpu = Sys.CPU_NAME,
+                requested_backend = sassy_backend,
+                backend = resolved_sassy_backend,
+            )
             if length(sassy_args["early_stopping"]) != 0
                 search_sassy(guides, sassy_args["genome"], motif, args["output"];
                     distance = args["distance"],
-                    force_safe_minima = sassy_args["force_safe_minima"],
+                    backend = sassy_backend,
                     early_stopping = sassy_args["early_stopping"])
             else
                 search_sassy(guides, sassy_args["genome"], motif, args["output"];
                     distance = args["distance"],
-                    force_safe_minima = sassy_args["force_safe_minima"],
+                    backend = sassy_backend,
                     early_stopping = repeat([1000000], args["distance"] + 1))
             end
         else

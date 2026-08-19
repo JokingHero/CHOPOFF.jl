@@ -31,7 +31,83 @@ CHOPOFF_HUMAN_COMPARE_PREFIX=0 JULIA_NUM_THREADS=8 \
 test/local_human/run_human_sassy.jl
 ```
 
+Select a SASSY backend with `CHOPOFF_HUMAN_BACKEND`; accepted values are
+`auto`, `avx512`, `avx2_pext`, and `avx2_safe`. The summary records both the
+requested and resolved backend. Profiling uses the corresponding
+`CHOPOFF_PROFILE_BACKEND` variable.
+
+For deferred Zen 1/2 qualification, run this synthetic backend benchmark on
+the real server first:
+
+```bash
+SASSY_BENCH_OUT=/tmp/sassy_zen_backends.csv \
+JULIA_NUM_THREADS=8 \
+/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
+  scripts/benchmark_sassy_minima_backend.jl
+```
+
+It checks output parity for every supported backend. On Zen 1/2, `auto` must
+resolve to `avx2_safe`. Then run the human fixture with
+`CHOPOFF_HUMAN_BACKEND=auto`; compare against an explicit `avx2_safe` run if
+needed. Cross-compilation with `julia -C znver2` validates generated code, not
+real-hardware performance.
+
 Generated `data/`, `indexes/`, and `outputs/` are ignored.
+
+## Generic prefixHashDB parity matrix
+
+`benchmark_human_generic_parity.jl` qualifies the generic prefixHashScan
+engine against prefixHashDB. Qualification covers full-GRCh38 `Cas9_NGA`,
+`CasX`, and custom `25N_NGG` searches with 65 distributed guides, distances
+0 through 4, and ambiguity limits 0 through 3. A bounded chromosome-21 tier
+covers internal/PAMless motifs, the 16-base lower guide boundary, strand
+subsets, FASTA, 2bit, IUPAC symbols, and small chunk boundaries. Longer custom
+guides are exercised by the full-GRCh38 `25N_NGG` case; a separate 28-base
+prefixHashDB case is intentionally excluded because distance-4 symbolic-path
+construction is outside the practical qualification scope.
+
+One distance-4, `ambig_max=3` prefixHashDB is reused as the comparison superset
+for every lower distance and ambiguity limit. Unambiguous rows require exact
+detail parity. Ambiguous differences pass only when the reference-backed
+classifier assigns a documented semantic reason. Guide lengths above 28 are
+outside this matrix because prefixHashDB cannot pack a distance-4 candidate
+longer than 32 bases.
+
+Run the fast synthetic smoke matrix:
+
+```bash
+CHOPOFF_GENERIC_PARITY_MODE=smoke \
+CHOPOFF_GENERIC_PARITY_OUT=/tmp/chopoff_generic_parity_smoke \
+JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
+/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
+  test/local_human/benchmark_human_generic_parity.jl
+```
+
+Launch the full qualification as a background job:
+
+```bash
+GENERIC_OUT=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl/test/local_human/outputs/generic_parity_grch38
+GENERIC_LOG=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl/test/local_human/outputs/generic_parity_grch38.log
+
+nohup setsid env \
+  JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
+  CHOPOFF_GENERIC_PARITY_MODE=qualification \
+  CHOPOFF_GENERIC_PARITY_OUT="$GENERIC_OUT" \
+  CHOPOFF_GENERIC_PARITY_THREADS=24 \
+  /home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia \
+  --project=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl \
+  /home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl/test/local_human/benchmark_human_generic_parity.jl \
+  </dev/null >"$GENERIC_LOG" 2>&1 &
+
+PID=$!
+tail --pid="$PID" -f "$GENERIC_LOG"
+```
+
+Stages `prepare`, `build`, `search`, and `compare` can be resumed independently
+with `CHOPOFF_GENERIC_PARITY_STAGE`. Set
+`CHOPOFF_GENERIC_PARITY_REBUILD=1` to rebuild existing indexes. The principal
+outputs are `manifest.csv`, `builds.csv`, `timings.csv`,
+`parity_summary.csv`, `parity_differences.csv`, and `count_parity.csv`.
 
 ## prefixHashScan ambiguity benchmark
 

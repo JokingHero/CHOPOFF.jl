@@ -92,14 +92,50 @@ function assert_minima_backend_identity(
     tag::String,
 )
     gpath = build_genome(genome_seq; tag = tag)
-    df_auto = run_sassy(guide, gpath, motif; distance = distance, force_safe_minima = false)
-    df_safe = run_sassy(guide, gpath, motif; distance = distance, force_safe_minima = true)
+    frames = [
+        run_sassy(guide, gpath, motif; distance, backend = :auto),
+        run_sassy(guide, gpath, motif; distance, backend = :avx2_pext),
+        run_sassy(guide, gpath, motif; distance, backend = :avx2_safe),
+    ]
+    if CHOPOFF.Sassy.can_use_avx512() && CHOPOFF.Sassy.can_use_bmi2_pext()
+        push!(frames, run_sassy(guide, gpath, motif; distance, backend = :avx512))
+    end
 
-    @test nrow(df_auto) == nrow(df_safe)
-    if nrow(df_auto) > 0
-        lhs = sort(select(df_auto, PARITY_COLS), PARITY_COLS)
-        rhs = sort(select(df_safe, PARITY_COLS), PARITY_COLS)
-        @test lhs == rhs
+    expected = frames[1]
+    for actual in frames[2:end]
+        @test nrow(actual) == nrow(expected)
+        if nrow(expected) > 0
+            lhs = sort(select(actual, PARITY_COLS), PARITY_COLS)
+            rhs = sort(select(expected, PARITY_COLS), PARITY_COLS)
+            @test lhs == rhs
+        end
+    end
+end
+
+@testset "SASSY backend resolution" begin
+    resolve = CHOPOFF.Sassy.resolve_sassy_backend
+    @test resolve(:auto; cpu_name = "skylake-avx512", avx2 = true, bmi2 = true, avx512 = true) == :avx512
+    @test resolve(:auto; cpu_name = "znver1", avx2 = true, bmi2 = true, avx512 = false) == :avx2_safe
+    @test resolve(:auto; cpu_name = "znver2", avx2 = true, bmi2 = true, avx512 = false) == :avx2_safe
+    @test resolve(:auto; cpu_name = "haswell", avx2 = true, bmi2 = true, avx512 = false) == :avx2_pext
+    @test resolve(:auto; cpu_name = "unknown", avx2 = true, bmi2 = false, avx512 = false) == :avx2_safe
+    @test_throws ErrorException resolve(:auto; cpu_name = "unknown", avx2 = false, bmi2 = false, avx512 = false)
+    @test_throws ErrorException resolve(:avx512; avx2 = true, bmi2 = true, avx512 = false)
+    @test_throws ErrorException resolve(:avx2_pext; avx2 = true, bmi2 = false, avx512 = false)
+    @test_throws ErrorException resolve(:invalid; avx2 = true, bmi2 = true, avx512 = true)
+end
+
+@testset "AVX-512 encoder parity" begin
+    @test CHOPOFF.Sassy.can_use_avx512() isa Bool
+    if CHOPOFF.Sassy.can_use_avx512()
+        alphabet = Vector{UInt8}(codeunits("ACGTNRYSWKMDHBVacgtnryswkmdhbv"))
+        text = [alphabet[mod1(i * 17, length(alphabet))] for i in 1:64]
+        bases = UInt8.(collect("ACTGNRYS"))
+        avx2 = zeros(UInt64, 1, length(bases))
+        avx512 = similar(avx2)
+        CHOPOFF.Sassy.encode_block_avx2!(avx2, 1, text, 1, length(bases), bases)
+        CHOPOFF.Sassy.encode_block_avx512!(avx512, 1, text, 1, length(bases), bases)
+        @test avx512 == avx2
     end
 end
 

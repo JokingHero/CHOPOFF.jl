@@ -75,10 +75,10 @@ function reset!(ws::SassyWorkspace{L}, m::Int) where L
 end
 
 """
-    search_sassy_impl(pattern_indices, text, k, bases, ::Val{LANES}, ::Val{USE_PEXT})
+    search_sassy_impl(pattern_indices, text, k, bases, ::Val{LANES}, ::Val{USE_PEXT}, ::Val{ENCODER})
 
 Executes the Transposed Myers algorithm using SIMD with `LANES` and PEXT settings.
-Generic implementation: supports Val{4}/Val{8} Lanes, and Val{true}/Val{false} PEXT.
+Generic implementation with compile-time lane, minima, and text-encoder selection.
 """
 function search_sassy_impl(
     pattern_indices::Vector{Int},
@@ -86,9 +86,10 @@ function search_sassy_impl(
     k::Int,
     bases::Vector{UInt8},
     ::Val{LANES} = Val(4),
-    ::Val{USE_PEXT} = Val(true);
+    ::Val{USE_PEXT} = Val(true),
+    ::Val{ENCODER} = Val(:avx2);
     workspace::Union{SassyWorkspace{LANES}, Nothing} = nothing
-) where {LANES, USE_PEXT}
+) where {LANES, USE_PEXT, ENCODER}
     m = Base.length(pattern_indices)
     text_len = Base.length(text)
     if m == 0 || text_len == 0
@@ -124,7 +125,7 @@ function search_sassy_impl(
 
     prev_end_last_below = 0
     prev_max_j = 0
-    use_avx2 = can_use_avx2()
+    use_avx2 = ENCODER === :avx2 && can_use_avx2()
 
     for i in 0:(blocks_per_chunk + max_overlap_blocks - 1)
         vp = VecL(0)
@@ -147,7 +148,9 @@ function search_sassy_impl(
                 continue
             end
 
-            if use_avx2 && limit == BLOCK_SIZE
+            if ENCODER === :avx512 && limit == BLOCK_SIZE
+                encode_block_avx512!(current_lane_profiles, lane, text, start_pos, n_bases, bases)
+            elseif use_avx2 && limit == BLOCK_SIZE
                 # AVX2 path: vpshufb parallel IUPAC lookup on 2x32 bytes
                 encode_block_avx2!(current_lane_profiles, lane, text, start_pos, n_bases, bases)
             elseif n_bases == 4

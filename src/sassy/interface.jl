@@ -488,6 +488,48 @@ end
 
 # --- Main Entry Point (Batched Database Search) ---
 
+const SASSY_BACKENDS = (:auto, :avx512, :avx2_pext, :avx2_safe)
+
+function resolve_sassy_backend(
+    requested::Symbol = :auto;
+    cpu_name::AbstractString = Sys.CPU_NAME,
+    avx2::Bool = can_use_avx2(),
+    bmi2::Bool = can_use_bmi2_pext(),
+    avx512::Bool = can_use_avx512(),
+)
+    requested in SASSY_BACKENDS ||
+        error("backend must be :auto, :avx512, :avx2_pext, or :avx2_safe.")
+
+    if requested == :auto
+        if avx512 && bmi2
+            return :avx512
+        elseif lowercase(cpu_name) in ("znver1", "znver2")
+            avx2 || error("SASSY requires AVX2 on Zen 1/2 CPUs.")
+            return :avx2_safe
+        elseif avx2 && bmi2
+            return :avx2_pext
+        elseif avx2
+            return :avx2_safe
+        end
+        error("No supported SASSY SIMD backend is available; AVX2 is required.")
+    elseif requested == :avx512
+        avx512 && bmi2 ||
+            error("backend=:avx512 requires AVX-512F, AVX-512BW, and BMI2.")
+    elseif requested == :avx2_pext
+        avx2 && bmi2 || error("backend=:avx2_pext requires AVX2 and BMI2.")
+    else
+        avx2 || error("backend=:avx2_safe requires AVX2.")
+    end
+    return requested
+end
+
+@inline function sassy_backend_traits(backend::Symbol)
+    backend == :avx512 && return (Val(8), Val(true), Val(:avx512))
+    backend == :avx2_pext && return (Val(4), Val(true), Val(:avx2))
+    backend == :avx2_safe && return (Val(4), Val(false), Val(:avx2))
+    error("Unresolved SASSY backend: $backend")
+end
+
 """
     search_sassy(guides, genome_path, motif, output_path; kwargs...)
 
@@ -498,8 +540,8 @@ Keyword arguments:
 - `distance::Int=4`: maximum edit distance.
 - `early_stopping::Union{Vector{Int}, Nothing}=nothing`: per-distance early-stopping
   thresholds.
-- `use_avx512::Bool=false`: use 8-lane AVX-512 kernel when available.
-- `force_safe_minima::Bool=false`: disable BMI2/PEXT minima path and force safe minima.
+- `backend::Symbol=:auto`: SIMD/minima backend (`:auto`, `:avx512`,
+  `:avx2_pext`, or `:avx2_safe`).
 - `strict_pam::Bool=true`: enforce strict PAM matching at candidate coordinates.
 - `traceback_backend::Symbol=:custom`: traceback backend (`:custom` or `:align`).
 
@@ -513,29 +555,23 @@ function search_sassy(
     output_path::String;
     distance::Int = 4,
     early_stopping::Union{Vector{Int}, Nothing} = nothing,
-    use_avx512::Bool = false,
-    force_safe_minima::Bool = false,
+    backend::Symbol = :auto,
     strict_pam::Bool = true,
     traceback_backend::Symbol = :custom,
 )
     traceback_backend = validate_traceback_backend(traceback_backend)
-    # Dispatch Logic based on flags
-    # We create a function barrier or closure to avoid dynamic dispatch in the loop
-    # Default to PEXT on BMI2-capable x86; otherwise use safe minima scanning.
-    use_pext = !force_safe_minima && can_use_bmi2_pext()
-    
-    _search_impl = if use_avx512
-        if use_pext
-            (idx, txt, k, b; workspace=nothing) -> search_sassy_impl(idx, txt, k, b, Val(8), Val(true); workspace)
-        else
-            (idx, txt, k, b; workspace=nothing) -> search_sassy_impl(idx, txt, k, b, Val(8), Val(false); workspace)
-        end
+    resolved_backend = resolve_sassy_backend(backend)
+    lanes_val = first(sassy_backend_traits(resolved_backend))
+
+    _search_impl = if resolved_backend == :avx512
+        (idx, txt, k, b; workspace=nothing) ->
+            search_sassy_impl(idx, txt, k, b, Val(8), Val(true), Val(:avx512); workspace)
+    elseif resolved_backend == :avx2_pext
+        (idx, txt, k, b; workspace=nothing) ->
+            search_sassy_impl(idx, txt, k, b, Val(4), Val(true), Val(:avx2); workspace)
     else
-        if use_pext
-            (idx, txt, k, b; workspace=nothing) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(true); workspace)
-        else
-            (idx, txt, k, b; workspace=nothing) -> search_sassy_impl(idx, txt, k, b, Val(4), Val(false); workspace)
-        end
+        (idx, txt, k, b; workspace=nothing) ->
+            search_sassy_impl(idx, txt, k, b, Val(4), Val(false), Val(:avx2); workspace)
     end
     dbi = DBInfo(genome_path, "sassy_search", motif)
     if any(length_noPAM(motif) .!= length.(guides))
@@ -559,7 +595,6 @@ function search_sassy(
 
     # Pre-allocate one workspace per guide (reused across chromosomes)
     m_hint = Base.length(String(motif.fwd))
-    lanes_val = use_avx512 ? Val(8) : Val(4)
     workspaces = [SassyWorkspace(m_hint, lanes_val) for _ in 1:g_count]
 
     genome_buf = Vector{UInt8}(undef, 0)

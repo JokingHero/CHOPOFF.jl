@@ -2,7 +2,7 @@
 
 ## Summary
 
-Status as of 2026-02-23: `CHOPOFF.Sassy` is production-ready for the currently defined scope.
+Status as of 2026-08-12: `CHOPOFF.Sassy` is production-ready for the currently defined scope.
 
 The migration objective was:
 
@@ -17,7 +17,7 @@ Both goals are currently met, with explicit non-blocking items listed below.
 
 - `compute_block` parity against Rust vectors is fixed and verified.
 - `search_sassy_impl` parity against Rust-generated search vectors is fixed and verified.
-- AVX-512 lane shape path is validated.
+- AVX-512 eight-lane kernel and 64-byte text encoder are validated.
 
 Verification commands:
 
@@ -56,6 +56,9 @@ Primary file:
 
 - BMI2/PEXT minima fast path reactivated with runtime feature gating.
 - Safe fallback path retained and test coverage strengthened for backend equivalence.
+- Public backend selection is `:auto`, `:avx512`, `:avx2_pext`, or `:avx2_safe`.
+- `:auto` avoids PEXT on Zen 1/2 and uses the AVX2-safe backend.
+- Standalone builds include x86-64-v3, Zen 1, Zen 2, and Skylake AVX-512 images.
 - Hot-loop memory and dispatch issues addressed in the SASSY integration path.
 
 Primary files/scripts:
@@ -76,6 +79,7 @@ Primary files/scripts:
 1. Early stopping is currently strand/chromosome scoped in practice, not strict global cut-off.
 2. End-to-end speedup from custom traceback is modest because traceback is no longer the main bottleneck.
 3. Further runtime gains now primarily depend on candidate generation and allocation pressure, not DP traceback alone.
+4. Zen 1/2 correctness is covered by dispatch tests and cross-target codegen; final performance qualification requires real Zen 1/2 hardware.
 
 ## Active optimization backlog
 
@@ -109,14 +113,16 @@ Removal gates:
 
 Primary workflow:
 
-- `scripts/init_sassy.sh`
+- `(cd test && julia --project=.. runtests.jl)`
+- `julia --project=. scripts/verify_simd_codegen.jl auto`
+- `julia -C znver2 --project=. scripts/verify_simd_codegen.jl avx2_safe`
 
 What it covers:
 
-1. Encoding parity
-2. Block-kernel parity
-3. Search parity
-4. AVX-512 parity
+1. Encoding, block-kernel, search, API, and CLI parity
+2. Runtime backend selection and forced-backend feature checks
+3. AVX-512 code generation on supported hosts
+4. Zen 2 AVX2-safe cross-target code generation
 
 Secondary benchmark workflows:
 

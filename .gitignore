@@ -5,3 +5,6 @@
 build
 docs/build
 CHOPOFF.jl.code-workspace
+
+# Rust build artifacts
+target/

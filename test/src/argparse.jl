@@ -8,6 +8,16 @@ using BioSequences
 ## SET WD when debugging
 # cd("test")
 
+function write_argparse_fasta(path::String, sequence::String)
+    open(path, "w") do io
+        write(io, ">chr1\n", sequence, "\n")
+    end
+    open(path * ".fai", "w") do io
+        write(io, "chr1\t", string(length(sequence)), "\t6\t",
+            string(length(sequence)), "\t", string(length(sequence) + 1), "\n")
+    end
+end
+
 @testset "ArgParse" begin
     @testset "hashDB through command line" begin
         tdir = tempname()
@@ -152,11 +162,136 @@ using BioSequences
             generic_args)
         @test read(generic_actual) == read(generic_expected)
 
+        @testset "custom prefixHashScan motifs" begin
+            guide20 = "ACGTACGTACGTACGTACGT"
+            guide21 = "TGCATGCATGCATGCATGCAT"
+            downstream_motif = Motif(
+                "downstream_forward", repeat("N", 20) * "XXX",
+                repeat("X", 20) * "NGA", true, false, 0, true, 0)
+            upstream_motif = Motif(
+                "upstream_extend3", "XXXX" * repeat("N", 21),
+                "TTTV" * repeat("X", 21), true, false, 0, false, 0)
+            internal_motif = Motif(
+                "internal", repeat("N", 10) * "XXX" * repeat("N", 10),
+                repeat("X", 10) * "AGG" * repeat("X", 10),
+                true, true, 0, true, 0)
+            pamless_motif = Motif(
+                "pamless", repeat("N", 20), repeat("X", 20),
+                true, true, 0, true, 0)
+            reverse_motif = Motif(
+                "downstream_reverse", repeat("N", 20) * "XXX",
+                repeat("X", 20) * "NGA", false, true, 0, true, 0)
+            forward_site = guide20 * "AGA"
+            cases = [
+                (
+                    motif = downstream_motif,
+                    guide = guide20,
+                    site = forward_site,
+                    fwd_motif = repeat("N", 20) * "XXX",
+                    fwd_pam = repeat("X", 20) * "NGA",
+                    flags = ["--not_reverse"],
+                    strand = "+",
+                ),
+                (
+                    motif = upstream_motif,
+                    guide = guide21,
+                    site = "TTTA" * guide21,
+                    fwd_motif = "XXXX" * repeat("N", 21),
+                    fwd_pam = "TTTV" * repeat("X", 21),
+                    flags = ["--not_reverse", "--extend3"],
+                    strand = "+",
+                ),
+                (
+                    motif = internal_motif,
+                    guide = guide20,
+                    site = guide20[1:10] * "AGG" * guide20[11:end],
+                    fwd_motif = repeat("N", 10) * "XXX" * repeat("N", 10),
+                    fwd_pam = repeat("X", 10) * "AGG" * repeat("X", 10),
+                    flags = String[],
+                    strand = nothing,
+                ),
+                (
+                    motif = pamless_motif,
+                    guide = guide20,
+                    site = guide20,
+                    fwd_motif = repeat("N", 20),
+                    fwd_pam = repeat("X", 20),
+                    flags = String[],
+                    strand = nothing,
+                ),
+                (
+                    motif = reverse_motif,
+                    guide = guide20,
+                    site = string(reverse_complement(LongDNA{4}(forward_site))),
+                    fwd_motif = repeat("N", 20) * "XXX",
+                    fwd_pam = repeat("X", 20) * "NGA",
+                    flags = ["--not_forward"],
+                    strand = "-",
+                ),
+            ]
+
+            for case in cases
+                case_dir = joinpath(tdir, case.motif.alias)
+                mkpath(case_dir)
+                case_genome = joinpath(case_dir, "genome.fa")
+                case_guides = joinpath(case_dir, "guides.txt")
+                expected_output = joinpath(case_dir, "expected.csv")
+                actual_output = joinpath(case_dir, "actual.csv")
+                write_argparse_fasta(
+                    case_genome, repeat("C", 40) * case.site * repeat("C", 40))
+                write(case_guides, case.guide * "\n")
+                search_prefixHashScan(
+                    [LongDNA{4}(case.guide)], case_genome, expected_output;
+                    motif = case.motif, distance = 0)
+                custom_args = [
+                    "search", "--distance", "0", "--guides", case_guides,
+                    "--output", actual_output, "prefixHashScan",
+                    "--genome", case_genome, "--name", case.motif.alias,
+                    "--fwd_motif", case.fwd_motif,
+                    "--fwd_pam", case.fwd_pam,
+                    case.flags...,
+                ]
+                @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+                    custom_args)
+                @test read(actual_output) == read(expected_output)
+                result = DataFrame(CSV.File(actual_output))
+                @test nrow(result) > 0
+                if case.strand !== nothing
+                    @test all(==(case.strand), result.strand)
+                end
+            end
+
+            invalid_base = [
+                "search", "--distance", "0", "--guides", guides_path,
+                "--output", joinpath(tdir, "invalid_custom.csv"),
+                "prefixHashScan", "--genome", genome,
+            ]
+            @test_throws ErrorException CHOPOFF.main(vcat(
+                invalid_base,
+                ["--motif", "Cas9", "--fwd_motif", repeat("N", 20) * "XXX",
+                 "--fwd_pam", repeat("X", 20) * "NGG"]))
+            @test_throws ErrorException CHOPOFF.main(vcat(
+                invalid_base, ["--fwd_motif", repeat("N", 20) * "XXX"]))
+            @test_throws ErrorException CHOPOFF.main(vcat(
+                invalid_base,
+                ["--fwd_motif", repeat("N", 20) * "XXX",
+                 "--fwd_pam", repeat("X", 20) * "NGG",
+                 "--not_forward", "--not_reverse"]))
+            @test_throws ErrorException CHOPOFF.main(vcat(
+                invalid_base, ["--motif", "unknown_motif"]))
+            @test_throws ErrorException CHOPOFF.main(vcat(
+                invalid_base,
+                ["--fwd_motif", "NNNXNNNX", "--fwd_pam", "XXXAXXXG"]))
+        end
+
         sassy_args = [
             "search", "--guides", guides_path, "--output", actual,
             "sassy", "--genome", genome, "--motif", "Cas9",
+            "--backend", "avx2_safe",
         ]
-        @test CHOPOFF.parse_commandline(sassy_args)["search"]["database"] === nothing
+        parsed_sassy = CHOPOFF.parse_commandline(sassy_args)
+        @test parsed_sassy["search"]["database"] === nothing
+        @test parsed_sassy["search"]["sassy"]["backend"] == "avx2_safe"
 
         missing_database = [
             "search", "--guides", guides_path, "--output", actual,

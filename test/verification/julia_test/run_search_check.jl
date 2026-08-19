@@ -1,10 +1,6 @@
 using JSON
 using Test
-
-# Include Sassy implementation
-include("../../../src/sassy/constants.jl")
-include("../../../src/sassy/encoding.jl")
-include("../../../src/sassy/core.jl")
+using CHOPOFF.Sassy
 
 println("Loading Search Test Vectors...")
 path = joinpath(@__DIR__, "../test_vectors_search.json")

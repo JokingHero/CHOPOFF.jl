@@ -34,7 +34,7 @@
 It is possible to build CHOPOFF into standalone application - which includes all dependencies and Julia into one compiled software. This is **recommended** method for using of CHOPOFF when you are not a developer. If you know how to code in Julia, you might make use of the whole framework using CHOPOFF as a package (see docs [![](https://img.shields.io/badge/docs-latest-blue.svg)](https://jokinghero.github.io/CHOPOFF.jl/)).
 
 To build a standalone application run `./build_standalone.sh` script from the main directory. Script will run all tests and also 
-produce binary in a "build" folder. Then you can run from inside that folder `./bin/CHOPOFF --help`. To learn about building a database run `./bin/CHOPOFF build --help` and to use existing database check out `./bin/CHOPOFF search --help`. It is possible to skip testing + precompile step to speed up the build process with `./build_standalone.sh --noprecompile`.
+produce binary in a "build" folder. Then you can run from inside that folder `./bin/CHOPOFF --help`. To learn about building a database run `./bin/CHOPOFF build --help` and to use existing database check out `./bin/CHOPOFF search --help`. It is possible to skip testing + precompile step to speed up the build process with `./build_standalone.sh --noprecompile`. The binary contains CPU images for x86-64-v3, Zen 1, Zen 2, and Skylake AVX-512; SASSY requires AVX2 and selects its compatible SIMD backend at runtime.
 
 You can alternatively download the latest release from the releases' page on the GitHub.
 
@@ -61,8 +61,8 @@ EXAMPLE_OUTPUT="$(mktemp --directory)/phDB_16_2.csv"
 CHOPOFF search --database "$EXAMPLE_INDEX_OUTPUT" --guides "$EXAMPLE_GUIDES" --output "$EXAMPLE_OUTPUT" --distance 2 prefixHashDB
 ```
 
-For direct search with any registered motif or a custom Julia `Motif` object,
-without building a CHOPOFF database, use
+For direct search with any registered motif, a custom Julia `Motif` object, or
+a custom motif supplied through the CLI, without building a CHOPOFF database, use
 `prefixHashScan` on an indexed FASTA or directly on a `.2bit` reference.
 `--ambig_max` allows zero through three
 ambiguous IUPAC reference positions in each complete guide/PAM window; zero is
@@ -80,10 +80,34 @@ CHOPOFF search --distance 3 \
   --guides "$EXAMPLE_GUIDES" \
   --output "$(mktemp --directory)/prefixHashScan_counts.csv" \
   prefixHashScan --genome "$EXAMPLE_GENOME" --motif Cas9 --output_mode counts
+
+# Custom 20-base guide followed by NGA; search the forward strand only.
+CHOPOFF search --distance 3 \
+  --guides "$EXAMPLE_GUIDES" \
+  --output "$(mktemp --directory)/prefixHashScan_custom.csv" \
+  prefixHashScan --genome "$EXAMPLE_GENOME" --name 20N_NGA \
+  --fwd_motif NNNNNNNNNNNNNNNNNNNNXXX \
+  --fwd_pam XXXXXXXXXXXXXXXXXXXXNGA --not_reverse
 ```
 
 See the [prefixHashScan documentation](./docs/src/prefix_hash_scan.md)
 for IUPAC semantics, supported configurations, and human-genome benchmarks.
+
+For direct SIMD search without building a database, SASSY supports an AVX-512
+path and AVX2 paths for older servers, including a non-PEXT path selected
+automatically on Zen 1/2 EPYC processors:
+
+```bash
+CHOPOFF search --distance 3 \
+  --guides "$EXAMPLE_GUIDES" \
+  --output "$(mktemp --directory)/sassy.csv" \
+  sassy --genome "$EXAMPLE_GENOME" --motif Cas9 --backend auto
+```
+
+Use `--backend auto` unless comparing implementations. Explicit choices are
+`avx512`, `avx2_pext`, and `avx2_safe`. See the
+[SASSY documentation](./docs/src/sassy_search.md) for CPU requirements,
+selection rules, API usage, and validation commands.
 
 ## R integration with crisprVerse
 

@@ -1,10 +1,7 @@
 using JSON
 using Test
-
-# Include Sassy implementation
-include("../../../src/sassy/constants.jl")
-include("../../../src/sassy/encoding.jl")
-include("../../../src/sassy/core.jl")
+using CHOPOFF
+using CHOPOFF.Sassy
 
 println("Loading Search Test Vectors...")
 path = joinpath(@__DIR__, "../test_vectors_search.json")
@@ -31,8 +28,15 @@ println("Running Validation on search_sassy_impl with Val(8) (AVX-512 emulation)
         text = Vector{UInt8}(text_str)
         (bases, indices) = encode_pattern_sassy(pattern)
         
-        # EXPLICITLY CALL WITH Val(8) to test 8-lane Simd
-        matches = search_sassy_impl(indices, text, k, bases, Val(8))
+        # Exercise the real AVX-512 encoder when available; retain lane-shape
+        # verification on hosts without AVX-512.
+        matches = if CHOPOFF.Sassy.can_use_avx512()
+            search_sassy_impl(
+                indices, text, k, bases, Val(8), Val(true), Val(:avx512))
+        else
+            search_sassy_impl(
+                indices, text, k, bases, Val(8), Val(true), Val(:avx2))
+        end
         
         # Rust ground truth set (Position, Cost)
         rust_set = Set{Tuple{Int, Int}}()

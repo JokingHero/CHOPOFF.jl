@@ -179,12 +179,38 @@ do not expand the hash lookup.
 
 ## Command-line usage
 
+With no motif options, `prefixHashScan` uses Cas9. Select a registered motif
+with `--motif`:
+
 ```bash
 CHOPOFF search --distance 4 \
   --guides guides.txt \
   --output offtargets.csv \
   prefixHashScan --genome genome.2bit --motif Cas12a --ambig_max 3
 ```
+
+For a custom motif, `--fwd_motif` marks guide bases and PAM positions with
+`N` and `X`, while `--fwd_pam` marks guide positions with `X` and supplies the
+IUPAC PAM sequence. The strings must have equal length. This example searches
+a 20-base guide followed by an NGA PAM on the forward strand only:
+
+```bash
+CHOPOFF search --distance 3 \
+  --guides guides.txt \
+  --output offtargets.csv \
+  prefixHashScan --genome genome.2bit \
+  --name 20N_NGA \
+  --fwd_motif NNNNNNNNNNNNNNNNNNNNXXX \
+  --fwd_pam XXXXXXXXXXXXXXXXXXXXNGA \
+  --not_reverse
+```
+
+The non-`X` block in `--fwd_pam` may precede, follow, or occur inside the
+guide. An all-`X` `--fwd_pam` defines a PAMless motif. Use `--not_forward` or
+`--not_reverse` to restrict strands and `--extend3` for 3'-direction
+alignment extension. At least one strand must remain enabled. Registered
+`--motif` selection cannot be combined with these custom options, and the
+current `Motif` model permits at most one contiguous PAM block.
 
 The CLI always reports the resolved execution mode. It uses Julia's configured
 thread count, for example `JULIA_NUM_THREADS=12`.
