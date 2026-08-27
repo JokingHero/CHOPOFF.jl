@@ -56,6 +56,7 @@ search_prefixHashScan(
     "offtargets.csv";
     distance = 2,
     scan_threads = Threads.nthreads(),
+    simd_backend = :auto,
     verbose = true,
 )
 
@@ -122,6 +123,9 @@ same optimized scanner.
 
 `output=:detail` uses the normal CHOPOFF columns: `guide`, `alignment_guide`,
 `alignment_reference`, `distance`, `chromosome`, `start`, and `strand`.
+For guide lists larger than 64, all detail batches are staged in the output
+directory and atomically published only after every batch succeeds. A failed
+search leaves any existing output unchanged.
 
 `output=:counts` writes one row per unique guide with `D0` through the requested
 distance and `complete`. It uses raw Myers distances on the optimized backend
@@ -144,9 +148,15 @@ the same across thread schedules. The seven-column detail schema is unchanged.
 
 The standalone equivalent is `prefixHashScan --output_mode counts`.
 
-With `verbose=true`, the search reports the resolved scan backend, lookup mode,
-query-build mode, scheduler, thread count, and chunk size. Reporting does not
-enable hot-loop statistics.
+`simd_backend` accepts `:auto`, `:avx2`, or `:avx512`. AVX2 requires AVX2 and
+BMI2; AVX-512 requires AVX-512F, AVX-512BW, and BMI2. Automatic dispatch uses
+AVX-512 only for benchmark-qualified CPU-family and scan-geometry pairs. Other
+geometries retain AVX2 or the existing non-SIMD fallback. An explicit
+unsupported backend errors.
+
+With `verbose=true`, the search reports the resolved scan and SIMD backends,
+lookup mode, query-build mode, scheduler, thread count, and chunk size.
+Reporting does not enable hot-loop statistics.
 
 ## Reference ambiguity semantics
 
@@ -186,7 +196,8 @@ with `--motif`:
 CHOPOFF search --distance 4 \
   --guides guides.txt \
   --output offtargets.csv \
-  prefixHashScan --genome genome.2bit --motif Cas12a --ambig_max 3
+  prefixHashScan --genome genome.2bit --motif Cas12a --ambig_max 3 \
+  --simd_backend auto
 ```
 
 For a custom motif, `--fwd_motif` marks guide bases and PAM positions with
@@ -214,6 +225,36 @@ current `Motif` model permits at most one contiguous PAM block.
 
 The CLI always reports the resolved execution mode. It uses Julia's configured
 thread count, for example `JULIA_NUM_THREADS=12`.
+
+## AVX-512 qualification
+
+The focused runner compares forced AVX2 and AVX-512 for Cas9, Cas12a, and the
+generic Cas9-NGA geometry. It uses a 32 MiB scanner fixture plus complete GRCh38
+count searches, two warmups, 11 alternating timed repetitions, and exact output
+parity. Count mode removes traceback and large detail-file writes so the gate
+measures scan and verification. Run it separately at one and eight threads:
+
+```bash
+JULIA_NUM_THREADS=1 julia --project=. scripts/benchmark_prefix_hash_scan_avx512.jl
+JULIA_NUM_THREADS=8 julia --project=. scripts/benchmark_prefix_hash_scan_avx512.jl
+```
+
+A CPU-family and specialized scan-geometry pair qualifies for automatic
+AVX-512 only when its isolated scanner improves by at least 5% and its
+end-to-end case regresses by no more than 3% at both one and eight threads.
+Generic geometry performance is reported but does not qualify for automatic
+AVX-512. Exact output parity remains mandatory for every case. Explicit
+`simd_backend=:avx512` remains available on AVX-512F/BW/BMI2 CPUs.
+
+The Intel Xeon Gold 6126 (`skylake-avx512`) qualification produced:
+
+| Threads | Cas9 scanner | Cas12a scanner | Cas9 end-to-end | Cas12a end-to-end |
+|---:|---:|---:|---:|---:|
+| 1 | 1.278x | 1.438x | 0.990x | 1.019x |
+| 8 | 1.243x | 1.247x | 1.007x | 1.023x |
+
+All outputs matched exactly. Cas9 and Cas12a therefore qualify for automatic
+AVX-512 on this CPU family; generic geometries retain AVX2.
 
 ## Cas9 ambiguity benchmark
 

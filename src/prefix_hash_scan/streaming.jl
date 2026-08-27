@@ -152,6 +152,7 @@ function stream_prefix_hash_scan_chunk(
     scratch_minus_hits::Vector{PrefixHashScanHit},
     lookup_scratch::PrefixHashScanLookupScratch,
     ::Val{M},
+    simd_backend::Val,
     stats::S,
     plus::Vector{PrefixHashScanVerifiedHit} = PrefixHashScanVerifiedHit[],
     minus::Vector{PrefixHashScanVerifiedHit} = PrefixHashScanVerifiedHit[],
@@ -196,6 +197,7 @@ function stream_prefix_hash_scan_chunk(
             myers_profiles,
             distance,
             stats,
+            simd_backend,
         )
         if dbi.motif.ambig_max > 0
             empty!(scratch_plus_hits)
@@ -204,7 +206,7 @@ function stream_prefix_hash_scan_chunk(
                 scratch_plus_hits, scratch_minus_hits, raw, geometry, dbi,
                 query, geometry.prefix_bases, local_first, local_last,
                 local_first, local_last, local_first, local_last,
-                Val(dbi.motif.ambig_max), stats)
+                Val(dbi.motif.ambig_max), stats, simd_backend)
             evaluate_prefix_hash_scan_hits!(
                 plus, raw, geometry, scratch_plus_hits, global_offset, dbi,
                 false, guides_, myers_profiles, distance, stats,
@@ -230,6 +232,7 @@ function stream_prefix_hash_scan_chunk(
                 local_last,
                 local_first,
                 local_last,
+                simd_backend,
             )
             plus_hits = scratch_plus_hits
             minus_hits = scratch_minus_hits
@@ -251,6 +254,7 @@ function stream_prefix_hash_scan_chunk(
                 local_last,
                 local_first,
                 local_last,
+                simd_backend,
             )
             plus_hits = scratch_plus_hits
             minus_hits = scratch_minus_hits
@@ -266,6 +270,7 @@ function stream_prefix_hash_scan_chunk(
                     local_last,
                     local_first,
                     local_last,
+                    simd_backend,
                 )
         end
         if dbi.motif.ambig_max > 0
@@ -273,7 +278,7 @@ function stream_prefix_hash_scan_chunk(
                 plus_hits, minus_hits, raw, geometry, dbi, query,
                 geometry.prefix_bases, local_first, local_last,
                 local_first, local_last, local_first, local_last,
-                Val(dbi.motif.ambig_max), stats)
+                Val(dbi.motif.ambig_max), stats, simd_backend)
         end
         if stats !== nothing
             stats.motif_candidates += motif_candidates
@@ -308,6 +313,7 @@ function stream_prefix_hash_scan_count_chunk(
     scratch_minus_hits::Vector{PrefixHashScanHit},
     lookup_scratch::PrefixHashScanLookupScratch,
     ::Val{M},
+    simd_backend::Val,
     stats::S,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
     ) where {M, S}
@@ -331,7 +337,7 @@ function stream_prefix_hash_scan_count_chunk(
         motif_candidates = scan_prefix_hits_raw_range!(
             geometry, scratch_plus_hits, scratch_minus_hits, raw, query,
             local_first, local_last, local_first, local_last,
-            local_first, local_last)
+            local_first, local_last, simd_backend)
     elseif M === :bucketed_reuse
         motif_candidates = scan_prefix_hits_raw_range_bucketed!(
             geometry, scratch_plus_hits, scratch_minus_hits,
@@ -339,7 +345,7 @@ function stream_prefix_hash_scan_count_chunk(
             lookup_scratch.plus_radix, lookup_scratch.minus_radix,
             lookup_scratch.radix_counts, raw, query,
             local_first, local_last, local_first, local_last,
-            local_first, local_last)
+            local_first, local_last, simd_backend)
     else
         error("Unknown prefixHashScan count mode: $M")
     end
@@ -348,7 +354,7 @@ function stream_prefix_hash_scan_count_chunk(
             scratch_plus_hits, scratch_minus_hits, raw, geometry, dbi, query,
             geometry.prefix_bases, local_first, local_last,
             local_first, local_last, local_first, local_last,
-            Val(dbi.motif.ambig_max), stats)
+            Val(dbi.motif.ambig_max), stats, simd_backend)
     end
     stats === nothing || (stats.motif_candidates += motif_candidates)
 
@@ -381,6 +387,7 @@ function stream_prefix_hash_scan_chromosome(
     scratch_minus_hits::Vector{PrefixHashScanHit},
     lookup_scratch::PrefixHashScanLookupScratch,
     mode::Val{M},
+    simd_backend::Val,
     stats::S) where {M, S}
 
     plus = PrefixHashScanVerifiedHit[]
@@ -393,7 +400,7 @@ function stream_prefix_hash_scan_chromosome(
         stream_prefix_hash_scan_chunk(
             geometry, io, buffer, index, work, chromosome_length, query, dbi, guides_,
             myers_profiles, distance, scratch_plus_hits, scratch_minus_hits,
-            lookup_scratch, mode, stats, plus, minus)
+            lookup_scratch, mode, simd_backend, stats, plus, minus)
     end
     return PrefixHashScanChromResult(plus, minus, stats)
 end
@@ -434,7 +441,7 @@ function stream_prefix_hash_scan(
     stats::S,
     ::Val{Scheduler} = Val(:chunk),
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
-    ) where {M, S, Scheduler}
+    ; simd_backend::Val = Val(:avx2)) where {M, S, Scheduler}
 
     index = is_fasta(genome_path) ?
         FASTA.Index(genome_path * ".fai") :
@@ -476,7 +483,8 @@ function stream_prefix_hash_scan(
                             geometry, io, buffer, index, item,
                             reference_lengths[item.chrom_idx], query, dbi,
                             guides_, myers_profiles, distance, scratch_plus_hits,
-                            scratch_minus_hits, lookup_scratch, mode, worker_stats,
+                            scratch_minus_hits, lookup_scratch, mode, simd_backend,
+                            worker_stats,
                             PrefixHashScanVerifiedHit[], PrefixHashScanVerifiedHit[],
                             early_stop_state)
                     else
@@ -486,7 +494,7 @@ function stream_prefix_hash_scan(
                             reference_lengths[chrom_idx], query, dbi, guides_,
                             myers_profiles, distance, chunk_bases,
                             scratch_plus_hits, scratch_minus_hits, lookup_scratch,
-                            mode, worker_stats)
+                            mode, simd_backend, worker_stats)
                     end
                 end
             finally
@@ -512,7 +520,7 @@ function stream_prefix_hash_scan_counts(
     mode::Val{M},
     stats::S,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
-    ) where {M, S}
+    ; simd_backend::Val = Val(:avx2)) where {M, S}
 
     index = is_fasta(genome_path) ?
         FASTA.Index(genome_path * ".fai") :
@@ -546,7 +554,8 @@ function stream_prefix_hash_scan_counts(
                         geometry, io, buffer, index, item,
                         reference_lengths[item.chrom_idx], query, dbi, guides_,
                         myers_profiles, distance, scratch_plus_hits,
-                        scratch_minus_hits, lookup_scratch, mode, worker_stats,
+                        scratch_minus_hits, lookup_scratch, mode, simd_backend,
+                        worker_stats,
                         early_stop_state)
                 end
             finally

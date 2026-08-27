@@ -22,7 +22,7 @@ The current optimized envelope is:
 - `guide length - distance >= 16`;
 - 64 guides per optimized query batch; larger lists are batched automatically
 - FASTA with a standard `.fai`, or a `.2bit` reference
-- x86 CPU with AVX2 and BMI2
+- x86 CPU with AVX2 and BMI2; AVX-512F/BW is used on qualified CPUs
 
 Current production tuning for this path is:
 
@@ -39,10 +39,11 @@ query construction stays serial. Compatible production searches use bucketed
 lookup automatically; multi-guide searches also use parallel query construction.
 
 The public API and CLI accept larger guide lists and search them as sequential
-64-guide batches. Detail mode appends batches to one file. Count mode merges
-batch matrices and writes one row per unique guide after applying deterministic
-per-distance caps. This is intentional: a GRCh38 benchmark found batching about
-three times faster than the tested one-pass large-guide representations.
+64-guide batches. Detail mode appends batches to a sibling staging file and
+atomically publishes it after every batch succeeds. Count mode merges batch
+matrices and writes one row per unique guide after applying deterministic
+per-distance caps. This is intentional: a GRCh38 benchmark found batching
+about three times faster than the tested one-pass large-guide representations.
 
 "Indexless" means that no CHOPOFF genome database must be built. The optimized
 FASTA reader still requires the small, standard `.fai` random-access index.
@@ -52,8 +53,8 @@ The implementation is split by stable responsibility:
 - `src/db_prefix_hash_scan.jl`: shared types, orchestration, and public API;
 - `src/prefix_hash_scan/query.jl`: symbolic paths, hashes, directory, prefilter;
 - `src/prefix_hash_scan/kernel_common.jl`: geometry-neutral SIMD/lookup primitives;
-- `src/prefix_hash_scan/cas9.jl`: scalar and AVX2/BMI2 Cas9 scan kernels;
-- `src/prefix_hash_scan/cas12a.jl`: scalar and AVX2/BMI2 Cas12a scan kernels;
+- `src/prefix_hash_scan/cas9.jl`: scalar and typed x86 SIMD Cas9 scan kernels;
+- `src/prefix_hash_scan/cas12a.jl`: scalar and typed x86 SIMD Cas12a scan kernels;
 - `src/prefix_hash_scan/generic.jl`: compiled motif-specialized generic kernel;
 - `src/prefix_hash_scan/verification.jl`: Myers, traceback, and result commit;
 - `src/prefix_hash_scan/streaming.jl`: FASTA/2bit streaming and global scheduler.
@@ -99,7 +100,7 @@ Cas12a is not implemented by substituting constants into the Cas9 SIMD loop.
 `resolve_prefix_scan_geometry` selects `PrefixScanGeometry{:cas12a}` for the
 canonical 21-base `TTTV` motif at distances 0 through 4 with a 16-base prefix.
 The named d3 geometry constant is the historical baseline; resolution constructs
-the requested distance-specific geometry before dispatch. Scalar or AVX2/BMI2
+the requested distance-specific geometry before dispatch. Scalar or x86 SIMD
 functions in `cas12a.jl` execute without a motif-kind branch inside the hot loop.
 
 The Cas12a kernel evaluates 25-base candidate windows. It recognizes forward
@@ -115,7 +116,7 @@ Cas12a loads the exact precomputed symbolic paths for the requested distance
 presence prefilter, radix/bucket directory, global FASTA chunk scheduler, raw
 Myers rejection, accepted-hit traceback, and deterministic commit pipeline
 described below. `scan_backend=:auto` selects `:streaming_fasta_simd` under the
-same FASTA, guide-count, AVX2, and BMI2 requirements as Cas9. The public API
+same FASTA, guide-count, and x86 SIMD requirements as Cas9. The public API
 selects it with `motif="Cas12a"`; the CLI uses `--motif Cas12a`.
 
 ### Typed generic specialization
@@ -160,10 +161,12 @@ complete span no longer than 65 bases, distance 0 through 4, and
 - the query uses the 64-bit guide mask representation;
 - there are no more than 64 guides;
 - the reference is FASTA;
-- AVX2 and BMI2 are available.
+- AVX2/BMI2 or AVX-512F/BW/BMI2 are available.
 
-Canonical and typed generic geometries use the same backend-selection policy. If
-raw FASTA SIMD is unavailable, `:auto` selects the intermediate
+`simd_backend=:auto` selects AVX-512 only for benchmark-qualified CPU-family
+and specialized-geometry pairs; generic geometries retain AVX2. `:avx2` and
+`:avx512` explicitly force a supported ISA.
+If raw FASTA SIMD is unavailable, `scan_backend=:auto` selects the intermediate
 `:fused_directory` backend. Unsupported geometries select `:legacy`.
 
 `:streaming_fasta_simd_fused` is an explicit experimental backend. It verifies
@@ -281,10 +284,11 @@ chunks finish out of order.
 ### 6. Detect Cas9 windows with SIMD
 
 `scan_cas9_prefix_hits_raw_range!` first clears the worker hit vectors, then
-profiles raw ASCII reference bytes in blocks. Two 32-byte AVX2 loads produce
-64-bit masks describing where `A`, `C`, `G`, and `T` occur. Adjacent profiles
-form a 128-base view, sufficient to evaluate 64 candidate starts together. The
-allocating `scan_cas9_prefix_hits_raw_range` wrapper remains the parity reference.
+profiles raw ASCII reference bytes in blocks. AVX2 uses two 32-byte loads;
+AVX-512BW uses one 64-byte load and mask comparisons. Both produce identical
+64-bit `A`, `C`, `G`, and `T` profiles. Adjacent profiles form a 128-base view,
+sufficient to evaluate 64 candidate starts together. The allocating
+`scan_cas9_prefix_hits_raw_range` wrapper remains the parity reference.
 
 Bit operations then calculate:
 
@@ -417,7 +421,7 @@ commit_retained_hits_in_reference_order()
 | Supported query | Eligible motifs, d0-d4, 16-base hash, <=64 guides per batch | Other motif sizes and hash lengths |
 | Query structure | Presence bitmap + compact sorted directory + `UInt64` guide masks | `Dict` from hash to guide mask or guide-index vectors |
 | Reference access | FAI range reads into reusable raw buffers | FASTA/2bit records loaded and converted to `LongDNA` |
-| PAM search | Canonical or compile-time generic AVX2 masks evaluate 64 starts | `findguides` over materialized chromosome sequences |
+| PAM search | Canonical or compile-time generic x86 SIMD masks evaluate 64 starts | `findguides` over materialized chromosome sequences |
 | Prefix extraction | Geometry-specific BMI2 packing from raw bytes | Sequence slicing/orientation or direct scalar hashing |
 | Temporary objects | Reused raw/hit buffers and compact verified hits | More sequence objects and generic candidate ranges |
 | Distance rejection | Allocation-free raw Myers before materialization | Usually `align`; some fused modes can use distance-first verification |
@@ -728,8 +732,8 @@ this host.
    `PrefixScanGeometry{Kind}` without moving motif branches into SIMD loops.
 2. Each optimized query holds at most 64 guides. Larger public API and CLI
    searches rescan the reference once per sequential batch.
-3. AVX2 and BMI2 are required for the SIMD backend; unsupported CPUs use the
-   portable fused-directory or legacy path. There is no ARM or AVX-512 kernel.
+3. AVX2/BMI2 and AVX-512F/BW/BMI2 SIMD backends are available. Unsupported CPUs
+   use the portable fused-directory or legacy path. There is no ARM kernel.
 4. FASTA requires `.fai`; `.2bit` is streamed directly without a sidecar index.
 5. Ambiguous query guides are rejected.
 6. `ambig_max` supports zero through three IUPAC-ambiguous reference positions
@@ -753,15 +757,15 @@ this host.
     those values cannot be compared directly without clear labeling.
 14. The exported three-argument `search_prefixHashScan` accepts registered names
     or custom Julia `Motif` objects at distances 0 through 4. The standalone CLI
-    accepts registered motif names; custom motifs must first be registered.
+    accepts registered names or complete custom motif definitions, including
+    PAM position, strand subsets, and extension direction.
 15. Source separates constant-free helpers, Cas9 and Cas12a kernels,
     verification, streaming, and orchestration in the parent `CHOPOFF` module.
 
 ## Potential speed optimizations
 
 Unfinished items in this section are optional research directions. They do not
-precede early stopping, generic correctness qualification, product completion,
-or portability work.
+precede product completion, qualification maintenance, or portability work.
 
 ### Highest-priority experiments
 
@@ -815,9 +819,8 @@ or portability work.
     but the Cas12a human workload emitted 364,581 accepted candidates and made
     verification/materialization substantial. Benchmark the motifs separately;
     a Cas12a win must not complicate or regress the Cas9 path.
-13. Add an AVX-512 profiling kernel that handles more input bytes per iteration.
-    Expect an incremental gain unless profiling proves the SIMD base-profile
-    stage dominates.
+13. **Completed:** add an AVX-512F/BW profiling kernel that handles 64 input
+    bytes per load and retains BMI2 prefix packing.
 
 ### Lower-priority micro-optimizations
 
@@ -847,6 +850,23 @@ feature status is:
 6. **Completed:** add optimized 2bit streaming and bounded IUPAC-reference
    behavior for `ambig_max=0:3`.
 7. **Completed:** add count-only output without traceback or detail rows.
+8. **Completed:** add complete custom motif definitions to the standalone CLI,
+   including PAM-left, PAM-right, internal-PAM, PAMless, strand-subset, and
+   extension-direction configurations.
+9. **Completed:** run the representative generic qualification matrix against
+   prefixHashDB. It covers full GRCh38 Cas9-NGA, CasX, and 25-base-guide cases,
+   65-guide multi-batch searches, distances 0 through 4, ambiguity zero through
+   three, and bounded internal-PAM, PAMless, 16-base-guide, strand-subset,
+   FASTA/2bit, IUPAC, indel, and chunk-boundary cases. All 220 detail cases
+   passed the reference-backed parity classifier and all 220 count comparisons
+   passed. Of the detail cases, 147 were exact; the remainder contained only
+   classified prefixHashDB ambiguity-limit or duplicate-row behavior.
+10. **Completed:** make multi-batch detail output atomic. Batches append to a
+    sibling temporary file; successful completion renames it over the requested
+    path, while failure removes it and preserves any previous output.
+11. **Completed:** add typed AVX-512F/BW profiling with explicit Julia and CLI
+    selection, CPU-qualified automatic dispatch, parity tests, and ZMM codegen
+    verification.
 
 ## Remaining implementation priorities
 
@@ -861,18 +881,16 @@ The following decisions are closed:
 
 Remaining work, in priority order:
 
-1. **Generic correctness qualification.** Add randomized and representative
-   human-scale prefixHashDB parity across distances 0 through 4, guide lengths
-   16 through 64, PAM positions and PAMless motifs, strand subsets, FASTA/2bit,
-   ambiguity, indels, duplicate guides, and multi-batch searches.
-2. **Product completion.** Add atomic multi-batch detail output, custom motif
-   definitions in the standalone CLI, and clearer path/query memory and progress
-   reporting.
+1. **Product completion.** Add clearer path/query memory and progress reporting.
+2. **Qualification maintenance.** Add randomized property tests and extend
+   long-guide coverage beyond 28 bases using a suitable exact oracle. The
+   completed prefixHashDB matrix cannot cover those d4 candidates because its
+   packed representation is limited to 32 bases.
 3. **Portable performance.** Qualify scalar and fused fallbacks on CPUs without
    AVX2/BMI2, then add an ARM SIMD path if profiling justifies it.
 
 Further Cas9/Cas12a micro-optimization, NUMA experiments, alternative
-prefilters, AVX-512, mmap-backed FASTA, and vectorized traceback remain
+prefilters, mmap-backed FASTA, and vectorized traceback remain
 lower-priority research directions. Continue one only with exact parity and a
 credible end-to-end gain.
 
@@ -932,8 +950,10 @@ The target is an exact production search with:
 - specialized hot loops for important motif geometries, without motif branches
   inside those loops.
 
-The useful output surface and computational early stopping are now generalized.
-Generic correctness qualification is the next implementation priority.
+The useful output surface, computational early stopping, custom CLI motif
+definitions, and representative generic correctness qualification are now
+complete. Atomic multi-batch detail output is also complete. Operational
+reporting is the next implementation priority.
 
 Implementation order changed July 22, 2026: detailed output for distances 0
 through 3 shipped first at p16, followed by distance 4 as the functional and
@@ -1051,8 +1071,8 @@ should retain separate gates:
 - Count mode should be benchmarked independently because it removes most of the
   Cas12a-specific output cost and exposes the scan/verification ceiling.
 - Non-AVX2 fallback qualification and ARM SIMD belong to the portability
-  priority. AVX-512, mmap-backed input, and further prefilter experiments remain
-  optional speed research.
+  priority. Mmap-backed input and further prefilter experiments remain optional
+  speed research.
 
 Continue an optimization only when it has a credible route to at least 10%
 end-to-end improvement in its intended workload. Always report detail and
@@ -1081,37 +1101,41 @@ prefixHashScan total = searches * ceil(guides / 64) * reference scan
 
 The main remaining gaps are:
 
-1. **Generic correctness qualification.** Extend exact prefixHashDB parity from
-   canonical human-scale cases to generic distances 0 through 4, guide lengths
-   16 through 64, PAM-left/PAM-right/internal/PAMless motifs, strand subsets,
-   FASTA/2bit, ambiguity 0 through 3, indels at reference/chunk boundaries,
-   duplicate guides, and multi-batch searches. Use randomized property tests
-   and representative human-scale searches.
-2. **Product completion.** Add path/query memory and progress reporting, custom
-   motif definitions in the CLI, and atomic multi-batch detail output.
-3. **Portable performance.** AVX2/BMI2 systems use the fastest streaming path.
+1. **Product completion.** Add path/query memory and progress reporting.
+   Custom motif definitions in the CLI and atomic multi-batch detail output are
+   complete.
+2. **Qualification maintenance.** The representative generic matrix is
+   complete: 220 detail cases passed its reference-backed classifier and all
+   220 count comparisons passed. Add randomized property tests and qualify
+   guide lengths above 28 with an oracle other than prefixHashDB, whose packed
+   d4 representation cannot cover those candidates.
+3. **Portable performance.** Qualified AVX-512 and AVX2/BMI2 systems use the
+   fastest streaming path.
    Correct fused-directory and legacy fallbacks exist, but must be qualified
    against prefixHashDB on unsupported CPUs. ARM SIMD is the primary missing
    optimized backend.
 
 The generic kernel's measured 17.8% Cas9 hot-loop latency penalty is not a
-replacement blocker. The decisive implementation limitation is incomplete
-generic correctness qualification. Sequential batching, computational early
-stopping, and d4/p16 are closed design decisions.
+replacement blocker. The decisive remaining product limitation is incomplete
+operational reporting. Sequential batching, atomic multi-batch output,
+computational early stopping, d4/p16, custom CLI motifs, and representative
+generic qualification are closed implementation items.
 
 #### Replacement gates
 
 Make `prefixHashScan` the documented default for its qualified workload when:
 
-1. Canonical and representative generic distances 0 through 4 have exact detail
-   parity on sample, randomized, and human-scale fixtures.
+1. Canonical searches retain exact detail parity, and representative generic
+   distances 0 through 4 retain exact or reference-classified parity on sample
+   and human-scale fixtures. Randomized coverage and guide lengths above 28 are
+   tracked as qualification maintenance.
 2. Scalar, fused, FASTA SIMD, and 2bit SIMD backends have identical results;
    unsupported configurations select a correct fallback rather than fail.
 3. Count output marks early-stopped rows incomplete; detail output documents its
    scheduling-dependent valid subset. Cancellation reduces verification or
    unclaimed work.
-4. Multi-batch detail output is atomic, custom CLI motifs are supported, and
-   progress/memory reporting is clear enough for production use.
+4. Progress/memory reporting is clear enough for production use. Atomic
+   multi-batch detail output and custom CLI motifs are already supported.
 5. Non-AVX2 fallbacks are qualified, with ARM SIMD tracked as the primary
    portability extension.
 6. Cas9/d3 and Cas12a/d3 detail latency regresses by no more than 3% unless a

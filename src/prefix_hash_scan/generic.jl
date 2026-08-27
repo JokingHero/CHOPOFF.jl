@@ -282,6 +282,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
     candidate_first::Int, candidate_last::Int,
     plus_first::Int, plus_last::Int,
     minus_first::Int, minus_last::Int,
+    simd_backend::Val,
     ::Val{Bucketed}) where Bucketed
 
     empty!(plus_hits)
@@ -297,10 +298,12 @@ function scan_generic_prefix_hits_raw_range_impl!(
     block_start = candidate_first
     n = length(raw)
     if block_start + 127 <= n && block_start + 63 <= candidate_last
-        a0, c0, g0, t0 = prefix_hash_scan_raw_profile64(raw, block_start)
+        a0, c0, g0, t0 = prefix_hash_scan_raw_profile64(
+            raw, block_start, simd_backend)
     end
     while block_start + 127 <= n && block_start + 63 <= candidate_last
-        a1, c1, g1, t1 = prefix_hash_scan_raw_profile64(raw, block_start + 64)
+        a1, c1, g1, t1 = prefix_hash_scan_raw_profile64(
+            raw, block_start + 64, simd_backend)
         a = UInt128(a0) | (UInt128(a1) << 64)
         c = UInt128(c0) | (UInt128(c1) << 64)
         g = UInt128(g0) | (UInt128(g1) << 64)
@@ -385,7 +388,18 @@ function scan_generic_prefix_hits_raw_range!(
     plus_hits, minus_hits, raw, query, geometry, bounds...)
     return scan_generic_prefix_hits_raw_range_impl!(
         plus_hits, minus_hits, nothing, nothing, nothing, nothing, nothing,
-        raw, query, geometry, bounds..., Val(false))
+        raw, query, geometry, bounds..., Val(:avx2), Val(false))
+end
+
+function scan_generic_prefix_hits_raw_range!(
+    plus_hits, minus_hits, raw, query, geometry,
+    candidate_first, candidate_last, plus_first, plus_last,
+    minus_first, minus_last, simd_backend::Val)
+    return scan_generic_prefix_hits_raw_range_impl!(
+        plus_hits, minus_hits, nothing, nothing, nothing, nothing, nothing,
+        raw, query, geometry, candidate_first, candidate_last,
+        plus_first, plus_last, minus_first, minus_last,
+        simd_backend, Val(false))
 end
 
 function scan_generic_prefix_hits_raw_range_bucketed!(
@@ -395,7 +409,21 @@ function scan_generic_prefix_hits_raw_range_bucketed!(
     return scan_generic_prefix_hits_raw_range_impl!(
         plus_hits, minus_hits, plus_candidates, minus_candidates,
         plus_radix_scratch, minus_radix_scratch, radix_counts,
-        raw, query, geometry, bounds..., Val(true))
+        raw, query, geometry, bounds..., Val(:avx2), Val(true))
+end
+
+function scan_generic_prefix_hits_raw_range_bucketed!(
+    plus_hits, minus_hits, plus_candidates, minus_candidates,
+    plus_radix_scratch, minus_radix_scratch, radix_counts,
+    raw, query, geometry,
+    candidate_first, candidate_last, plus_first, plus_last,
+    minus_first, minus_last, simd_backend::Val)
+    return scan_generic_prefix_hits_raw_range_impl!(
+        plus_hits, minus_hits, plus_candidates, minus_candidates,
+        plus_radix_scratch, minus_radix_scratch, radix_counts,
+        raw, query, geometry, candidate_first, candidate_last,
+        plus_first, plus_last, minus_first, minus_last,
+        simd_backend, Val(true))
 end
 
 function scan_generic_prefix_hits_raw_range(raw, query, geometry, bounds...)
@@ -403,6 +431,20 @@ function scan_generic_prefix_hits_raw_range(raw, query, geometry, bounds...)
     minus_hits = PrefixHashScanHit[]
     count = scan_generic_prefix_hits_raw_range!(
         plus_hits, minus_hits, raw, query, geometry, bounds...)
+    return plus_hits, minus_hits, count
+end
+
+
+function scan_generic_prefix_hits_raw_range(
+    raw, query, geometry,
+    candidate_first, candidate_last, plus_first, plus_last,
+    minus_first, minus_last, simd_backend::Val)
+    plus_hits = PrefixHashScanHit[]
+    minus_hits = PrefixHashScanHit[]
+    count = scan_generic_prefix_hits_raw_range!(
+        plus_hits, minus_hits, raw, query, geometry,
+        candidate_first, candidate_last, plus_first, plus_last,
+        minus_first, minus_last, simd_backend)
     return plus_hits, minus_hits, count
 end
 
@@ -452,7 +494,8 @@ end
 
 function scan_generic_prefix_hits_raw(
     raw, dbi, query, geometry::PrefixScanGeometry{:generic},
-    stats = nothing; scan_threads::Int = Threads.nthreads())
+    stats = nothing; scan_threads::Int = Threads.nthreads(),
+    simd_backend::Val = Val(:avx2))
 
     bounds = generic_prefix_scan_bounds(raw, geometry, dbi)
     bounds === nothing && return PrefixHashScanHit[], PrefixHashScanHit[]
@@ -464,7 +507,7 @@ function scan_generic_prefix_hits_raw(
         last_ = min(first_ + chunk_size - 1, candidate_last)
         Threads.@spawn scan_generic_prefix_hits_raw_range(
             raw, query, geometry, first_, last_, plus_first, plus_last,
-            minus_first, minus_last)
+            minus_first, minus_last, simd_backend)
     end
     plus_hits = PrefixHashScanHit[]
     minus_hits = PrefixHashScanHit[]
@@ -480,7 +523,7 @@ function scan_generic_prefix_hits_raw(
             plus_hits, minus_hits, raw, geometry, dbi, query,
             geometry.prefix_bases, candidate_first, candidate_last,
             plus_first, plus_last, minus_first, minus_last,
-            Val(dbi.motif.ambig_max), stats)
+            Val(dbi.motif.ambig_max), stats, simd_backend)
     end
     stats === nothing || (stats.motif_candidates += motif_candidates)
     return plus_hits, minus_hits
@@ -556,11 +599,11 @@ function scan_verify_prefix_raw_range!(
     geometry::PrefixScanGeometry{:generic}, plus, minus, raw, query,
     candidate_first, candidate_last, plus_first, plus_last,
     minus_first, minus_last, global_offset, dbi, guides_, myers_profiles,
-    distance, stats)
+    distance, stats, simd_backend::Val = Val(:avx2))
 
     plus_hits, minus_hits, motif_candidates = scan_generic_prefix_hits_raw_range(
         raw, query, geometry, candidate_first, candidate_last,
-        plus_first, plus_last, minus_first, minus_last)
+        plus_first, plus_last, minus_first, minus_last, simd_backend)
     stats === nothing || (stats.motif_candidates += motif_candidates)
     evaluate_prefix_hash_scan_hits!(
         plus, raw, geometry, plus_hits, global_offset, dbi, false,

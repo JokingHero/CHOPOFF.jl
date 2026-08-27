@@ -167,6 +167,82 @@ end
     tdir = tempname()
     mkpath(tdir)
 
+    @testset "SIMD backend resolution and profile parity" begin
+        resolve = CHOPOFF.resolve_prefix_hash_scan_simd_backend
+        @test resolve(:auto; cpu_name = "skylake-avx512",
+            scan_kind = :cas9, avx2 = true, avx512 = true) == :avx512
+        @test resolve(:auto; cpu_name = "skylake-avx512",
+            scan_kind = :cas12a, avx2 = true, avx512 = true) == :avx512
+        @test resolve(:auto; cpu_name = "skylake-avx512",
+            scan_kind = :generic, avx2 = true, avx512 = true) == :avx2
+        @test resolve(:auto; cpu_name = "sapphirerapids",
+            scan_kind = :cas9, avx2 = true, avx512 = true) == :avx2
+        @test resolve(:auto; cpu_name = "unknown",
+            avx2 = true, avx512 = false) == :avx2
+        @test resolve(:auto; cpu_name = "unknown",
+            avx2 = false, avx512 = false) == :none
+        @test resolve(:avx512; avx2 = true, avx512 = true) == :avx512
+        @test_throws ErrorException resolve(
+            :avx512; avx2 = true, avx512 = false)
+        @test_throws ErrorException resolve(
+            :avx2; avx2 = false, avx512 = true)
+        @test_throws ErrorException resolve(
+            :invalid; avx2 = true, avx512 = true)
+        @test CHOPOFF.can_use_prefix_hash_scan_avx2() isa Bool
+        @test CHOPOFF.can_use_prefix_hash_scan_avx512() isa Bool
+
+        if CHOPOFF.can_use_prefix_hash_scan_avx512()
+            alphabet = Vector{UInt8}(codeunits(
+                "ACGTacgtNRYSWKMDHBVacgtnryswkmdhbv"))
+            raw = [alphabet[mod1(i * 17, length(alphabet))] for i in 1:256]
+            for start_pos in 1:33
+                @test CHOPOFF.prefix_hash_scan_raw_profile64(
+                    raw, start_pos, Val(:avx512)) ==
+                    CHOPOFF.prefix_hash_scan_raw_profile64(
+                    raw, start_pos, Val(:avx2))
+                @test CHOPOFF.prefix_hash_scan_exact_block(
+                    raw, start_pos, 128, Val(:avx512)) ==
+                    CHOPOFF.prefix_hash_scan_exact_block(
+                    raw, start_pos, 128, Val(:avx2))
+            end
+        end
+    end
+
+    @testset "atomic output staging" begin
+        output = joinpath(tdir, "atomic_output.csv")
+        write(output, "old\n")
+        staged_path = Ref("")
+        before = Set(readdir(tdir))
+        CHOPOFF.with_atomic_prefix_hash_scan_output(output) do staged
+            staged_path[] = staged
+            write(staged, "new\n")
+            @test read(output, String) == "old\n"
+        end
+        @test read(output, String) == "new\n"
+        @test !ispath(staged_path[])
+        @test Set(readdir(tdir)) == before
+
+        write(output, "preserve\n")
+        before = Set(readdir(tdir))
+        @test_throws ErrorException CHOPOFF.with_atomic_prefix_hash_scan_output(
+            output) do staged
+            staged_path[] = staged
+            write(staged, "partial\n")
+            error("injected output failure")
+        end
+        @test read(output, String) == "preserve\n"
+        @test !ispath(staged_path[])
+        @test Set(readdir(tdir)) == before
+
+        absent = joinpath(tdir, "atomic_absent.csv")
+        @test_throws ErrorException CHOPOFF.with_atomic_prefix_hash_scan_output(
+            absent) do staged
+            write(staged, "partial\n")
+            error("injected output failure")
+        end
+        @test !ispath(absent)
+    end
+
     @testset "2bit range decoding" begin
         root = normpath(joinpath(dirname(pathof(CHOPOFF)), ".."))
         genome = joinpath(root, "test", "sample_data", "genome", "semirandom.2bit")
@@ -264,12 +340,18 @@ end
             outputs = String[]
             for backend in (:legacy, :fused_directory, :streaming_fasta_simd)
                 output = joinpath(tdir, "generic_motif_$(case_idx)_$(backend).csv")
+                backend_stats = CHOPOFF.PrefixHashScanStats()
                 CHOPOFF.search_prefixHashScan(
                     [guide], genome, motif, output;
                     distance = 1, hash_len = 16,
                     early_stopping = fill(100, 2), scan_backend = backend,
-                    stream_chunk_bases = 64)
+                    stream_chunk_bases = 64, stats = backend_stats)
                 push!(outputs, read(output, String))
+                if backend == :streaming_fasta_simd
+                    expected_simd = CHOPOFF.resolve_prefix_hash_scan_simd_backend(
+                        :auto; scan_kind = :generic)
+                    @test backend_stats.simd_backend == expected_simd
+                end
             end
             @test all(==(first(outputs)), outputs)
 
@@ -362,6 +444,34 @@ end
         expected_twobit_backend = CHOPOFF.can_use_prefix_hash_scan_simd() ?
             :streaming_2bit_simd : :fused_directory
         @test twobit_stats.scan_backend == expected_twobit_backend
+        expected_twobit_simd = expected_twobit_backend == :streaming_2bit_simd ?
+            CHOPOFF.resolve_prefix_hash_scan_simd_backend(
+                :auto; scan_kind = :cas9) : :none
+        @test twobit_stats.simd_backend == expected_twobit_simd
+
+        if CHOPOFF.can_use_prefix_hash_scan_avx512()
+            avx2_out = joinpath(tdir, "supported_api_avx2.csv")
+            avx512_out = joinpath(tdir, "supported_api_avx512.csv")
+            avx2_stats = CHOPOFF.PrefixHashScanStats()
+            avx512_stats = CHOPOFF.PrefixHashScanStats()
+            CHOPOFF.search_prefixHashScan(
+                [guide], genome, motif, avx2_out;
+                distance = 3, early_stopping = fill(100, 4),
+                simd_backend = :avx2, stats = avx2_stats)
+            CHOPOFF.search_prefixHashScan(
+                [guide], genome, motif, avx512_out;
+                distance = 3, early_stopping = fill(100, 4),
+                simd_backend = :avx512, stats = avx512_stats)
+            @test read(avx512_out) == read(avx2_out)
+            @test avx2_stats.simd_backend == :avx2
+            @test avx512_stats.simd_backend == :avx512
+
+            public_avx2 = joinpath(tdir, "supported_public_avx2.csv")
+            search_prefixHashScan(
+                [guide], genome, public_avx2;
+                early_stopping = fill(100, 4), simd_backend = :avx2)
+            @test read(public_avx2) == read(avx2_out)
+        end
 
 
         for distance in 0:4
@@ -430,6 +540,7 @@ end
         batch64_out = joinpath(tdir, "supported_api_batch64.csv")
         batch1_out = joinpath(tdir, "supported_api_batch1.csv")
         large_guides = fill(guide, 65)
+        write(large_out, "old output must be replaced\n")
         search_prefixHashScan(
             large_guides, genome, large_out;
             early_stopping = fill(100, 4))
@@ -704,6 +815,10 @@ end
         expected_auto = CHOPOFF.can_use_prefix_hash_scan_simd() ?
             :streaming_fasta_simd : :fused_directory
         @test backend_stats[:auto].scan_backend == expected_auto
+        expected_auto_simd = expected_auto == :streaming_fasta_simd ?
+            CHOPOFF.resolve_prefix_hash_scan_simd_backend(
+                :auto; scan_kind = :cas12a) : :none
+        @test backend_stats[:auto].simd_backend == expected_auto_simd
 
         public_output = joinpath(tdir, "cas12a_public.csv")
         search_prefixHashScan(

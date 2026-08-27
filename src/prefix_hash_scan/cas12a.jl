@@ -156,7 +156,8 @@ function scan_cas12a_prefix_hits_raw_range_impl!(
     plus_last::Int,
     minus_first::Int,
     minus_last::Int,
-    ::Val{Bucketed}) where Bucketed
+    ::Val{Bucketed},
+    simd_backend::Val = Val(:avx2)) where Bucketed
 
     empty!(plus_hits)
     empty!(minus_hits)
@@ -170,10 +171,12 @@ function scan_cas12a_prefix_hits_raw_range_impl!(
     block_start = candidate_first
 
     if block_start + 127 <= n && block_start + 63 <= candidate_last
-        a0, c0, g0, t0 = prefix_hash_scan_raw_profile64(raw, block_start)
+        a0, c0, g0, t0 = prefix_hash_scan_raw_profile64(
+            raw, block_start, simd_backend)
     end
     while block_start + 127 <= n && block_start + 63 <= candidate_last
-        a1, c1, g1, t1 = prefix_hash_scan_raw_profile64(raw, block_start + 64)
+        a1, c1, g1, t1 = prefix_hash_scan_raw_profile64(
+            raw, block_start + 64, simd_backend)
         a = UInt128(a0) | (UInt128(a1) << 64)
         c = UInt128(c0) | (UInt128(c1) << 64)
         g = UInt128(g0) | (UInt128(g1) << 64)
@@ -280,12 +283,13 @@ function scan_cas12a_prefix_hits_raw_range!(
     plus_first::Int,
     plus_last::Int,
     minus_first::Int,
-    minus_last::Int)
+    minus_last::Int,
+    simd_backend::Val = Val(:avx2))
 
     return scan_cas12a_prefix_hits_raw_range_impl!(
         plus_hits, minus_hits, nothing, nothing, nothing, nothing, nothing,
         raw, query, candidate_first, candidate_last, plus_first, plus_last,
-        minus_first, minus_last, Val(false))
+        minus_first, minus_last, Val(false), simd_backend)
 end
 
 function scan_cas12a_prefix_hits_raw_range_bucketed!(
@@ -303,13 +307,14 @@ function scan_cas12a_prefix_hits_raw_range_bucketed!(
     plus_first::Int,
     plus_last::Int,
     minus_first::Int,
-    minus_last::Int)
+    minus_last::Int,
+    simd_backend::Val = Val(:avx2))
 
     return scan_cas12a_prefix_hits_raw_range_impl!(
         plus_hits, minus_hits, plus_candidates, minus_candidates,
         plus_radix_scratch, minus_radix_scratch, radix_counts, raw, query,
         candidate_first, candidate_last, plus_first, plus_last, minus_first,
-        minus_last, Val(true))
+        minus_last, Val(true), simd_backend)
 end
 
 function scan_cas12a_prefix_hits_raw_range(
@@ -320,13 +325,14 @@ function scan_cas12a_prefix_hits_raw_range(
     plus_first::Int,
     plus_last::Int,
     minus_first::Int,
-    minus_last::Int)
+    minus_last::Int,
+    simd_backend::Val = Val(:avx2))
 
     plus_hits = PrefixHashScanHit[]
     minus_hits = PrefixHashScanHit[]
     motif_candidates = scan_cas12a_prefix_hits_raw_range!(
         plus_hits, minus_hits, raw, query, candidate_first, candidate_last,
-        plus_first, plus_last, minus_first, minus_last)
+        plus_first, plus_last, minus_first, minus_last, simd_backend)
     return plus_hits, minus_hits, motif_candidates
 end
 
@@ -335,7 +341,8 @@ function scan_cas12a_prefix_hits_raw(
     dbi::DBInfo,
     query,
     stats::Union{Nothing, PrefixHashScanStats} = nothing;
-    scan_threads::Int = Threads.nthreads())
+    scan_threads::Int = Threads.nthreads(),
+    simd_backend::Val = Val(:avx2))
 
     bounds = cas12a_prefix_scan_bounds_raw(raw, dbi)
     bounds === nothing && return PrefixHashScanHit[], PrefixHashScanHit[]
@@ -350,7 +357,7 @@ function scan_cas12a_prefix_hits_raw(
     tasks = map(ranges) do range
         Threads.@spawn scan_cas12a_prefix_hits_raw_range(
             raw, query, first(range), last(range),
-            plus_first, plus_last, minus_first, minus_last)
+            plus_first, plus_last, minus_first, minus_last, simd_backend)
     end
 
     plus_hits = PrefixHashScanHit[]
@@ -367,7 +374,7 @@ function scan_cas12a_prefix_hits_raw(
             plus_hits, minus_hits, raw, CAS12A_D3_PREFIX_SCAN_GEOMETRY,
             dbi, query, 16, candidate_first, candidate_last,
             plus_first, plus_last, minus_first, minus_last,
-            Val(dbi.motif.ambig_max), stats)
+            Val(dbi.motif.ambig_max), stats, simd_backend)
     end
     stats !== nothing && (stats.motif_candidates += motif_candidates)
     return plus_hits, minus_hits
@@ -438,7 +445,8 @@ function scan_verify_cas12a_prefix_raw_range!(
     guides_::Vector{LongDNA{4}},
     myers_profiles::Vector{PrefixHashScanMyersProfile},
     distance::Int,
-    stats::S) where {S <: Union{Nothing, PrefixHashScanStats}}
+    stats::S,
+    simd_backend::Val = Val(:avx2)) where {S <: Union{Nothing, PrefixHashScanStats}}
 
     motif_candidates = 0
     candidate_first > candidate_last && return plus, minus
@@ -447,10 +455,12 @@ function scan_verify_cas12a_prefix_raw_range!(
     block_start = candidate_first
 
     if block_start + 127 <= n && block_start + 63 <= candidate_last
-        a0, c0, g0, t0 = prefix_hash_scan_raw_profile64(raw, block_start)
+        a0, c0, g0, t0 = prefix_hash_scan_raw_profile64(
+            raw, block_start, simd_backend)
     end
     while block_start + 127 <= n && block_start + 63 <= candidate_last
-        a1, c1, g1, t1 = prefix_hash_scan_raw_profile64(raw, block_start + 64)
+        a1, c1, g1, t1 = prefix_hash_scan_raw_profile64(
+            raw, block_start + 64, simd_backend)
         a = UInt128(a0) | (UInt128(a1) << 64)
         c = UInt128(c0) | (UInt128(c1) << 64)
         g = UInt128(g0) | (UInt128(g1) << 64)

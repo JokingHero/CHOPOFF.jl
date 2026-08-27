@@ -1,4 +1,4 @@
-# Geometry-neutral scalar, AVX2/BMI2, and compact-lookup helpers.
+# Geometry-neutral scalar, AVX2/AVX-512/BMI2, and compact-lookup helpers.
 
 @inline function prefix_hash_scan_twobit_nibble(nibble::UInt8)
     nibble == 0x01 && return UInt8(0)
@@ -9,15 +9,56 @@
 end
 
 const PREFIX_HASH_SCAN_V32U8 = Vec{32, UInt8}
+const PREFIX_HASH_SCAN_V64U8 = Vec{64, UInt8}
 const PREFIX_HASH_SCAN_AVX2_FEATURE = UInt32(32 * 2 + 5)
 const PREFIX_HASH_SCAN_BMI2_FEATURE = UInt32(32 * 2 + 8)
+const PREFIX_HASH_SCAN_AVX512F_FEATURE = UInt32(32 * 2 + 16)
+const PREFIX_HASH_SCAN_AVX512BW_FEATURE = UInt32(32 * 2 + 30)
 const PREFIX_HASH_SCAN_PDEP_EVEN = UInt64(0x5555555555555555)
 const PREFIX_HASH_SCAN_PDEP_ODD = UInt64(0xaaaaaaaaaaaaaaaa)
+const PREFIX_HASH_SCAN_SIMD_BACKENDS = (:auto, :avx512, :avx2)
+const PREFIX_HASH_SCAN_AVX512_AUTO_TARGETS = (
+    ("skylake-avx512", :cas9),
+    ("skylake-avx512", :cas12a),
+)
 
-@inline function can_use_prefix_hash_scan_simd()
+@inline function can_use_prefix_hash_scan_avx2()
     (Sys.ARCH === :x86_64 || Sys.ARCH === :i686) || return false
     return ccall(:jl_test_cpu_feature, Bool, (UInt32,), PREFIX_HASH_SCAN_AVX2_FEATURE) &&
         ccall(:jl_test_cpu_feature, Bool, (UInt32,), PREFIX_HASH_SCAN_BMI2_FEATURE)
+end
+
+@inline function can_use_prefix_hash_scan_avx512()
+    (Sys.ARCH === :x86_64 || Sys.ARCH === :i686) || return false
+    return ccall(:jl_test_cpu_feature, Bool, (UInt32,), PREFIX_HASH_SCAN_AVX512F_FEATURE) &&
+        ccall(:jl_test_cpu_feature, Bool, (UInt32,), PREFIX_HASH_SCAN_AVX512BW_FEATURE) &&
+        ccall(:jl_test_cpu_feature, Bool, (UInt32,), PREFIX_HASH_SCAN_BMI2_FEATURE)
+end
+
+@inline can_use_prefix_hash_scan_simd() =
+    can_use_prefix_hash_scan_avx2() || can_use_prefix_hash_scan_avx512()
+
+function resolve_prefix_hash_scan_simd_backend(
+    requested::Symbol = :auto;
+    scan_kind::Symbol = :generic,
+    cpu_name::AbstractString = Sys.CPU_NAME,
+    avx2::Bool = can_use_prefix_hash_scan_avx2(),
+    avx512::Bool = can_use_prefix_hash_scan_avx512())
+
+    requested in PREFIX_HASH_SCAN_SIMD_BACKENDS ||
+        error("simd_backend must be :auto, :avx2, or :avx512.")
+    if requested == :auto
+        if avx512 && (lowercase(cpu_name), scan_kind) in
+                PREFIX_HASH_SCAN_AVX512_AUTO_TARGETS
+            return :avx512
+        end
+        return avx2 ? :avx2 : :none
+    elseif requested == :avx512
+        avx512 || error("simd_backend=:avx512 requires AVX-512F, AVX-512BW, and BMI2.")
+    else
+        avx2 || error("simd_backend=:avx2 requires AVX2 and BMI2.")
+    end
+    return requested
 end
 
 @inline function prefix_hash_scan_movemask(v::PREFIX_HASH_SCAN_V32U8)
@@ -57,8 +98,27 @@ end
     return UInt64(prefix_hash_scan_movemask(bytes))
 end
 
+@inline function prefix_hash_scan_ascii_mask(
+    folded::PREFIX_HASH_SCAN_V64U8, upper::UInt8)
+
+    Base.llvmcall(
+        ("""
+         define i64 @entry(<64 x i8> %0, <64 x i8> %1) #0 {
+             %cmp = icmp eq <64 x i8> %0, %1
+             %mask = bitcast <64 x i1> %cmp to i64
+             ret i64 %mask
+         }
+         attributes #0 = { alwaysinline "target-features"="+avx512f,+avx512bw" }
+         """, "entry"),
+        UInt64,
+        Tuple{PREFIX_HASH_SCAN_V64U8, PREFIX_HASH_SCAN_V64U8},
+        folded,
+        PREFIX_HASH_SCAN_V64U8(upper),
+    )
+end
+
 @inline function prefix_hash_scan_raw_profile64(
-    raw::AbstractVector{UInt8}, start_pos::Int)
+    raw::AbstractVector{UInt8}, start_pos::Int, ::Val{:avx2})
 
     case_mask = PREFIX_HASH_SCAN_V32U8(0xdf)
     chunk0 = vload(PREFIX_HASH_SCAN_V32U8, pointer(raw, start_pos)) & case_mask
@@ -73,6 +133,23 @@ end
         profile(UInt8('T')),
     )
 end
+
+@inline function prefix_hash_scan_raw_profile64(
+    raw::AbstractVector{UInt8}, start_pos::Int, ::Val{:avx512})
+
+    folded = vload(PREFIX_HASH_SCAN_V64U8, pointer(raw, start_pos)) &
+        PREFIX_HASH_SCAN_V64U8(0xdf)
+    return (
+        prefix_hash_scan_ascii_mask(folded, UInt8('A')),
+        prefix_hash_scan_ascii_mask(folded, UInt8('C')),
+        prefix_hash_scan_ascii_mask(folded, UInt8('G')),
+        prefix_hash_scan_ascii_mask(folded, UInt8('T')),
+    )
+end
+
+@inline prefix_hash_scan_raw_profile64(
+    raw::AbstractVector{UInt8}, start_pos::Int) =
+    prefix_hash_scan_raw_profile64(raw, start_pos, Val(:avx2))
 
 @inline function prefix_hash_scan_pack_codes(
     low_bits::UInt64, high_bits::UInt64)
@@ -122,11 +199,14 @@ end
 end
 
 @inline function prefix_hash_scan_exact_block(
-    raw::AbstractVector{UInt8}, start_pos::Int, required_bases::Int)
+    raw::AbstractVector{UInt8}, start_pos::Int, required_bases::Int,
+    simd_backend::Val = Val(:avx2))
 
     if start_pos + 127 <= length(raw)
-        a0, c0, g0, t0 = prefix_hash_scan_raw_profile64(raw, start_pos)
-        a1, c1, g1, t1 = prefix_hash_scan_raw_profile64(raw, start_pos + 64)
+        a0, c0, g0, t0 = prefix_hash_scan_raw_profile64(
+            raw, start_pos, simd_backend)
+        a1, c1, g1, t1 = prefix_hash_scan_raw_profile64(
+            raw, start_pos + 64, simd_backend)
         return UInt128(a0 | c0 | g0 | t0) |
             (UInt128(a1 | c1 | g1 | t1) << 64)
     end
@@ -139,7 +219,8 @@ end
 end
 
 @inline function prefix_hash_scan_exact_block(
-    chrom_seq::LongDNA{4}, start_pos::Int, required_bases::Int)
+    chrom_seq::LongDNA{4}, start_pos::Int, required_bases::Int,
+    ::Val = Val(:avx2))
 
     exact = UInt128(0)
     @inbounds for offset in 0:(required_bases - 1)
@@ -213,14 +294,16 @@ function scan_ambiguous_prefix_hits_range!(
     minus_first::Int,
     minus_last::Int,
     ::Val{K},
-    stats::Union{Nothing, PrefixHashScanStats} = nothing) where K
+    stats::Union{Nothing, PrefixHashScanStats} = nothing,
+    simd_backend::Val = Val(:avx2)) where K
 
     candidate_first > candidate_last && return nothing
     candidate_bases = prefix_scan_candidate_bases(geometry)
     for block_start in candidate_first:64:candidate_last
         count = min(64, candidate_last - block_start + 1)
         required_bases = count + candidate_bases - 1
-        exact = prefix_hash_scan_exact_block(source, block_start, required_bases)
+        exact = prefix_hash_scan_exact_block(
+            source, block_start, required_bases, simd_backend)
         required_mask = (UInt128(1) << required_bases) - UInt128(1)
         exact & required_mask == required_mask && continue
         starts = prefix_hash_scan_ambiguous_window_mask(

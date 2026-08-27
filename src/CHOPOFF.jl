@@ -386,6 +386,11 @@ function parse_commandline(args::Array{String})
             arg_type = String
             range_tester = x -> x in ("detail", "counts")
             default = "detail"
+        "--simd_backend"
+            help = "prefixHashScan SIMD backend: auto, avx512, or avx2."
+            arg_type = String
+            range_tester = x -> x in ("auto", "avx512", "avx2")
+            default = "auto"
     end
 
     @add_arg_table! s["search"]["sassy"] begin
@@ -656,6 +661,7 @@ function main(args::Array{String})
                 early_stopping = early_stopping,
                 distance = args["distance"],
                 output = Symbol(scan_args["output_mode"]),
+                simd_backend = Symbol(scan_args["simd_backend"]),
                 verbose = true,
             )
         elseif args["%COMMAND%"] == "sassy"

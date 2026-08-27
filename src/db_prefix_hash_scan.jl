@@ -85,9 +85,10 @@ mutable struct PrefixHashScanStats
     path_source::Symbol
     query_variant::Symbol
     scan_backend::Symbol
+    simd_backend::Symbol
 end
 
-PrefixHashScanStats() = PrefixHashScanStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, :none, :none, :none)
+PrefixHashScanStats() = PrefixHashScanStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, :none, :none, :none, :none)
 
 @inline prefix_hash_scan_timer(::Nothing) = UInt64(0)
 @inline prefix_hash_scan_timer(::PrefixHashScanStats) = time_ns()
@@ -132,6 +133,7 @@ function reset!(stats::PrefixHashScanStats)
     stats.path_source = :none
     stats.query_variant = :none
     stats.scan_backend = :none
+    stats.simd_backend = :none
     return stats
 end
 
@@ -309,6 +311,7 @@ generic scan kernel; configurations outside its size envelope use the exact
 legacy engine.
 Reference windows may contain zero through three IUPAC ambiguity symbols, as
 specified by `motif.ambig_max`. Query guides must be unambiguous.
+`simd_backend` accepts `:auto`, `:avx2`, or `:avx512` for raw SIMD scans.
 `output=:detail` writes aligned loci; `output=:counts` writes one count row per
 unique guide without traceback.
 """
@@ -322,6 +325,7 @@ function search_prefixHashScan(
     early_stopping::Vector{Int} = fill(1_000_000, distance + 1),
     query_variant::Symbol = prefix_hash_scan_query_variant(),
     scan_backend::Symbol = :auto,
+    simd_backend::Symbol = :auto,
     bucket_bases::Int = 11,
     scan_threads::Int = Threads.nthreads(),
     stream_chunk_bases::Int = 2 * 1024 * 1024,
@@ -384,11 +388,14 @@ function search_prefixHashScan(
         :streaming_2bit_simd) ||
         error("scan_backend must be :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd, :streaming_fasta_simd, :streaming_fasta_simd_fused, or :streaming_2bit_simd.")
     geometry = resolve_prefix_scan_geometry(motif, distance, hash_len)
+    scan_kind = geometry === nothing ? :none : prefix_scan_kind(geometry)
+    resolved_simd_backend = resolve_prefix_hash_scan_simd_backend(
+        simd_backend; scan_kind)
     supports_fused = geometry !== nothing &&
         resolved_query_variant == :bitmask64
     supports_raw_simd = supports_fused &&
         hash_len == (geometry::PrefixScanGeometry).prefix_bases &&
-        can_use_prefix_hash_scan_simd()
+        resolved_simd_backend != :none
     supports_fasta_simd = supports_raw_simd && dbi.gi.is_fa
     supports_twobit_simd = supports_raw_simd && !dbi.gi.is_fa
     resolved_scan_backend = if scan_backend != :auto
@@ -425,6 +432,13 @@ function search_prefixHashScan(
     if resolved_scan_backend == :streaming_2bit_simd && !supports_twobit_simd
         resolved_scan_backend = :fused_directory
     end
+    uses_raw_simd = resolved_scan_backend in (
+        :fused_fasta_simd, :streaming_fasta_simd,
+        :streaming_fasta_simd_fused, :streaming_2bit_simd)
+    if simd_backend != :auto && !uses_raw_simd
+        error("simd_backend=$(repr(simd_backend)) requires an applicable raw SIMD scan backend.")
+    end
+    effective_simd_backend = uses_raw_simd ? resolved_simd_backend : :none
     resolved_lookup_variant = if lookup_variant == :auto
         resolved_scan_backend in (:streaming_fasta_simd, :streaming_2bit_simd) &&
             prefilter_bits != 0 && bucket_bases == 11 &&
@@ -470,6 +484,7 @@ function search_prefixHashScan(
             scan_geometry = geometry === nothing ? :generic : prefix_scan_kind(geometry),
             reference_format = dbi.gi.is_fa ? :fasta : :twobit,
             scan_backend = resolved_scan_backend,
+            simd_backend = effective_simd_backend,
             lookup_variant = resolved_lookup_variant,
             query_build_backend = resolved_query_build_backend,
             scheduler = scheduler,
@@ -517,6 +532,7 @@ function search_prefixHashScan(
     end
     if stats !== nothing
         stats.scan_backend = resolved_scan_backend
+        stats.simd_backend = effective_simd_backend
         stats.query_build_ns += time_ns() - query_start
     end
 
@@ -561,6 +577,7 @@ function search_prefixHashScan(
                     :bucketed_reuse : :buffered_reuse),
                 stats,
                 early_stop_state,
+                simd_backend = Val(effective_simd_backend),
             )
             merged = early_stop_state === nothing ?
                 zeros(Int, length(guides), distance + 1) :
@@ -613,6 +630,7 @@ function search_prefixHashScan(
                 stats,
                 Val(:chunk),
                 early_stop_state,
+                simd_backend = Val(effective_simd_backend),
             )
             for chrom_idx in eachindex(chrom_chunk_ranges)
                 chrom_name = dbi.gi.chrom[chrom_idx]
@@ -669,7 +687,8 @@ function search_prefixHashScan(
                     end
                     plus_hits, minus_hits = scan_prefix_hits_raw(
                         geometry::PrefixScanGeometry, raw, dbi, query, stats;
-                        scan_threads = scan_threads)
+                        scan_threads = scan_threads,
+                        simd_backend = Val(effective_simd_backend))
                     for (is_antisense, hits) in ((false, plus_hits), (true, minus_hits))
                         if stats !== nothing
                             stats.prefix_hits += length(hits)
@@ -1180,11 +1199,28 @@ function write_prefix_hash_scan_counts(
     return nothing
 end
 
+function with_atomic_prefix_hash_scan_output(
+    f::Function, output_file::String)
+
+    output_dir = dirname(output_file)
+    mkpath(output_dir)
+    temporary, temporary_io = mktemp(output_dir; cleanup = false)
+    close(temporary_io)
+    try
+        f(temporary)
+        Base.Filesystem.rename(temporary, output_file; force = true)
+    finally
+        ispath(temporary) && rm(temporary; force = true)
+    end
+    return nothing
+end
+
 """
     search_prefixHashScan(guides, genome_path, output_file;
         motif="Cas9",
         distance=3, early_stopping=fill(1_000_000, distance + 1),
         scan_threads=Threads.nthreads(),
+        simd_backend=:auto,
         output=:detail,
         verbose=false)
 
@@ -1193,6 +1229,8 @@ custom `Motif` at edit distances 0 through 4. Guide lists larger than 64 are
 searched as sequential 64-guide batches. Candidate guide/PAM windows may
 contain up to `motif.ambig_max` ambiguous IUPAC reference bases, where the
 supported range is zero through three. Query guides must be unambiguous.
+Multi-batch detail output replaces the requested path only after every batch
+completes successfully.
 Set `output=:counts` to write `guide,D0,...,Dk,complete`; counts above an
 early-stopping bucket limit are capped and marked incomplete.
 """
@@ -1204,6 +1242,7 @@ function search_prefixHashScan(
     distance::Int = 3,
     early_stopping::Vector{Int} = fill(1_000_000, distance + 1),
     scan_threads::Int = Threads.nthreads(),
+    simd_backend::Symbol = :auto,
     output::Symbol = :detail,
     verbose::Bool = false)
 
@@ -1242,32 +1281,43 @@ function search_prefixHashScan(
         )
     end
     counts = output == :counts ? zeros(Int, length(guides), distance + 1) : nothing
-    for (batch_idx, first_idx) in enumerate(1:batch_size:length(guides))
-        last_idx = min(first_idx + batch_size - 1, length(guides))
-        result = search_prefixHashScan(
-            guides[first_idx:last_idx],
-            genome_path,
-            motif_,
-            output_file;
-            distance = distance,
-            hash_len = hash_len,
-            early_stopping = early_stopping,
-            query_variant = :bitmask64,
-            scan_backend = :auto,
-            bucket_bases = 11,
-            scan_threads = scan_threads,
-            stream_chunk_bases = 2 * 1024 * 1024,
-            prefilter_bits = 26,
-            query_build_backend = :auto,
-            lookup_variant = :auto,
-            verify_variant = :auto,
-            output = output,
-            verbose = verbose && batch_idx == 1,
-            _append_output = batch_idx > 1,
-            _collect_counts = output == :counts,
-            _paths = prepared_paths,
-        )
-        output == :counts && (counts[first_idx:last_idx, :] .= result)
+    function run_batches(batch_output_file::String)
+        for (batch_idx, first_idx) in enumerate(1:batch_size:length(guides))
+            last_idx = min(first_idx + batch_size - 1, length(guides))
+            result = search_prefixHashScan(
+                guides[first_idx:last_idx],
+                genome_path,
+                motif_,
+                batch_output_file;
+                distance = distance,
+                hash_len = hash_len,
+                early_stopping = early_stopping,
+                query_variant = :bitmask64,
+                scan_backend = :auto,
+                bucket_bases = 11,
+                scan_threads = scan_threads,
+                simd_backend = simd_backend,
+                stream_chunk_bases = 2 * 1024 * 1024,
+                prefilter_bits = 26,
+                query_build_backend = :auto,
+                lookup_variant = :auto,
+                verify_variant = :auto,
+                output = output,
+                verbose = verbose && batch_idx == 1,
+                _append_output = batch_idx > 1,
+                _collect_counts = output == :counts,
+                _paths = prepared_paths,
+            )
+            output == :counts && (counts[first_idx:last_idx, :] .= result)
+        end
+        return nothing
+    end
+    if output == :detail && batch_count > 1
+        with_atomic_prefix_hash_scan_output(output_file) do temporary
+            run_batches(temporary)
+        end
+    else
+        run_batches(output_file)
     end
     output == :counts && write_prefix_hash_scan_counts(
         output_file, guides, counts, early_stopping)

@@ -61,6 +61,11 @@ end
         ]
         parsed = CHOPOFF.parse_commandline(args)
         @test parsed["search"]["database"] === nothing
+        @test parsed["search"]["prefixHashScan"]["simd_backend"] == "auto"
+        forced_simd_args = vcat(args, ["--simd_backend", "avx2"])
+        parsed_forced_simd = CHOPOFF.parse_commandline(forced_simd_args)
+        @test parsed_forced_simd["search"]["prefixHashScan"]["simd_backend"] ==
+            "avx2"
         @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(args)
         @test read(actual) == read(expected)
 
