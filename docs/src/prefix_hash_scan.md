@@ -15,6 +15,8 @@ without a PAM.
 - any number of unambiguous guides, processed in batches of at most 64;
 - any registered motif name or custom `Motif` object;
 - one contiguous PAM block at any position, or no PAM;
+- inferred PAMless searches for homogeneous guide files, qualified for guide
+  lengths 10 through 30;
 - edit distance 0, 1, 2, 3, or 4;
 - 0 through 3 ambiguous IUPAC reference bases per guide/PAM window;
 - a symbolic prefix of up to 16 bases;
@@ -32,9 +34,10 @@ Ambiguous query guides are rejected. `ambig_max=0` remains the default and
 skips candidate windows containing ambiguous reference bases.
 
 Distance 4 is the supported upper-bound and benchmarking mode, not a tuned
-fast path. Its p16 query is substantially larger than d0-d3; a 61-guide Cas9
-query on the development host took 10.8 seconds to build, occupied 1.09 GB, and
-reached 4.51 GB peak process RSS.
+fast path. Its p16 query is substantially larger than d0-d3. As an indication
+of scale, one 61-guide Cas9 query measured on an Intel Xeon Gold 6126 took 10.8
+seconds to build, occupied 1.09 GB, and reached 4.51 GB peak process RSS. Treat
+these as one machine's numbers, not as a specification.
 
 ## API
 
@@ -88,15 +91,12 @@ search_prefixHashScan(
     distance = 3,
 )
 
-# No PAM: an all-X PAM description produces an empty PAM range.
-pamless = Motif(
-    "pamless", repeat("N", 20), repeat("X", 20),
-    true, true, 3, true, 0)
+# No PAM: infer the motif from this run's homogeneous guide length.
 search_prefixHashScan(
     guides,
     "genome.fa",
     "pamless_offtargets.csv";
-    motif = pamless,
+    pamless = true,
     distance = 3,
 )
 
@@ -116,10 +116,45 @@ search_prefixHashScan(
 )
 ```
 
-The 25-base example resolves to the typed generic fast engine, not `:legacy`.
-Only 20- and 21-base guides currently have shipped symbolic path assets. Other
-eligible lengths generate paths once before guide batching and then use the
-same optimized scanner.
+The 25-base PAM example resolves to the typed generic fast engine, not
+`:legacy`.
+
+## PAMless searches
+
+`pamless=true` constructs an all-`N` motif with an empty PAM from the input
+guide length. Every guide in one invocation must have the same length. Separate
+invocations may use different lengths; lengths 10 through 30 are covered by
+the qualification tests at edit distances 0 through 4. Other lengths are not
+artificially rejected when the normal requirement `guide length > distance`
+holds.
+
+The inferred motif searches both reference strands and retains CHOPOFF's
+existing `extends5=true` alignment and coordinate convention. Query guides
+must be unambiguous. Set `ambig_max=0:3` to control ambiguous reference bases:
+
+```julia
+guide15 = LongDNA{4}.(["ACGTACGTACGTACG"])
+search_prefixHashScan(
+    guide15,
+    "genome.2bit",
+    "pamless_15nt.csv";
+    pamless = true,
+    distance = 3,
+    ambig_max = 1,
+)
+```
+
+PAMless query construction remains symbolic. Instead of generating a complete
+edit graph for every guide length, prefixHashScan loads the existing canonical
+20-base symbolic paths, truncates them to
+`min(guide length - distance, 16)`, deduplicates packed paths, and remaps their
+guide-position tokens to the current length. This produces the same prefix
+hash set while avoiding the old per-length template-generation cost. Scanner
+selection is unchanged: eligible 16-base geometries use the typed SIMD engine;
+shorter prefixes use the exact legacy backend.
+
+For explicit strand selection, extension direction, or constrained positions
+inside a PAMless motif, construct a custom all-`X` `Motif` as before.
 
 `output=:detail` uses the normal CHOPOFF columns: `guide`, `alignment_guide`,
 `alignment_reference`, `distance`, `chromosome`, `start`, and `strand`.
@@ -200,6 +235,17 @@ CHOPOFF search --distance 4 \
   --simd_backend auto
 ```
 
+For a PAMless search, `--no_pam` infers the motif from the homogeneous guide
+file. It cannot be combined with `--motif`, `--fwd_motif`, `--fwd_pam`, strand,
+extension, or custom-name options:
+
+```bash
+CHOPOFF search --distance 3 \
+  --guides guides_15nt.txt \
+  --output pamless_15nt.csv \
+  prefixHashScan --genome genome.2bit --no_pam --ambig_max 1
+```
+
 For a custom motif, `--fwd_motif` marks guide bases and PAM positions with
 `N` and `X`, while `--fwd_pam` marks guide positions with `X` and supplies the
 IUPAC PAM sequence. The strings must have equal length. This example searches
@@ -217,7 +263,7 @@ CHOPOFF search --distance 3 \
 ```
 
 The non-`X` block in `--fwd_pam` may precede, follow, or occur inside the
-guide. An all-`X` `--fwd_pam` defines a PAMless motif. Use `--not_forward` or
+guide. An all-`X` `--fwd_pam` defines a custom PAMless motif. Use `--not_forward` or
 `--not_reverse` to restrict strands and `--extend3` for 3'-direction
 alignment extension. At least one strand must remain enabled. Registered
 `--motif` selection cannot be combined with these custom options, and the
@@ -258,9 +304,10 @@ AVX-512 on this CPU family; generic geometries retain AVX2.
 
 ## Cas9 ambiguity benchmark
 
-The following development-host measurement used GRCh38, the 61 standard Cas9
-guides in `test/local_human/data/guides_for_tests.txt`, distance 3, eight Julia
-threads, two warmups, and 11 interleaved timed repetitions. Times are medians;
+The following measurement used an Intel Xeon Gold 6126 with GRCh38, 61 standard
+Cas9 guides, distance 3, eight Julia threads, two warmups, and 11 interleaved
+timed repetitions. The guide list and GRCh38 live under the gitignored
+`test/local_human/`, so these runs are not reproducible from a clean clone. Times are medians;
 relative overhead is more portable than the absolute seconds.
 
 | `ambig_max` | Prepared scan | Scan overhead | End to end | End-to-end overhead | Rows |
@@ -340,6 +387,6 @@ frequency, query hits, verification, I/O, and output volume.
 
 The three-argument method defaults to Cas9/distance 3 and accepts any registered
 motif name or custom `Motif` plus `distance=0:4`. Geometry dispatch happens
-before the canonical or typed generic hot loop. Symbolic path assets are reused
-by guide length, distance, and prefix length; scanner specialization remains
-independent of path generation.
+before the canonical or typed generic hot loop. PAMless searches reuse and
+remap canonical symbolic paths by distance and prefix length; scanner
+specialization remains independent of query-template construction.

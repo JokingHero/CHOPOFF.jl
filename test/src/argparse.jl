@@ -167,6 +167,35 @@ end
             generic_args)
         @test read(generic_actual) == read(generic_expected)
 
+        pamless_guide = "ACGTACGTAC"
+        pamless_guides = joinpath(tdir, "pamless_guides.txt")
+        pamless_genome = joinpath(tdir, "pamless.fa")
+        pamless_expected = joinpath(tdir, "pamless_expected.csv")
+        pamless_actual = joinpath(tdir, "pamless_actual.csv")
+        write(pamless_guides, pamless_guide * "\n")
+        write_argparse_fasta(
+            pamless_genome,
+            repeat("A", 40) * pamless_guide * repeat("C", 40))
+        search_prefixHashScan(
+            [LongDNA{4}(pamless_guide)], pamless_genome,
+            pamless_expected; pamless = true, distance = 0)
+        pamless_args = [
+            "search", "--distance", "0", "--guides", pamless_guides,
+            "--output", pamless_actual, "prefixHashScan",
+            "--genome", pamless_genome, "--no_pam",
+        ]
+        parsed_pamless = CHOPOFF.parse_commandline(pamless_args)
+        @test parsed_pamless["search"]["prefixHashScan"]["no_pam"]
+        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+            pamless_args)
+        @test read(pamless_actual) == read(pamless_expected)
+        @test_throws ErrorException CHOPOFF.main(vcat(
+            pamless_args, ["--motif", "Cas9"]))
+        @test_throws ErrorException CHOPOFF.main(vcat(
+            pamless_args,
+            ["--fwd_motif", repeat("N", 10),
+             "--fwd_pam", repeat("X", 10)]))
+
         @testset "custom prefixHashScan motifs" begin
             guide20 = "ACGTACGTACGTACGTACGT"
             guide21 = "TGCATGCATGCATGCATGCAT"

@@ -6,6 +6,7 @@ using TwoBit
 using CSV
 using DataFrames
 using Logging
+using Random
 
 const PHS_CORE_COLS = [:guide, :distance, :chromosome, :start, :strand]
 
@@ -60,6 +61,7 @@ function check_prefix_helper_matches_materialized(tdir::String, seq::String, mot
     write_phs_fasta(genome, "chr1", seq)
     chrom_seq = LongDNA{4}(seq)
     dbi = DBInfo(genome, "prefix_hash_scan_helper", motif)
+    checked = 0
     for is_antisense in (false, true)
         positions = CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
         isempty(positions) && continue
@@ -67,7 +69,11 @@ function check_prefix_helper_matches_materialized(tdir::String, seq::String, mot
         prefix = CHOPOFF.normalized_candidate_prefix(chrom_seq, candidate_range, dbi, is_antisense, hash_len)
         ot, _ = CHOPOFF.materialize_normalized_candidate(chrom_seq, candidate_range, dbi, is_antisense)
         @test prefix == ot[1:hash_len]
+        checked += 1
     end
+    # Without this the testset passes with zero assertions when findguides
+    # returns nothing for both strands.
+    @test checked > 0
 end
 
 
@@ -95,6 +101,44 @@ end
 
 function phs_hash_type(hash_len::Int)
     return CHOPOFF.smallestutype(parse(UInt, repeat("1", hash_len * 2); base = 2))
+end
+
+function direct_prefix_hashes(
+    guide::LongDNA{4}, hash_len::Int, distance::Int)
+
+    codes = UInt8[
+        base == DNA_A ? 0 : base == DNA_C ? 1 : base == DNA_G ? 2 : 3
+        for base in guide]
+    max_guide = min(length(codes), hash_len + distance)
+    min_guide = max(0, hash_len - distance)
+    hashes = Set{UInt32}()
+
+    function visit(candidate_len::Int, hash::UInt32, row::Vector{Int})
+        if candidate_len == hash_len
+            minimum(@view row[(min_guide + 1):(max_guide + 1)]) <= distance &&
+                push!(hashes, hash)
+            return
+        end
+        for code in UInt8(0):UInt8(3)
+            next_row = similar(row)
+            next_row[1] = candidate_len + 1
+            for guide_idx in 1:max_guide
+                next_row[guide_idx + 1] = min(
+                    row[guide_idx + 1] + 1,
+                    next_row[guide_idx] + 1,
+                    row[guide_idx] + (code == codes[guide_idx] ? 0 : 1),
+                )
+            end
+            minimum(next_row) <= distance && visit(
+                candidate_len + 1,
+                (hash << 2) | UInt32(code),
+                next_row,
+            )
+        end
+    end
+
+    visit(0, UInt32(0), collect(0:max_guide))
+    return hashes
 end
 
 function write_phs_fasta(path::String, name::String, seq::String)
@@ -305,6 +349,151 @@ end
         end
         @test CHOPOFF.resolve_prefix_scan_geometry(
             Motif("Cas9"; distance = 5), 5, 16) === nothing
+    end
+
+    @testset "PAMless canonical symbolic paths" begin
+        for guide_len in 10:30
+            motif = CHOPOFF.prefix_hash_scan_pamless_motif(guide_len, 0)
+            @test isempty(motif.pam_loci_fwd)
+            @test isempty(motif.pam_loci_rve)
+            @test length_noPAM(motif) == guide_len
+            hash_len = min(guide_len, 16)
+            paths, source = CHOPOFF.load_prefix_hash_scan_paths(
+                motif, 0, hash_len)
+            guide = LongDNA{4}(join(
+                ("ACGT"[mod1(idx * 3 + guide_len, 4)] for idx in 1:guide_len)))
+            observed = Set(UInt32.(CHOPOFF.prefix_hash_scan_guide_hashes(
+                paths, guide, UInt32; query_variant = :columnwise)))
+            @test source == :canonical_remap
+            @test observed == direct_prefix_hashes(guide, hash_len, 0)
+        end
+
+        for (guide_len, distance) in (
+                (10, 3), (10, 4), (15, 2), (15, 4),
+                (19, 3), (20, 4), (21, 3), (30, 2), (30, 4))
+            motif = CHOPOFF.prefix_hash_scan_pamless_motif(
+                guide_len, distance)
+            hash_len = min(guide_len - distance, 16)
+            stats = CHOPOFF.PrefixHashScanStats()
+            paths, source = CHOPOFF.load_prefix_hash_scan_paths(
+                motif, distance, hash_len, stats)
+            guide = LongDNA{4}(join(
+                ("ACGT"[mod1(idx * 3 + guide_len, 4)] for idx in 1:guide_len)))
+            observed = Set(UInt32.(CHOPOFF.prefix_hash_scan_guide_hashes(
+                paths, guide, UInt32; query_variant = :columnwise)))
+            @test source == :canonical_remap
+            @test stats.path_source == :canonical_remap
+            @test observed == direct_prefix_hashes(
+                guide, hash_len, distance)
+        end
+    end
+
+    @testset "public PAMless API" begin
+        for guide_len in (9, 10, 30, 31)
+            guide = LongDNA{4}(join(
+                ("ACGT"[mod1(idx * 3 + guide_len, 4)] for idx in 1:guide_len)))
+            site = string(guide)
+            sequence = repeat("A", 40) * site * repeat("C", 40) *
+                string(reverse_complement(guide)) * repeat("G", 40)
+            genome = joinpath(tdir, "pamless_public_$guide_len.fa")
+            inferred = joinpath(tdir, "pamless_inferred_$guide_len.csv")
+            explicit = joinpath(tdir, "pamless_explicit_$guide_len.csv")
+            write_phs_fasta(genome, "chr1", sequence)
+            search_prefixHashScan(
+                [guide], genome, inferred; pamless = true, distance = 0)
+            search_prefixHashScan(
+                [guide], genome, explicit;
+                motif = CHOPOFF.prefix_hash_scan_pamless_motif(guide_len, 0),
+                distance = 0)
+            @test read(inferred) == read(explicit)
+            @test nrow(DataFrame(CSV.File(inferred))) > 0
+        end
+
+        guide10 = LongDNA{4}("ACGTACGTAC")
+        genome = joinpath(tdir, "pamless_validation.fa")
+        output = joinpath(tdir, "pamless_validation.csv")
+        write_phs_fasta(genome, "chr1", repeat("A", 40) * string(guide10) * repeat("C", 40))
+        @test_throws ErrorException search_prefixHashScan(
+            [guide10, LongDNA{4}("ACGTACGTACA")], genome, output;
+            pamless = true)
+        @test_throws ErrorException search_prefixHashScan(
+            [guide10], genome, output; pamless = true, motif = "Cas9")
+        @test_throws ErrorException search_prefixHashScan(
+            [LongDNA{4}("ACGT")], genome, output;
+            pamless = true, distance = 4)
+        @test_throws ErrorException search_prefixHashScan(
+            [guide10], genome, output; pamless = true, ambig_max = 4)
+    end
+
+    @testset "randomized PAMless distance 1 and 2" begin
+        rng = MersenneTwister(20260828)
+        alphabet = collect("ACGT")
+        separator(guide_len) = repeat("N", guide_len + 4)
+        different_base(base) = rand(rng, filter(!=(base), alphabet))
+
+        for guide_len in (18, 19, 26, 29)
+            guide_string = String(rand(rng, alphabet, guide_len))
+            guide = LongDNA{4}(guide_string)
+            sub_positions = (cld(guide_len, 3), cld(2 * guide_len, 3))
+
+            sub1 = collect(guide_string)
+            sub1[sub_positions[1]] = different_base(sub1[sub_positions[1]])
+            sub2 = copy(sub1)
+            sub2[sub_positions[2]] = different_base(sub2[sub_positions[2]])
+
+            insert1 = guide_string[1:sub_positions[1]] *
+                string(rand(rng, alphabet)) *
+                guide_string[(sub_positions[1] + 1):end]
+            insert2 = insert1[1:(sub_positions[2] + 1)] *
+                string(rand(rng, alphabet)) *
+                insert1[(sub_positions[2] + 2):end]
+
+            keep1 = setdiff(1:guide_len, sub_positions[1])
+            keep2 = setdiff(keep1, sub_positions[2])
+            delete1 = string(rand(rng, alphabet)) * guide_string[keep1]
+            delete2 = String(rand(rng, alphabet, 2)) * guide_string[keep2]
+
+            forward_sites = String[
+                guide_string, String(sub1), String(sub2),
+                insert1, insert2, delete1, delete2,
+            ]
+            reverse_sites = string.(reverse_complement.(LongDNA{4}.(forward_sites)))
+            spacer = separator(guide_len)
+            sequence = spacer * join(vcat(forward_sites, reverse_sites), spacer) * spacer
+            genome = joinpath(tdir, "pamless_random_$guide_len.fa")
+            write_phs_fasta(genome, "chr1", sequence)
+
+            for distance in 1:2
+                public_output = joinpath(
+                    tdir, "pamless_random_$(guide_len)_d$(distance).csv")
+                brute_output = joinpath(
+                    tdir, "pamless_random_$(guide_len)_d$(distance)_brute.csv")
+                search_prefixHashScan(
+                    [guide], genome, public_output;
+                    pamless = true, distance = distance,
+                    early_stopping = fill(100, distance + 1))
+                motif = CHOPOFF.prefix_hash_scan_pamless_motif(
+                    guide_len, distance)
+                CHOPOFF.search_prefixHashScan(
+                    [guide], genome, motif, brute_output;
+                    distance = distance,
+                    hash_len = min(guide_len - distance, 16),
+                    early_stopping = fill(100, distance + 1),
+                    query_variant = :bruteforce,
+                    scan_backend = :legacy)
+
+                @test phs_core(public_output) == phs_core(brute_output)
+                detail = DataFrame(CSV.File(public_output))
+                @test all(detail.distance .<= distance)
+                @test Set(string.(detail.strand)) == Set(["+", "-"])
+                @test Set(0:distance) ⊆ Set(Int.(detail.distance))
+                for observed_distance in 1:distance
+                    at_distance = detail[detail.distance .== observed_distance, :]
+                    @test any(occursin.("-", string.(at_distance.alignment_guide)))
+                    @test any(occursin.("-", string.(at_distance.alignment_reference)))
+                end
+            end
+        end
     end
 
     @testset "generic motif geometries and backends" begin
@@ -1205,6 +1394,10 @@ end
         chrom_seq = LongDNA{4}(seq)
         dbi = DBInfo(genome, "prefix_hash_scan_direct_hash", motif)
         @test CHOPOFF.is_cas9_prefix_hash_candidate(dbi, hash_len)
+        # Both strands must actually yield candidates, otherwise the loop below
+        # runs zero times and the testset passes without asserting anything.
+        @test !isempty(CHOPOFF.findguides(dbi, chrom_seq, false))
+        @test !isempty(CHOPOFF.findguides(dbi, chrom_seq, true))
         for is_antisense in (false, true)
             positions = CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
             isempty(positions) && continue
@@ -1278,7 +1471,7 @@ end
                 masks[hash] = get(masks, hash, UInt64(0)) | UInt64(1)
             end
         end
-        query = CHOPOFF.PrefixHashScanBitmaskQuery(masks, 1)
+        query = CHOPOFF.PrefixHashScanBitmaskQuery(masks)
         directory = CHOPOFF.build_prefix_hash_scan_directory(query, hash_len, 8)
         expected = CHOPOFF.scan_cas9_prefix_hits(
             chrom_seq, dbi, directory, hash_len; scan_threads = 1)
@@ -1390,7 +1583,7 @@ end
             end
         end
 
-        query = CHOPOFF.PrefixHashScanBitmaskQuery(query_masks, 1)
+        query = CHOPOFF.PrefixHashScanBitmaskQuery(query_masks)
         plus_hits, minus_hits = CHOPOFF.scan_cas9_prefix_hits(chrom_seq, dbi, query, hash_len)
         @test [(hit.start, hit.mask) for hit in plus_hits] == expected[1]
         @test [(hit.start, hit.mask) for hit in minus_hits] == expected[2]
@@ -1493,7 +1686,7 @@ end
         ]
 
         stream_query = CHOPOFF.PrefixHashScanBitmaskQuery(
-            Dict(hash => UInt64(1) for hash in keys(query_masks)), 1)
+            Dict(hash => UInt64(1) for hash in keys(query_masks)))
         stream_directory = CHOPOFF.build_prefix_hash_scan_directory(
             stream_query, hash_len, 8)
         reference_lengths = FASTA.Index(fused_genome * ".fai").lengths
@@ -1828,4 +2021,45 @@ end
         @test any(occursin.("-", df.alignment_reference))
         @test any(occursin.("-", df.alignment_guide))
     end
+
+    @testset "N-run bounds parity with ambig_max > 0" begin
+        # CHOPOFF's convention across every engine: a candidate window may
+        # reach at most `motif.distance` bases into a terminal N run, and no
+        # further. With ambig_max > 0 an unbounded window matches promiscuously
+        # (N is inclusive) and yields false positives in unassembled sequence.
+        # The chunked scanner cannot see a whole chromosome, so it takes the
+        # terminal-N positions from prefix_hash_scan_known_bounds; this guards
+        # that it stays in step with the whole-chromosome kernels.
+        rng = MersenneTwister(20260829)
+        guide = "ACGTACGTACGTACGTACGT"
+        nbounds_dir = joinpath(tdir, "nbounds")
+        mkpath(nbounds_dir)
+        for nrun in (3, 5, 8)
+            body = String(rand(rng, collect("ACGT"), 60))
+            seq = "N"^nrun * guide * "AGG" * body * guide * "TGG" * "N"^nrun
+            fa = joinpath(nbounds_dir, "n$(nrun).fa")
+            open(fa, "w") do io
+                println(io, ">chr1")
+                println(io, seq)
+            end
+            open(fa * ".fai", "w") do io
+                println(io, "chr1\t$(length(seq))\t6\t$(length(seq))\t$(length(seq) + 1)")
+            end
+            for ambig in 0:3
+                outs = String[]
+                for backend in (:legacy, :streaming_fasta_simd)
+                    out = joinpath(
+                        nbounds_dir, "n$(nrun)_a$(ambig)_$(backend).csv")
+                    CHOPOFF.search_prefixHashScan(
+                        [LongDNA{4}(guide)], fa,
+                        Motif("Cas9"; distance = 2, ambig_max = ambig), out;
+                        distance = 2, early_stopping = fill(1000, 3),
+                        scan_backend = backend, stream_chunk_bases = 64)
+                    push!(outs, read(out, String))
+                end
+                @test outs[1] == outs[2]
+            end
+        end
+    end
+
 end

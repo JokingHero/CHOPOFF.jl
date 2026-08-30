@@ -172,7 +172,7 @@ function scan_cas9_prefix_hits_raw_range_impl!(
     minus_first::Int,
     minus_last::Int,
     ::Val{Bucketed},
-    simd_backend::Val = Val(:avx2)) where Bucketed
+    simd_backend::Val = default_prefix_hash_scan_simd_backend()) where Bucketed
 
     empty!(plus_hits)
     empty!(minus_hits)
@@ -290,7 +290,7 @@ function scan_cas9_prefix_hits_raw_range!(
     plus_last::Int,
     minus_first::Int,
     minus_last::Int,
-    simd_backend::Val = Val(:avx2))
+    simd_backend::Val = default_prefix_hash_scan_simd_backend())
 
     return scan_cas9_prefix_hits_raw_range_impl!(
         plus_hits, minus_hits, nothing, nothing, nothing, nothing, nothing,
@@ -314,7 +314,7 @@ function scan_cas9_prefix_hits_raw_range_bucketed!(
     plus_last::Int,
     minus_first::Int,
     minus_last::Int,
-    simd_backend::Val = Val(:avx2))
+    simd_backend::Val = default_prefix_hash_scan_simd_backend())
 
     return scan_cas9_prefix_hits_raw_range_impl!(
         plus_hits, minus_hits, plus_candidates, minus_candidates,
@@ -332,7 +332,7 @@ function scan_cas9_prefix_hits_raw_range(
     plus_last::Int,
     minus_first::Int,
     minus_last::Int,
-    simd_backend::Val = Val(:avx2))
+    simd_backend::Val = default_prefix_hash_scan_simd_backend())
 
     plus_hits = PrefixHashScanHit[]
     minus_hits = PrefixHashScanHit[]
@@ -348,7 +348,7 @@ function scan_cas9_prefix_hits_raw(
     query,
     stats::Union{Nothing, PrefixHashScanStats} = nothing;
     scan_threads::Int = Threads.nthreads(),
-    simd_backend::Val = Val(:avx2))
+    simd_backend::Val = default_prefix_hash_scan_simd_backend())
 
     bounds = cas9_prefix_scan_bounds_raw(raw, dbi)
     bounds === nothing && return PrefixHashScanHit[], PrefixHashScanHit[]
@@ -458,7 +458,7 @@ function scan_verify_cas9_prefix_raw_range!(
     myers_profiles::Vector{PrefixHashScanMyersProfile},
     distance::Int,
     stats::S,
-    simd_backend::Val = Val(:avx2)) where {S <: Union{Nothing, PrefixHashScanStats}}
+    simd_backend::Val = default_prefix_hash_scan_simd_backend()) where {S <: Union{Nothing, PrefixHashScanStats}}
 
     motif_candidates = 0
     candidate_first > candidate_last && return plus, minus

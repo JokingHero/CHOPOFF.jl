@@ -166,25 +166,20 @@ qualification must run the benchmark on real hardware; `auto` must resolve to
 
 ## Human Profiling
 
-Human-scale SASSY profiling is kept local under `test/local_human/`. Profiling
-packages are installed outside this project in:
+Human-scale SASSY profiling is kept local under `test/local_human/`, which is
+gitignored. Profiling packages are installed in a separate Julia environment
+outside this project, so CHOPOFF's `Project.toml` and `Manifest.toml` are not
+modified. The tools used are `PProf`, `StatProfilerHTML`, `BenchmarkTools` and
+`TimerOutputs`, loaded by `test/local_human/profile_human_sassy.jl`.
 
-```bash
-/home/rstudio/livemount/kornel_dev/temp_upload/profiletools
-```
-
-Installed tools: `PProf`, `StatProfilerHTML`, `BenchmarkTools`, `TimerOutputs`.
-They are loaded by `test/local_human/profile_human_sassy.jl`; CHOPOFF's
-`Project.toml` and `Manifest.toml` are not modified.
-
-Typical CPU profile:
+Typical CPU profile, with `$PROFILE_DEPOT` pointing at that environment:
 
 ```bash
 CHOPOFF_PROFILE_MODE=cpu \
 CHOPOFF_PROFILE_BACKEND=auto \
 JULIA_NUM_THREADS=8 \
-JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
-/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
+JULIA_DEPOT_PATH="$PROFILE_DEPOT": \
+julia --project=. \
   test/local_human/profile_human_sassy.jl
 ```
 

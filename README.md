@@ -88,6 +88,13 @@ CHOPOFF search --distance 3 \
   prefixHashScan --genome "$EXAMPLE_GENOME" --name 20N_NGA \
   --fwd_motif NNNNNNNNNNNNNNNNNNNNXXX \
   --fwd_pam XXXXXXXXXXXXXXXXXXXXNGA --not_reverse
+
+# PAMless search; all guides in this file must have one common length.
+# Lengths 10 through 30 are qualified for edit distances 0 through 4.
+CHOPOFF search --distance 3 \
+  --guides guides_15nt.txt \
+  --output "$(mktemp --directory)/prefixHashScan_pamless.csv" \
+  prefixHashScan --genome "$EXAMPLE_GENOME" --no_pam
 ```
 
 See the [prefixHashScan documentation](./docs/src/prefix_hash_scan.md)

@@ -1,22 +1,94 @@
 # Query construction and compact lookup directory.
 
-function is_precomputed_cas9_prefix_paths(motif::Motif, hash_len::Int)
-    cas9 = Motif("Cas9")
-    return hash_len <= 16 &&
-        motif.distance <= 4 &&
-        length_noPAM(motif) == length_noPAM(cas9) &&
-        motif.extends5 == cas9.extends5 &&
-        motif.pam_loci_fwd == cas9.pam_loci_fwd &&
-        motif.pam_loci_rve == cas9.pam_loci_rve
+const PREFIX_HASH_SCAN_CANONICAL_GUIDE_BASES = 20
+const PREFIX_HASH_SCAN_CANONICAL_TOKEN_BITS = 7
+
+struct PrefixHashScanCanonicalPaths <: AbstractMatrix{Int}
+    keys::Vector{UInt128}
+    guide_bases::Int
+    hash_len::Int
 end
 
-function dedup_prefix_paths(paths, distances, hash_len::Int, distance::Int)
-    paths = paths[:, 1:hash_len]
-    not_dups = map(!, BitVector(nonunique(DataFrame(paths, :auto))))
-    not_over_dist = BitVector(distances .<= distance)
-    keep = not_dups .& not_over_dist
-    paths = paths[keep, :]
-    return convert.(smallestutype(maximum(paths)), paths)
+Base.size(paths::PrefixHashScanCanonicalPaths) =
+    (length(paths.keys), paths.hash_len)
+Base.IndexStyle(::Type{PrefixHashScanCanonicalPaths}) = IndexCartesian()
+
+@inline function Base.getindex(
+    paths::PrefixHashScanCanonicalPaths, row::Int, col::Int)
+
+    @boundscheck checkbounds(paths, row, col)
+    shift = PREFIX_HASH_SCAN_CANONICAL_TOKEN_BITS * (paths.hash_len - col)
+    token = Int((@inbounds paths.keys[row] >> shift) & UInt128(0x7f))
+    source_bases = PREFIX_HASH_SCAN_CANONICAL_GUIDE_BASES
+    if token <= 4 * source_bases
+        band, offset = divrem(token - 1, source_bases)
+        return band * paths.guide_bases + offset + 1
+    end
+    return 4 * paths.guide_bases + token - 4 * source_bases
+end
+
+@inline is_pamless_prefix_scan_motif(motif::Motif) =
+    isempty(motif.pam_loci_fwd) && isempty(motif.pam_loci_rve)
+
+function pack_prefix_hash_scan_canonical_paths(paths, hash_len::Int)
+    keys = Vector{UInt128}(undef, size(paths, 1))
+    @inbounds for row in axes(paths, 1)
+        key = UInt128(0)
+        for col in 1:hash_len
+            key = (key << PREFIX_HASH_SCAN_CANONICAL_TOKEN_BITS) |
+                UInt128(paths[row, col])
+        end
+        keys[row] = key
+    end
+    sort!(keys)
+    unique!(keys)
+    return keys
+end
+
+function load_pamless_prefix_hash_scan_paths(
+    motif::Motif, distance::Int, hash_len::Int)
+
+    guide_bases = length_noPAM(motif)
+    hash_len + distance <= min(guide_bases, PREFIX_HASH_SCAN_CANONICAL_GUIDE_BASES) ||
+        return nothing
+    canonical = Motif("Cas9"; distance = distance)
+    precomputed = load_precomputed_prefix_paths(
+        canonical, distance, 16; need_distances = false)
+    precomputed === nothing && return nothing
+    paths, _, _ = precomputed
+    keys = pack_prefix_hash_scan_canonical_paths(paths, hash_len)
+    return PrefixHashScanCanonicalPaths(keys, guide_bases, hash_len)
+end
+
+# Symbolic paths depend only on the motif geometry, the distance and the prefix
+# length, never on the guides, so repeated searches can share one copy. Loading
+# is expensive: the distance-4 Cas9 asset deserializes 131 MB into an 8.2M x 16
+# matrix, and the test suite alone used to redo that ~20 times per run. Callers
+# treat the result as read-only.
+#
+# `Motif` has no structural `==`, so key on the fields that actually determine
+# the paths rather than on the motif object.
+const PREFIX_HASH_SCAN_PATHS_CACHE = Dict{Tuple{
+    String, String, String, UnitRange{Int}, UnitRange{Int},
+    Int, Bool, Int, Int}, Tuple{Any, Symbol}}()
+const PREFIX_HASH_SCAN_PATHS_CACHE_LOCK = ReentrantLock()
+
+prefix_hash_scan_paths_cache_key(motif::Motif, distance::Int, hash_len::Int) = (
+    motif.alias, string(motif.fwd), string(motif.rve),
+    motif.pam_loci_fwd, motif.pam_loci_rve,
+    motif.distance, motif.extends5, distance, hash_len)
+
+"""
+    empty_prefix_hash_scan_paths_cache!()
+
+Drop the cached symbolic prefix paths. The distance-4 assets are large, so this
+releases a few hundred MB held by earlier searches.
+"""
+function empty_prefix_hash_scan_paths_cache!()
+    lock(PREFIX_HASH_SCAN_PATHS_CACHE_LOCK) do
+        empty!(PREFIX_HASH_SCAN_PATHS_CACHE)
+    end
+    return nothing
 end
 
 function load_prefix_hash_scan_paths(
@@ -26,13 +98,34 @@ function load_prefix_hash_scan_paths(
     stats::Union{Nothing, PrefixHashScanStats} = nothing)
 
     load_start = prefix_hash_scan_timer(stats)
+    cache_key = prefix_hash_scan_paths_cache_key(motif, distance, hash_len)
+    cached = lock(PREFIX_HASH_SCAN_PATHS_CACHE_LOCK) do
+        get(PREFIX_HASH_SCAN_PATHS_CACHE, cache_key, nothing)
+    end
+    if cached !== nothing
+        paths, source = cached
+        if stats !== nothing
+            stats.path_rows = size(paths, 1)
+            stats.path_source = source
+            stats.path_load_ns += time_ns() - load_start
+        end
+        return paths, source
+    end
     source = :generated
     paths = nothing
 
-    precomputed = load_precomputed_prefix_paths(motif, distance, hash_len; need_distances = false)
-    if precomputed !== nothing
-        paths, _, _ = precomputed
-        source = :precomputed
+    if is_pamless_prefix_scan_motif(motif)
+        paths = load_pamless_prefix_hash_scan_paths(motif, distance, hash_len)
+        paths === nothing || (source = :canonical_remap)
+    end
+
+    if paths === nothing
+        precomputed = load_precomputed_prefix_paths(
+            motif, distance, hash_len; need_distances = false)
+        if precomputed !== nothing
+            paths, _, _ = precomputed
+            source = :precomputed
+        end
     end
 
     if paths === nothing
@@ -43,6 +136,9 @@ function load_prefix_hash_scan_paths(
         paths = convert.(smallestutype(maximum(paths)), paths)
     end
 
+    lock(PREFIX_HASH_SCAN_PATHS_CACHE_LOCK) do
+        PREFIX_HASH_SCAN_PATHS_CACHE[cache_key] = (paths, source)
+    end
     if stats !== nothing
         stats.path_rows = size(paths, 1)
         stats.path_source = source
@@ -168,7 +264,7 @@ function build_prefix_hash_scan_map_from_paths(
     end
 
     if variant == :bitmask64
-        query = PrefixHashScanBitmaskQuery(Dict{hash_type, UInt64}(), length(guides_))
+        query = PrefixHashScanBitmaskQuery(Dict{hash_type, UInt64}())
     else
         query = Dict{hash_type, Vector{Int}}()
     end
@@ -302,10 +398,6 @@ end
 
 function is_cas9_prefix_hash_candidate(dbi::DBInfo, hash_len::Int)
     return hash_len <= 16 && matches_prefix_scan_motif(dbi.motif, "Cas9")
-end
-
-function is_cas12a_prefix_hash_candidate(dbi::DBInfo, hash_len::Int)
-    return hash_len == 16 && matches_prefix_scan_motif(dbi.motif, "Cas12a")
 end
 
 function candidate_prefix_hashes_direct_cas9(

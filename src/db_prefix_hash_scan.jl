@@ -1,5 +1,3 @@
-using SIMD
-
 struct PrefixScanGeometry{Kind, M}
     guide_bases::Int
     pam_bases::Int
@@ -34,7 +32,7 @@ function resolve_prefix_scan_geometry(
 
     distance in 0:4 || return nothing
     1 <= hash_len <= 16 || return nothing
-    matches_prefix_scan_motif(motif, "Cas9") &&
+    hash_len == 16 && matches_prefix_scan_motif(motif, "Cas9") &&
         return PrefixScanGeometry{:cas9}(20, 3, 16, distance)
     hash_len == 16 && matches_prefix_scan_motif(motif, "Cas12a") &&
         return PrefixScanGeometry{:cas12a}(21, 4, 16, distance)
@@ -88,7 +86,11 @@ mutable struct PrefixHashScanStats
     simd_backend::Symbol
 end
 
-PrefixHashScanStats() = PrefixHashScanStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, :none, :none, :none, :none)
+# Built from the field types rather than a positional list of 34 zeros and four
+# symbols, so adding a counter to the struct needs no edit here or in reset!.
+PrefixHashScanStats() = PrefixHashScanStats(
+    (T === Symbol ? :none : zero(T)
+     for T in fieldtypes(PrefixHashScanStats))...)
 
 @inline prefix_hash_scan_timer(::Nothing) = UInt64(0)
 @inline prefix_hash_scan_timer(::PrefixHashScanStats) = time_ns()
@@ -96,50 +98,16 @@ PrefixHashScanStats() = PrefixHashScanStats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
 @inline prefix_hash_scan_worker_stats(::PrefixHashScanStats) = PrefixHashScanStats()
 
 function reset!(stats::PrefixHashScanStats)
-    stats.motif_candidates = 0
-    stats.ambiguous_prefixes = 0
-    stats.prefix_hits = 0
-    stats.guide_pairs = 0
-    stats.alignment_calls = 0
-    stats.distance_calls = 0
-    stats.traceback_calls = 0
-    stats.emitted_rows = 0
-    stats.path_rows = 0
-    stats.query_hashes = 0
-    stats.bruteforce_guide_pairs = 0
-    stats.metadata_ns = 0
-    stats.query_build_ns = 0
-    stats.path_load_ns = 0
-    stats.query_hash_ns = 0
-    stats.query_format_ns = 0
-    stats.query_fold_ns = 0
-    stats.query_dedup_ns = 0
-    stats.query_insert_ns = 0
-    stats.query_lookup_ns = 0
-    stats.chrom_load_ns = 0
-    stats.record_io_ns = 0
-    stats.sequence_convert_ns = 0
-    stats.findguides_ns = 0
-    stats.candidate_prefix_ns = 0
-    stats.candidate_hash_ns = 0
-    stats.candidate_materialize_ns = 0
-    stats.align_ns = 0
-    stats.emit_ns = 0
-    stats.scan_ns = 0
-    stats.verify_ns = 0
-    stats.work_items_total = 0
-    stats.work_items_claimed = 0
-    stats.retired_guides = 0
-    stats.path_source = :none
-    stats.query_variant = :none
-    stats.scan_backend = :none
-    stats.simd_backend = :none
+    for (name, T) in zip(
+            fieldnames(PrefixHashScanStats),
+            fieldtypes(PrefixHashScanStats))
+        setfield!(stats, name, T === Symbol ? :none : zero(T))
+    end
     return stats
 end
 
 struct PrefixHashScanBitmaskQuery{H <: Unsigned}
     masks::Dict{H, UInt64}
-    nguides::Int
 end
 
 struct PrefixHashScanDirectory
@@ -301,19 +269,192 @@ include("prefix_hash_scan/generic.jl")
 include("prefix_hash_scan/twobit.jl")
 include("prefix_hash_scan/streaming.jl")
 
-"""
-    search_prefixHashScan(guides, genome_path, motif, output_file; kwargs...)
 
-Indexless search that reuses prefixHashDB's symbolic edit-distance prefix paths.
-Standard Cas9 and Cas12a distance-0-through-4/prefix-16 motifs use separate
-specialized scan kernels. Other compatible 16-base-prefix motifs use a typed
-generic scan kernel; configurations outside its size envelope use the exact
-legacy engine.
+# One verified candidate, aligned and written out. The legacy engine reaches
+# this from three different guide iterations (bitmask, bruteforce, candidate
+# list) that used to carry three byte-identical copies of this body.
+function emit_prefix_hash_scan_legacy_hit!(
+    out, guide_idx::Int, ot, pos, chrom_name, strand,
+    guides, guides_, distance::Int, motif::Motif,
+    seen, es_acc, is_es, early_stopping, stats)
+
+    is_es[guide_idx] && return nothing
+    if stats !== nothing
+        stats.alignment_calls += 1
+        stats.traceback_calls += 1
+    end
+    align_start = prefix_hash_scan_timer(stats)
+    aln = align(guides_[guide_idx], ot, distance, iscompatible)
+    stats === nothing || (stats.align_ns += time_ns() - align_start)
+    aln.dist > distance && return nothing
+
+    if motif.extends5
+        aln_guide = reverse(aln.guide)
+        aln_ref = reverse(aln.ref)
+    else
+        aln_guide = aln.guide
+        aln_ref = aln.ref
+    end
+
+    key = (
+        string(guides[guide_idx]),
+        aln.dist,
+        chrom_name,
+        Int(pos),
+        strand,
+        aln_guide,
+        aln_ref,
+    )
+    key in seen[guide_idx] && return nothing
+    push!(seen[guide_idx], key)
+    reserve_prefix_hash_scan_detail_hit!(
+        es_acc, is_es, guide_idx, aln.dist, early_stopping) || return nothing
+
+    emit_start = prefix_hash_scan_timer(stats)
+    print(out, guides[guide_idx], ",", aln_guide, ",", aln_ref, ",",
+        aln.dist, ",", chrom_name, ",", pos, ",", strand, "\n")
+    if stats !== nothing
+        stats.emit_ns += time_ns() - emit_start
+        stats.emitted_rows += 1
+    end
+    return nothing
+end
+
+
+# Shared by both `search_prefixHashScan` methods so the two entry points cannot
+# drift apart on what they accept. The motif/distance check is load bearing:
+# when no precomputed path asset matches, `load_prefix_hash_scan_paths` falls
+# back to `build_PathTemplates`, which enumerates paths for `motif.distance`
+# and ignores the requested `distance`. A motif carrying a smaller distance
+# would silently yield too few paths and under-report off-targets.
+function validate_prefix_hash_scan_query(
+    guides::Vector{LongDNA{4}},
+    motif::Motif,
+    distance::Int,
+    early_stopping::Vector{Int},
+    output::Symbol)
+
+    distance in 0:4 ||
+        error("search_prefixHashScan supports distances 0 through 4.")
+    isempty(guides) &&
+        error("search_prefixHashScan requires at least one guide.")
+    distance <= motif.distance ||
+        error("For this motif maximum distance is " * string(motif.distance))
+    motif.ambig_max in 0:3 ||
+        error("search_prefixHashScan supports ambig_max values 0 through 3.")
+    guide_bases = length_noPAM(motif)
+    all(==(guide_bases), length.(guides)) ||
+        error("Guide queries are not of the correct length to use with this Motif: " * string(motif))
+    any(isambig.(guides)) &&
+        error("search_prefixHashScan does not support ambiguous query guides.")
+    length(early_stopping) == (distance + 1) ||
+        error("Specify one early stopping condition for each distance from 0 to $distance.")
+    all(>=(0), early_stopping) ||
+        error("early_stopping limits must be nonnegative.")
+    output in (:detail, :counts) ||
+        error("output must be :detail or :counts.")
+    return nothing
+end
+
+
+"""
+```
+search_prefixHashScan(
+    guides::Vector{LongDNA{4}},
+    genome_path::String,
+    motif::Motif,
+    output_file::String;
+    distance::Int = 3,
+    hash_len::Int = min(length_noPAM(motif) - distance, 16),
+    early_stopping::Vector{Int} = fill(1_000_000, distance + 1),
+    scan_threads::Int = Threads.nthreads(),
+    simd_backend::Symbol = :auto,
+    output::Symbol = :detail,
+    verbose::Bool = false,
+    kwargs...)
+```
+
+Low-level, fully configurable form of the indexless prefixHashScan search. It
+takes an explicit `motif` and exposes the scan tuning knobs. Prefer the
+three-argument method for ordinary use; this one is for benchmarking and for
+callers that need to pin a specific engine.
+
+Reuses prefixHashDB's symbolic edit-distance prefix paths. Standard Cas9 and
+Cas12a distance-0-through-4/prefix-16 motifs use separate specialized scan
+kernels. Other compatible 16-base-prefix motifs use a typed generic scan
+kernel; configurations outside its size envelope use the exact legacy engine.
 Reference windows may contain zero through three IUPAC ambiguity symbols, as
 specified by `motif.ambig_max`. Query guides must be unambiguous.
-`simd_backend` accepts `:auto`, `:avx2`, or `:avx512` for raw SIMD scans.
-`output=:detail` writes aligned loci; `output=:counts` writes one count row per
-unique guide without traceback.
+
+`distance` must not exceed `motif.distance`: when no precomputed path asset
+matches, the symbolic paths are generated from the motif, so a motif carrying a
+smaller distance would silently produce an incomplete result. This is checked.
+
+# Arguments
+
+`motif` - Motif to search for. `distance` must be at most `motif.distance`, and
+every guide must be `length_noPAM(motif)` bases long.
+
+`output_file` - Path for the comma separated output table, so a `.csv`
+extension is preferred.
+
+`distance` - Maximum levenshtein distance (insertions, deletions, mismatches),
+0 through 4.
+
+`hash_len` - Symbolic prefix length in `1:16`. The default keeps
+`guide length - distance` bases, capped at 16. Only 16 reaches the specialized
+and typed generic SIMD kernels; shorter prefixes use the exact legacy engine.
+
+`early_stopping` - One limit per distance, from 0 through `distance`. A guide
+stops accumulating hits at a given distance once its limit is reached.
+
+`scan_threads` - Threads used for the genome scan.
+
+`simd_backend` - `:auto`, `:avx2`, or `:avx512` for raw SIMD scans. `:auto`
+resolves from the CPU and the scan geometry.
+
+`output` - `:detail` writes aligned loci with the usual CHOPOFF columns;
+`:counts` writes one row per unique guide as `guide,D0,...,Dk,complete`,
+without traceback. Note this is not the same schema as `summarize_offtargets`,
+which has no `complete` column.
+
+`verbose` - Print a summary of the resolved engine and timings.
+
+## Tuning arguments
+
+These select between equivalent implementations. They exist for benchmarking
+and are not needed for correct results; every combination is expected to
+produce identical output. They are not covered by semantic versioning.
+
+`query_variant` - `:auto`, `:baseline`, `:columnwise`, `:bitmask64`, or
+`:bruteforce`. `:bruteforce` skips the prefix-hash filter and verifies every
+motif candidate, so it is the reference for checking the filter has no false
+negatives. `:bitmask64` supports at most 64 guides.
+
+`scan_backend` - Pins the scan engine, e.g. `:legacy`, `:fused_directory`,
+`:streaming_fasta_simd`, `:streaming_2bit_simd`. `:auto` picks the fastest
+applicable one.
+
+`query_build_backend` - `:auto`, `:serial`, or `:parallel` query construction.
+
+`lookup_variant` - `:auto`, `:inline`, or `:bucketed` directory lookup.
+
+`verify_variant` - `:auto`, `:align`, `:distance_first`, or `:myers_raw`.
+
+`bucket_bases` - Directory bucket width in bases.
+
+`prefilter_bits` - Presence-prefilter width: 0 (disabled), 22, 24, or 26.
+
+`stream_chunk_bases` - Reference chunk size for the streaming scheduler, at
+least 64.
+
+`stats` - Optional `CHOPOFF.PrefixHashScanStats` to fill with counters and
+per-stage timings.
+
+# Examples
+```julia
+$(make_prefix_hash_scan_example_doc())
+```
 """
 function search_prefixHashScan(
     guides::Vector{LongDNA{4}},
@@ -340,19 +481,11 @@ function search_prefixHashScan(
     _collect_counts::Bool = false,
     _paths = nothing)
 
-    if length(early_stopping) != (distance + 1)
-        error("Specify one early stopping condition for a each distance, starting from distance 0.")
-    end
-    all(>=(0), early_stopping) ||
-        error("early_stopping limits must be nonnegative.")
-    if any(length_noPAM(motif) .!= length.(guides))
-        error("Guide queries are not of the correct length to use with this Motif: " * string(motif))
-    end
+    validate_prefix_hash_scan_query(
+        guides, motif, distance, early_stopping, output)
     if hash_len < 1 || hash_len > 16
         error("hash_len must be in 1:16.")
     end
-    motif.ambig_max in 0:3 ||
-        error("search_prefixHashScan supports ambig_max values 0 through 3.")
     scan_threads >= 1 || error("scan_threads must be positive.")
     stream_chunk_bases >= 64 ||
         error("stream_chunk_bases must be at least 64.")
@@ -364,11 +497,6 @@ function search_prefixHashScan(
         error("lookup_variant must be :auto, :inline, or :bucketed.")
     verify_variant in (:auto, :align, :distance_first, :myers_raw) ||
         error("verify_variant must be :auto, :align, :distance_first, or :myers_raw.")
-    output in (:detail, :counts) ||
-        error("output must be :detail or :counts.")
-    if any(isambig.(guides))
-        error("search_prefixHashScan does not support ambiguous query guides.")
-    end
 
     if stats !== nothing
         reset!(stats)
@@ -416,10 +544,6 @@ function search_prefixHashScan(
             :streaming_fasta_simd, :streaming_2bit_simd) ||
             (resolved_scan_backend = :legacy)
     end
-    early_stop_state = all(==(typemax(Int)), early_stopping) ||
-        !(resolved_scan_backend in (
-            :streaming_fasta_simd, :streaming_2bit_simd)) ? nothing :
-        PrefixHashScanEarlyStopState(length(guides), early_stopping)
     if resolved_scan_backend != :legacy && !supports_fused
         error("Fused scan backends require an optimized distance-0-through-4, 16-base-prefix geometry and at most 64 guides.")
     end
@@ -432,6 +556,17 @@ function search_prefixHashScan(
     if resolved_scan_backend == :streaming_2bit_simd && !supports_twobit_simd
         resolved_scan_backend = :fused_directory
     end
+    # Derive the early-stopping state only once the backend is final. The
+    # downgrades above used to run afterwards, so a requested streaming backend
+    # that fell back to :fused_directory left a live state attached to an
+    # engine that never consumes it. Only the two streaming backends thread
+    # early stopping through their chunk workers; :streaming_fasta_simd_fused
+    # does not (stream_prefix_hash_scan_chunk's :fused branch takes no
+    # early_stop_state), so it is deliberately excluded here.
+    early_stop_state = all(==(typemax(Int)), early_stopping) ||
+        !(resolved_scan_backend in (
+            :streaming_fasta_simd, :streaming_2bit_simd)) ? nothing :
+        PrefixHashScanEarlyStopState(length(guides), early_stopping)
     uses_raw_simd = resolved_scan_backend in (
         :fused_fasta_simd, :streaming_fasta_simd,
         :streaming_fasta_simd_fused, :streaming_2bit_simd)
@@ -846,141 +981,24 @@ function search_prefixHashScan(
                             while mask != 0
                                 guide_idx = trailing_zeros(mask) + 1
                                 mask &= mask - 1
-                                is_es[guide_idx] && continue
-
-                                if stats !== nothing
-                                    stats.alignment_calls += 1
-                                    stats.traceback_calls += 1
-                                end
-                                align_start = time_ns()
-                                aln = align(guides_[guide_idx], ot, distance, iscompatible)
-                                if stats !== nothing
-                                    stats.align_ns += time_ns() - align_start
-                                end
-                                aln.dist > distance && continue
-
-                                if motif.extends5
-                                    aln_guide = reverse(aln.guide)
-                                    aln_ref = reverse(aln.ref)
-                                else
-                                    aln_guide = aln.guide
-                                    aln_ref = aln.ref
-                                end
-
-                                key = (
-                                    string(guides[guide_idx]),
-                                    aln.dist,
-                                    chrom_name,
-                                    Int(pos),
-                                    strand,
-                                    aln_guide,
-                                    aln_ref,
-                                )
-                                key in seen[guide_idx] && continue
-                                push!(seen[guide_idx], key)
-                                reserve_prefix_hash_scan_detail_hit!(
-                                    es_acc, is_es, guide_idx, aln.dist,
-                                    early_stopping) || continue
-
-                                emit_start = time_ns()
-                                print(out, guides[guide_idx], ",", aln_guide, ",", aln_ref, ",",
-                                    aln.dist, ",", chrom_name, ",", pos, ",", strand, "\n")
-                                if stats !== nothing
-                                    stats.emit_ns += time_ns() - emit_start
-                                    stats.emitted_rows += 1
-                                end
+                                emit_prefix_hash_scan_legacy_hit!(
+                                    out, guide_idx, ot, pos, chrom_name,
+                                    strand, guides, guides_, distance, motif,
+                                    seen, es_acc, is_es, early_stopping, stats)
                             end
                         elseif use_bruteforce_query
                             for guide_idx in eachindex(guides_)
-                                is_es[guide_idx] && continue
-
-                                if stats !== nothing
-                                    stats.alignment_calls += 1
-                                    stats.traceback_calls += 1
-                                end
-                                align_start = time_ns()
-                                aln = align(guides_[guide_idx], ot, distance, iscompatible)
-                                if stats !== nothing
-                                    stats.align_ns += time_ns() - align_start
-                                end
-                                aln.dist > distance && continue
-
-                                if motif.extends5
-                                    aln_guide = reverse(aln.guide)
-                                    aln_ref = reverse(aln.ref)
-                                else
-                                    aln_guide = aln.guide
-                                    aln_ref = aln.ref
-                                end
-
-                                key = (
-                                    string(guides[guide_idx]),
-                                    aln.dist,
-                                    chrom_name,
-                                    Int(pos),
-                                    strand,
-                                    aln_guide,
-                                    aln_ref,
-                                )
-                                key in seen[guide_idx] && continue
-                                push!(seen[guide_idx], key)
-                                reserve_prefix_hash_scan_detail_hit!(
-                                    es_acc, is_es, guide_idx, aln.dist,
-                                    early_stopping) || continue
-
-                                emit_start = time_ns()
-                                print(out, guides[guide_idx], ",", aln_guide, ",", aln_ref, ",",
-                                    aln.dist, ",", chrom_name, ",", pos, ",", strand, "\n")
-                                if stats !== nothing
-                                    stats.emit_ns += time_ns() - emit_start
-                                    stats.emitted_rows += 1
-                                end
+                                emit_prefix_hash_scan_legacy_hit!(
+                                    out, guide_idx, ot, pos, chrom_name,
+                                    strand, guides, guides_, distance, motif,
+                                    seen, es_acc, is_es, early_stopping, stats)
                             end
                         else
                             for guide_idx in candidate_guides
-                                is_es[guide_idx] && continue
-
-                                if stats !== nothing
-                                    stats.alignment_calls += 1
-                                    stats.traceback_calls += 1
-                                end
-                                align_start = time_ns()
-                                aln = align(guides_[guide_idx], ot, distance, iscompatible)
-                                if stats !== nothing
-                                    stats.align_ns += time_ns() - align_start
-                                end
-                                aln.dist > distance && continue
-
-                                if motif.extends5
-                                    aln_guide = reverse(aln.guide)
-                                    aln_ref = reverse(aln.ref)
-                                else
-                                    aln_guide = aln.guide
-                                    aln_ref = aln.ref
-                                end
-
-                                key = (
-                                    string(guides[guide_idx]),
-                                    aln.dist,
-                                    chrom_name,
-                                    Int(pos),
-                                    strand,
-                                    aln_guide,
-                                    aln_ref,
-                                )
-                                key in seen[guide_idx] && continue
-                                push!(seen[guide_idx], key)
-                                reserve_prefix_hash_scan_detail_hit!(
-                                    es_acc, is_es, guide_idx, aln.dist,
-                                    early_stopping) || continue
-
-                                emit_start = time_ns()
-                                print(out, guides[guide_idx], ",", aln_guide, ",", aln_ref, ",",
-                                    aln.dist, ",", chrom_name, ",", pos, ",", strand, "\n")
-                                if stats !== nothing
-                                    stats.emit_ns += time_ns() - emit_start
-                                    stats.emitted_rows += 1
-                                end
+                                emit_prefix_hash_scan_legacy_hit!(
+                                    out, guide_idx, ot, pos, chrom_name,
+                                    strand, guides, guides_, distance, motif,
+                                    seen, es_acc, is_es, early_stopping, stats)
                             end
                         end
                         if stats !== nothing
@@ -1215,30 +1233,104 @@ function with_atomic_prefix_hash_scan_output(
     return nothing
 end
 
-"""
-    search_prefixHashScan(guides, genome_path, output_file;
-        motif="Cas9",
-        distance=3, early_stopping=fill(1_000_000, distance + 1),
-        scan_threads=Threads.nthreads(),
-        simd_backend=:auto,
-        output=:detail,
-        verbose=false)
+function prefix_hash_scan_pamless_motif(
+    guide_bases::Int, distance::Int, ambig_max::Int = 0)
 
-Search an indexed FASTA or 2bit reference directly for any registered or
-custom `Motif` at edit distances 0 through 4. Guide lists larger than 64 are
-searched as sequential 64-guide batches. Candidate guide/PAM windows may
-contain up to `motif.ambig_max` ambiguous IUPAC reference bases, where the
-supported range is zero through three. Query guides must be unambiguous.
-Multi-batch detail output replaces the requested path only after every batch
-completes successfully.
-Set `output=:counts` to write `guide,D0,...,Dk,complete`; counts above an
-early-stopping bucket limit are capped and marked incomplete.
+    return Motif(
+        "PAMless_$(guide_bases)",
+        repeat("N", guide_bases),
+        repeat("X", guide_bases),
+        true, true, distance, true, ambig_max)
+end
+
+"""
+```
+search_prefixHashScan(
+    guides::Vector{LongDNA{4}},
+    genome_path::String,
+    output_file::String;
+    motif::Union{Nothing, String, Motif} = nothing,
+    pamless::Bool = false,
+    ambig_max::Union{Nothing, Int} = nothing,
+    distance::Int = 3,
+    early_stopping::Vector{Int} = fill(1_000_000, distance + 1),
+    scan_threads::Int = Threads.nthreads(),
+    simd_backend::Symbol = :auto,
+    output::Symbol = :detail,
+    verbose::Bool = false)
+```
+
+Find all off-targets for `guides` within `distance` by scanning `genome_path`
+directly. Unlike prefixHashDB this builds no CHOPOFF database: it needs only an
+indexed FASTA (with the standard `.fai`) or a `.2bit` reference. Internally it
+reuses prefixHashDB's symbolic prefix paths and scans the reference with SIMD
+kernels.
+
+Assumes your guides do not contain PAM, and are all in the same direction as
+you would order for the lab e.g.:
+
+```
+5' - ...ACGTCATCG NGG - 3'  -> will be input: ...ACGTCATCG
+     guide        PAM
+
+3' - CCN GGGCATGCT... - 5'  -> will be input: ...AGCATGCCC
+     PAM guide
+```
+
+# Arguments
+
+`genome_path` - Path to an indexed FASTA or a `.2bit` reference.
+
+`output_file` - Path and name for the output file, this will be comma
+separated table, therefore `.csv` extension is preferred. Guide lists larger
+than 64 are searched as sequential 64-guide batches; the requested path is
+replaced only after every batch completes successfully.
+
+`motif` - Registered motif name, a custom `Motif`, or `nothing` for Cas9. The
+motif's distance is set from `distance`, so it need not be preset.
+
+`pamless` - Set `true` to infer a homogeneous, both-strand PAMless motif from
+the guide length. Every guide in one call must then be the same length. Cannot
+be combined with `motif`.
+
+`ambig_max` - Overrides the inferred or supplied motif's `ambig_max`, that is,
+how many ambiguous IUPAC reference bases a candidate guide/PAM window may
+contain. Supported range is 0 through 3. Query guides must be unambiguous.
+
+`distance` - Defines maximum levenshtein distance (insertions, deletions,
+mismatches) for which off-targets are considered. Supported range is 0
+through 4.
+
+`early_stopping` - Integer vector. Early stopping condition. For example for
+distance 2, we need vector with 3 values e.g. [1, 1, 5]. Which means we will
+search with "up to 1 offtargets within distance 0", "up to 1 offtargets within
+distance 1"...
+
+`scan_threads` - Threads used for the genome scan.
+
+`simd_backend` - `:auto`, `:avx2`, or `:avx512` for raw SIMD scans. `:auto`
+resolves from the CPU and the scan geometry.
+
+`output` - `:detail` writes aligned loci with the usual CHOPOFF columns.
+`:counts` writes one row per unique guide as `guide,D0,...,Dk,complete`,
+without traceback; counts above an early-stopping limit are capped and the row
+is marked incomplete. This is not the same schema as `summarize_offtargets`,
+which has no `complete` column.
+
+See the four-argument method for the scan tuning options.
+
+# Examples
+```julia
+$(make_prefix_hash_scan_example_doc())
+```
 """
 function search_prefixHashScan(
     guides::Vector{LongDNA{4}},
     genome_path::String,
     output_file::String;
-    motif::Union{String, Motif} = "Cas9",
+    motif::Union{Nothing, String, Motif} = nothing,
+    pamless::Bool = false,
+    ambig_max::Union{Nothing, Int} = nothing,
     distance::Int = 3,
     early_stopping::Vector{Int} = fill(1_000_000, distance + 1),
     scan_threads::Int = Threads.nthreads(),
@@ -1246,28 +1338,32 @@ function search_prefixHashScan(
     output::Symbol = :detail,
     verbose::Bool = false)
 
-    motif_ = motif isa String ? Motif(motif; distance = distance) :
-        setdist(motif, distance)
     distance in 0:4 ||
         error("search_prefixHashScan supports distances 0 through 4.")
-    motif_.ambig_max in 0:3 ||
-        error("search_prefixHashScan supports ambig_max values 0 through 3.")
     isempty(guides) &&
         error("search_prefixHashScan requires at least one guide.")
+    guide_bases = length(first(guides))
+    if pamless
+        motif === nothing ||
+            error("pamless=true cannot be combined with motif.")
+        all(==(guide_bases), length.(guides)) ||
+            error("search_prefixHashScan requires homogeneous PAMless guide lengths.")
+        motif_ = prefix_hash_scan_pamless_motif(
+            guide_bases, distance, something(ambig_max, 0))
+    else
+        motif_ = motif === nothing ? Motif("Cas9"; distance = distance) :
+            (motif isa String ? Motif(motif; distance = distance) :
+                setdist(motif, distance))
+        ambig_max === nothing || (motif_ = setambig(motif_, ambig_max))
+    end
     guide_bases = length_noPAM(motif_)
     all(==(guide_bases), length.(guides)) ||
         error("search_prefixHashScan requires $guide_bases-base guides for $(motif_.alias).")
+    validate_prefix_hash_scan_query(
+        guides, motif_, distance, early_stopping, output)
     hash_len = min(guide_bases - distance, 16)
     hash_len >= 1 ||
         error("search_prefixHashScan requires guide length greater than distance.")
-    any(isambig.(guides)) &&
-        error("search_prefixHashScan does not support ambiguous query guides.")
-    length(early_stopping) == distance + 1 ||
-        error("Specify one early stopping condition for each distance from 0 to $distance.")
-    all(>=(0), early_stopping) ||
-        error("early_stopping limits must be nonnegative.")
-    output in (:detail, :counts) ||
-        error("output must be :detail or :counts.")
     prepared_paths, _ = load_prefix_hash_scan_paths(
         motif_, distance, hash_len)
     batch_size = 64

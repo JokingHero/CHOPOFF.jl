@@ -29,6 +29,7 @@ using CSV # MIT
 using ProgressMeter # MIT
 using VariantCallFormat # MIT
 using CodecZlib # MIT
+using SIMD # BSD-2-Clause
 using PathDistribution # MIT
 using InlineStrings # MIT
 
@@ -73,7 +74,8 @@ export build_PathTemplates
 export search_sassy
 
 export build_dictDB, search_dictDB # db_sketch
-export build_prefixHashDB, search_prefixHashDB, search_prefixHashScan
+export build_prefixHashDB, search_prefixHashDB # db_prefix_hash
+export search_prefixHashScan, PrefixHashScanStats # db_prefix_hash_scan
 export build_vcfDB, search_vcfDB # db_vcf
 
 ## Standalone binary generation
@@ -351,6 +353,9 @@ function parse_commandline(args::Array{String})
             help = "Registered motif name. Omit all motif options for Cas9; cannot be combined with custom motif options."
             arg_type = String
             default = ""
+        "--no_pam"
+            help = "Infer a both-strand PAMless motif from the homogeneous guide length; cannot be combined with motif options."
+            action = :store_true
         "--name"
             help = "Short name for a custom motif."
             arg_type = String
@@ -377,10 +382,14 @@ function parse_commandline(args::Array{String})
             arg_type = Int
             default = 0
         "--early_stopping"
-            help = "Input one early stopping limit for each distance from 0 through the requested distance."
+            help = "Input one early stopping limit for each distance from 0 through the requested distance. If not supplied we will look up to 1e6 OTs for each distance."
             arg_type = Int
             nargs = '*'
             required = false
+        "--scan_threads"
+            help = "Threads used for the genome scan. Defaults to all Julia threads."
+            arg_type = Int
+            default = 0
         "--output_mode"
             help = "Write detailed hits or one count row per guide."
             arg_type = String
@@ -497,7 +506,11 @@ function prefix_hash_scan_cli_motif(args, distance::Int)
         args["not_forward"] || args["not_reverse"] || args["extend3"] ||
         args["name"] != default_name
 
-    if registered && has_custom_options
+    if args["no_pam"] && (registered || has_custom_options)
+        error("--no_pam cannot be combined with motif options.")
+    elseif args["no_pam"]
+        return nothing
+    elseif registered && has_custom_options
         error("--motif cannot be combined with custom motif options.")
     elseif registered
         haskey(motif_db, args["motif"]) ||
@@ -658,8 +671,13 @@ function main(args::Array{String})
                 args["output"];
                 motif = prefix_hash_scan_cli_motif(
                     scan_args, args["distance"]),
+                pamless = scan_args["no_pam"],
+                ambig_max = scan_args["no_pam"] ?
+                    scan_args["ambig_max"] : nothing,
                 early_stopping = early_stopping,
                 distance = args["distance"],
+                scan_threads = scan_args["scan_threads"] > 0 ?
+                    scan_args["scan_threads"] : Threads.nthreads(),
                 output = Symbol(scan_args["output_mode"]),
                 simd_backend = Symbol(scan_args["simd_backend"]),
                 verbose = true,

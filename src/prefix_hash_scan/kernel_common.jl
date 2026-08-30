@@ -61,6 +61,20 @@ function resolve_prefix_hash_scan_simd_backend(
     return requested
 end
 
+# Kernel entry points used to default to Val(:avx2) outright, so a caller that
+# omitted the backend on a pre-AVX2 CPU would emit llvm.x86.avx2.pmovmskb and
+# take an illegal instruction rather than a Julia error. Production always
+# passes a resolved backend (search_prefixHashScan only selects a raw SIMD
+# scan_backend when resolve_prefix_hash_scan_simd_backend is not :none), so this
+# is about direct calls into the kernels.
+@inline function default_prefix_hash_scan_simd_backend()
+    backend = resolve_prefix_hash_scan_simd_backend(:auto)
+    backend === :none && error(
+        "prefixHashScan raw SIMD kernels require AVX2, which this CPU does " *
+        "not report. Use scan_backend=:legacy or :fused_directory.")
+    return Val(backend)
+end
+
 @inline function prefix_hash_scan_movemask(v::PREFIX_HASH_SCAN_V32U8)
     Base.llvmcall(
         ("""
@@ -147,10 +161,6 @@ end
     )
 end
 
-@inline prefix_hash_scan_raw_profile64(
-    raw::AbstractVector{UInt8}, start_pos::Int) =
-    prefix_hash_scan_raw_profile64(raw, start_pos, Val(:avx2))
-
 @inline function prefix_hash_scan_pack_codes(
     low_bits::UInt64, high_bits::UInt64)
 
@@ -200,7 +210,7 @@ end
 
 @inline function prefix_hash_scan_exact_block(
     raw::AbstractVector{UInt8}, start_pos::Int, required_bases::Int,
-    simd_backend::Val = Val(:avx2))
+    simd_backend::Val = default_prefix_hash_scan_simd_backend())
 
     if start_pos + 127 <= length(raw)
         a0, c0, g0, t0 = prefix_hash_scan_raw_profile64(
@@ -295,7 +305,7 @@ function scan_ambiguous_prefix_hits_range!(
     minus_last::Int,
     ::Val{K},
     stats::Union{Nothing, PrefixHashScanStats} = nothing,
-    simd_backend::Val = Val(:avx2)) where K
+    simd_backend::Val = default_prefix_hash_scan_simd_backend()) where K
 
     candidate_first > candidate_last && return nothing
     candidate_bases = prefix_scan_candidate_bases(geometry)

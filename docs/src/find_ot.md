@@ -35,6 +35,18 @@ search_treeDB
 build_PathTemplates
 ```
 
+## prefixHashScan direct genome search
+
+prefixHashScan is a direct search mode (no prebuilt CHOPOFF DB needed) that
+reuses prefixHashDB's symbolic prefix paths and scans an indexed FASTA or 2bit
+reference with SIMD kernels. It handles registered motifs, custom motifs and
+PAMless searches. See [prefixHashScan search](prefix_hash_scan.md) for the
+supported configurations, CLI usage and tuning options.
+
+```@docs
+search_prefixHashScan
+```
+
 ## Sassy direct genome search
 
 Sassy is a direct search mode (no prebuilt CHOPOFF DB needed) that combines SIMD

@@ -495,7 +495,7 @@ end
 function scan_generic_prefix_hits_raw(
     raw, dbi, query, geometry::PrefixScanGeometry{:generic},
     stats = nothing; scan_threads::Int = Threads.nthreads(),
-    simd_backend::Val = Val(:avx2))
+    simd_backend::Val = default_prefix_hash_scan_simd_backend())
 
     bounds = generic_prefix_scan_bounds(raw, geometry, dbi)
     bounds === nothing && return PrefixHashScanHit[], PrefixHashScanHit[]
@@ -599,7 +599,7 @@ function scan_verify_prefix_raw_range!(
     geometry::PrefixScanGeometry{:generic}, plus, minus, raw, query,
     candidate_first, candidate_last, plus_first, plus_last,
     minus_first, minus_last, global_offset, dbi, guides_, myers_profiles,
-    distance, stats, simd_backend::Val = Val(:avx2))
+    distance, stats, simd_backend::Val = default_prefix_hash_scan_simd_backend())
 
     plus_hits, minus_hits, motif_candidates = scan_generic_prefix_hits_raw_range(
         raw, query, geometry, candidate_first, candidate_last,

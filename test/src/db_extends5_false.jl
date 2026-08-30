@@ -216,4 +216,30 @@ end
             @test nrow(failed2) == 0
         end
     end
+
+    @testset "linearDB vs prefixHashScan" begin
+        # Cas12a exercises the extends5=false alignment convention, which the
+        # Cas9 parity test in db.jl cannot reach.
+        motif = Motif("Cas12a")
+        scan_ldb_path = joinpath(tdir, "scan_linearDB")
+        mkpath(scan_ldb_path)
+        build_linearDB("samirandom_scan", genome, motif, scan_ldb_path, 7)
+        scan_detail_path = joinpath(scan_ldb_path, "detail.csv")
+
+        for d in 1:3
+            scan_path = joinpath(tdir, "scan_d$d.csv")
+            search_prefixHashScan(guides, genome, scan_path;
+                motif = motif, distance = d)
+            scan_df = DataFrame(CSV.File(scan_path))
+
+            search_linearDB(scan_ldb_path, guides, scan_detail_path; distance = d)
+            ldb_df = DataFrame(CSV.File(scan_detail_path))
+
+            failed = antijoin(ldb_df, scan_df, on = [:guide, :distance, :chromosome, :start, :strand])
+            @test nrow(failed) == 0
+
+            failed2 = antijoin(scan_df, ldb_df, on = [:guide, :distance, :chromosome, :start, :strand])
+            @test nrow(failed2) == 0
+        end
+    end
 end

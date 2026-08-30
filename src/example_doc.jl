@@ -39,6 +39,42 @@ summary = summarize_offtargets(res; distance = 3)
 """
 end
 
+function make_prefix_hash_scan_example_doc()
+    return """
+using CHOPOFF, BioSequences
+
+# make a temporary directory
+tdir = tempname()
+mkpath(tdir)
+
+# use CHOPOFF example genome - prefixHashScan needs no prebuilt database,
+# only an indexed FASTA (.fai) or a .2bit reference
+chopoff_path = splitpath(dirname(pathof(CHOPOFF)))[1:end-1]
+genome = joinpath(vcat(chopoff_path,
+    "test", "sample_data", "genome", "semirandom.fa"))
+
+# load up example gRNAs
+guides_s = Set(readlines(joinpath(vcat(chopoff_path,
+    "test", "sample_data", "guides.txt"))))
+guides = LongDNA{4}.(guides_s)
+
+# finally, make results!
+res_path = joinpath(tdir, "results.csv")
+search_prefixHashScan(guides, genome, res_path; distance = 3)
+
+# load results
+using DataFrames, CSV
+res = DataFrame(CSV.File(res_path))
+
+# filter results by close proximity
+res = filter_overlapping(res, 23)
+
+# summarize results into a table of counts by distance
+summary = summarize_offtargets(res; distance = 3)
+"""
+end
+
+
 function make_vcf_example_doc()
     return """
 # prepare libs
