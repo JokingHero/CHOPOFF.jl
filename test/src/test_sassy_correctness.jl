@@ -2,7 +2,7 @@
 test_sassy_correctness.jl — Comprehensive correctness tests for the Sassy algorithm.
 
 Run with:
-    cd /home/ai/Soft/julia-dev/CHOPOFF.jl
+    cd /home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/CHOPOFF.jl
     julia --project=. test/src/test_sassy_correctness.jl
 """
 

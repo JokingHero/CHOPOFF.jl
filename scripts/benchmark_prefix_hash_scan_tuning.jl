@@ -127,7 +127,7 @@ function scan_prepared(
     mode = use_bucketed ? :bucketed_reuse : :buffered_reuse
     return CHOPOFF.stream_prefix_hash_scan(
         genome, reference_lengths, query, dbi, guides_, profiles, 3,
-        config.chunk_bases, scan_threads, Val(mode), nothing, Val(:chunk))
+        config.chunk_bases, scan_threads, Val(mode), nothing)
 end
 
 function search_kwargs(

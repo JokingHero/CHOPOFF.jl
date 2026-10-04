@@ -2,10 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-JULIA_BIN="${JULIA_BIN:-/home/ai/.julia/juliaup/julia-1.10.10+0.x64.linux.gnu/bin/julia}"
-
-# Prefer writable depot first to avoid lockfile issues in restricted environments.
-export JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-/tmp/julia-depot:${HOME}/.julia}"
+source "$ROOT_DIR/scripts/dev_env.sh"
 
 printf "Using Julia: %s\n" "$JULIA_BIN"
 printf "Using depot: %s\n" "$JULIA_DEPOT_PATH"

@@ -165,14 +165,18 @@ complete span no longer than 65 bases, distance 0 through 4, and
 
 `simd_backend=:auto` selects AVX-512 only for benchmark-qualified CPU-family
 and specialized-geometry pairs; generic geometries retain AVX2. `:avx2` and
-`:avx512` explicitly force a supported ISA.
+`:avx512` explicitly force a supported ISA. The end-to-end AVX-512 gain is not
+measurable on the current shared host; see
+[AVX-512 end-to-end qualification](#avx-512-end-to-end-qualification).
 If raw FASTA SIMD is unavailable, `scan_backend=:auto` selects the intermediate
 `:fused_directory` backend. Unsupported geometries select `:legacy`.
 
-`:streaming_fasta_simd_fused` is an explicit experimental backend. It verifies
-nonzero guide masks immediately in the SIMD scan loop and avoids
+`:streaming_fasta_simd_fused` was an experimental backend. It verified
+nonzero guide masks immediately in the SIMD scan loop and avoided
 `PrefixHashScanHit` vectors. The buffered `:streaming_fasta_simd` backend remains
 the `:auto` choice because fusion showed no measurable GRCh38 latency advantage.
+The fused backend was removed after commit `846c0c17`; see
+[Removed experimental backends](#removed-experimental-backends).
 Buffered workers retain and clear one plus/minus hit-vector pair across chunks;
 the allocating scanner wrapper remains the parity reference.
 
@@ -182,8 +186,8 @@ and hit scratch vectors. Each read includes the existing left edit-distance and
 right candidate/extension overlap, while emission is restricted to the core
 range. Results are stored at stable work indices and committed in reference
 order: all plus-strand chunks for a chromosome, then all minus-strand chunks.
-The former whole-chromosome scheduler remains an internal parity and benchmark
-reference.
+The former whole-chromosome scheduler was removed after commit `846c0c17`.
+Tests now check that 64-base chunks match one chunk per chromosome.
 
 ### 2. Load symbolic prefix paths
 
@@ -365,6 +369,20 @@ distance-4 count test measured a 2.27x paired speedup (84.94 s versus 36.80 s
 median). Unlimited and default one-million caps remained near baseline. All
 completed correctness comparisons passed.
 
+### Removed experimental backends
+
+These paths were measured, lost to the current defaults, and were removed from
+the code after commit `846c0c17`. Check out that commit to rerun them. The
+measurements in this document are unchanged.
+
+| Removed path | What it did | Why it was removed |
+|---|---|---|
+| `scan_backend=:fused_fasta_simd` | Loaded a whole chromosome as raw bytes and split it across threads with the SIMD kernel | Replaced by global 2 MiB chunk streaming: 13.2% faster at 12 cores, 46.5% lower latency at 24 cores, lower peak RSS |
+| `scan_backend=:streaming_fasta_simd_fused` | Ran Myers verification inside the SIMD scan loop, with no hit vectors | 0.37% latency difference (inside run variance); 5.78% fewer allocated bytes; needed a second copy of each kernel loop and did not support early stopping |
+| `scan_backend=:fused_dict` | Whole-chromosome fused scan with a Julia `Dict` query | Replaced by the compact bitmap and directory query |
+| Streaming `Val(:chromosome)` scheduler | One whole chromosome per worker | Tail imbalance; replaced by global chunk scheduling (same measurements as `:fused_fasta_simd`) |
+| `query_variant=:baseline` | Built each guide's hash set one path row at a time | Replaced by `:columnwise`, which produces identical hashes |
+
 ## Simplified pseudocode
 
 ```text
@@ -468,6 +486,40 @@ guides, PAM density, and candidate rate. A current fair full-human benchmark
 against Rust Sassy v1 and v2 has not yet been completed.
 
 ## Current measured result
+
+### AVX-512 end-to-end qualification
+
+September 26-27, 2026 runs of `scripts/benchmark_prefix_hash_scan_avx512.jl`
+used GRCh38, distance 3, count output, 11 alternating timed runs after 2
+warmups, and the script's 61 Cas9 and Cas12a test guides. The host was shared
+with other users' jobs during every run. Earlier runs on the same host varied by
+up to 40% between identical invocations, so these results are indicative only.
+
+| Code | Threads | Cas9 | Cas12a | Cas9_NGA (not `:auto`) |
+|---|---:|---:|---:|---:|
+| `846c0c17` (before refactor) | 24 | 0.93x | 0.96x | 0.97x |
+| refactored | 24 | 0.96x | 0.85x | 0.96x |
+| refactored | 12 | 0.99x | 0.99x | 1.02x |
+| refactored | 8 | 0.94x | 1.02x | 0.98x |
+
+Values are AVX-512 end-to-end speedup over AVX2 (median AVX2 time divided by
+median AVX-512 time). The script's gate requires at least 0.97x (at most 3%
+slower) for `:auto`-eligible motifs. All rows had exact AVX2/AVX-512 output
+parity. The scanner-only stage was 1.08x to 1.49x faster with AVX-512 in every
+run.
+
+Interpretation:
+
+- The refactor did not cause the gate failures; the pre-refactor commit fails
+  the same gate at 24 threads.
+- There is no thread-count trend, so these data do not support AVX-512
+  frequency reduction as the cause.
+- The profiled SIMD scan is a small share of end-to-end time (about 0.1 s of
+  about 1.5 s at 24 threads), so a 20-30% faster kernel changes end-to-end time
+  by about 2%. That is below this host's noise.
+
+Decision: `simd_backend=:auto` is unchanged. Repeat the qualification on an
+idle host before changing the `:auto` policy or relying on the end-to-end gate.
 
 ### Generic-kernel cost relative to specialized Cas9
 

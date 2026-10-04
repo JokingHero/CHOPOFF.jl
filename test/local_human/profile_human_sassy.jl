@@ -3,7 +3,7 @@
 using Pkg
 
 const ROOT_DIR = normpath(joinpath(@__DIR__, "..", ".."))
-const PROFILE_ENV = get(ENV, "CHOPOFF_PROFILE_ENV", "/home/rstudio/livemount/kornel_dev/temp_upload/profiletools")
+const PROFILE_ENV = get(ENV, "CHOPOFF_PROFILE_ENV", normpath(joinpath(ROOT_DIR, "..", "profiletools")))
 const PROFILE_MODE = lowercase(strip(get(ENV, "CHOPOFF_PROFILE_MODE", "baseline")))
 const NEED_PPROF = PROFILE_MODE in ("cpu", "allocs", "all")
 const NEED_STATHTML = PROFILE_MODE in ("cpu", "all")

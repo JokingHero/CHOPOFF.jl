@@ -227,51 +227,6 @@ end
     return hash
 end
 
-function prefix_scan_generic_bounds(
-    n::Int, seq_start::Int, seq_stop::Int,
-    geometry::PrefixScanGeometry{:generic}, dbi::DBInfo)
-
-    n < prefix_scan_candidate_bases(geometry) && return nothing
-    spec = prefix_scan_matcher_spec(geometry.matcher)
-    last_offset = prefix_scan_candidate_last_offset(geometry)
-    function strand_bounds(is_antisense, enabled)
-        enabled || return (1, 0)
-        if xor(is_antisense, dbi.motif.extends5)
-            return max(seq_start - dbi.motif.distance, 1), seq_stop - last_offset
-        end
-        return seq_start, min(seq_stop + dbi.motif.distance, n) - last_offset
-    end
-    plus_first, plus_last = strand_bounds(false, spec.fwd_enabled)
-    minus_first, minus_last = strand_bounds(true, spec.rev_enabled)
-    firsts = Int[]
-    lasts = Int[]
-    plus_first <= plus_last && (push!(firsts, plus_first); push!(lasts, plus_last))
-    minus_first <= minus_last && (push!(firsts, minus_first); push!(lasts, minus_last))
-    isempty(firsts) && return nothing
-    return minimum(firsts), maximum(lasts), plus_first, plus_last, minus_first, minus_last
-end
-
-function generic_prefix_scan_bounds(raw::AbstractVector{UInt8}, geometry, dbi)
-    seq_start = 1
-    seq_stop = length(raw)
-    @inbounds while seq_start <= seq_stop &&
-            (raw[seq_start] == UInt8('N') || raw[seq_start] == UInt8('n'))
-        seq_start += 1
-    end
-    @inbounds while seq_stop > 0 &&
-            (raw[seq_stop] == UInt8('N') || raw[seq_stop] == UInt8('n'))
-        seq_stop -= 1
-    end
-    return prefix_scan_generic_bounds(
-        length(raw), seq_start, seq_stop, geometry, dbi)
-end
-
-function generic_prefix_scan_bounds(chrom_seq::LongDNA{4}, geometry, dbi)
-    seq_start, seq_stop = locate_telomeres(chrom_seq)
-    return prefix_scan_generic_bounds(
-        length(chrom_seq), seq_start, seq_stop, geometry, dbi)
-end
-
 function scan_generic_prefix_hits_raw_range_impl!(
     plus_hits::Vector{PrefixHashScanHit},
     minus_hits::Vector{PrefixHashScanHit},
@@ -279,9 +234,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
     minus_radix_scratch, radix_counts,
     raw::AbstractVector{UInt8}, query,
     geometry::PrefixScanGeometry{:generic},
-    candidate_first::Int, candidate_last::Int,
-    plus_first::Int, plus_last::Int,
-    minus_first::Int, minus_last::Int,
+    bounds::PrefixScanBounds,
     simd_backend::Val,
     ::Val{Bucketed}) where Bucketed
 
@@ -291,6 +244,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
         empty!(plus_candidates)
         empty!(minus_candidates)
     end
+    candidate_first, candidate_last = first(bounds.all), last(bounds.all)
     candidate_first > candidate_last && return 0
     matcher = geometry.matcher
     spec = prefix_scan_matcher_spec(matcher)
@@ -321,7 +275,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
             bit = trailing_zeros(plus_mask)
             plus_mask &= plus_mask - 1
             candidate_start = block_start + bit
-            plus_first <= candidate_start <= plus_last || continue
+            candidate_start in bounds.plus || continue
             motif_candidates += 1
             hash = prefix_hash_scan_generic_hash(
                 low, high, bit, matcher, Val(false))
@@ -333,7 +287,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
             bit = trailing_zeros(minus_mask)
             minus_mask &= minus_mask - 1
             candidate_start = block_start + bit
-            minus_first <= candidate_start <= minus_last || continue
+            candidate_start in bounds.minus || continue
             motif_candidates += 1
             hash = prefix_hash_scan_generic_hash(
                 low, high, bit, matcher, Val(true))
@@ -354,7 +308,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
             end
         end
         valid || continue
-        if plus_first <= candidate_start <= plus_last && spec.fwd_enabled &&
+        if candidate_start in bounds.plus && spec.fwd_enabled &&
                 prefix_hash_scan_generic_matches(
                     raw, candidate_start, spec.fwd_constraints)
             motif_candidates += 1
@@ -364,7 +318,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
                 plus_hits, plus_candidates, query, candidate_start, hash,
                 Val(Bucketed))
         end
-        if minus_first <= candidate_start <= minus_last && spec.rev_enabled &&
+        if candidate_start in bounds.minus && spec.rev_enabled &&
                 prefix_hash_scan_generic_matches(
                     raw, candidate_start, spec.rev_constraints)
             motif_candidates += 1
@@ -385,80 +339,43 @@ function scan_generic_prefix_hits_raw_range_impl!(
 end
 
 function scan_generic_prefix_hits_raw_range!(
-    plus_hits, minus_hits, raw, query, geometry, bounds...)
+    plus_hits, minus_hits, raw, query, geometry, bounds::PrefixScanBounds,
+    simd_backend::Val = default_prefix_hash_scan_simd_backend())
     return scan_generic_prefix_hits_raw_range_impl!(
         plus_hits, minus_hits, nothing, nothing, nothing, nothing, nothing,
-        raw, query, geometry, bounds..., Val(:avx2), Val(false))
-end
-
-function scan_generic_prefix_hits_raw_range!(
-    plus_hits, minus_hits, raw, query, geometry,
-    candidate_first, candidate_last, plus_first, plus_last,
-    minus_first, minus_last, simd_backend::Val)
-    return scan_generic_prefix_hits_raw_range_impl!(
-        plus_hits, minus_hits, nothing, nothing, nothing, nothing, nothing,
-        raw, query, geometry, candidate_first, candidate_last,
-        plus_first, plus_last, minus_first, minus_last,
-        simd_backend, Val(false))
+        raw, query, geometry, bounds, simd_backend, Val(false))
 end
 
 function scan_generic_prefix_hits_raw_range_bucketed!(
     plus_hits, minus_hits, plus_candidates, minus_candidates,
     plus_radix_scratch, minus_radix_scratch, radix_counts,
-    raw, query, geometry, bounds...)
+    raw, query, geometry, bounds::PrefixScanBounds,
+    simd_backend::Val = default_prefix_hash_scan_simd_backend())
     return scan_generic_prefix_hits_raw_range_impl!(
         plus_hits, minus_hits, plus_candidates, minus_candidates,
         plus_radix_scratch, minus_radix_scratch, radix_counts,
-        raw, query, geometry, bounds..., Val(:avx2), Val(true))
+        raw, query, geometry, bounds, simd_backend, Val(true))
 end
-
-function scan_generic_prefix_hits_raw_range_bucketed!(
-    plus_hits, minus_hits, plus_candidates, minus_candidates,
-    plus_radix_scratch, minus_radix_scratch, radix_counts,
-    raw, query, geometry,
-    candidate_first, candidate_last, plus_first, plus_last,
-    minus_first, minus_last, simd_backend::Val)
-    return scan_generic_prefix_hits_raw_range_impl!(
-        plus_hits, minus_hits, plus_candidates, minus_candidates,
-        plus_radix_scratch, minus_radix_scratch, radix_counts,
-        raw, query, geometry, candidate_first, candidate_last,
-        plus_first, plus_last, minus_first, minus_last,
-        simd_backend, Val(true))
-end
-
-function scan_generic_prefix_hits_raw_range(raw, query, geometry, bounds...)
-    plus_hits = PrefixHashScanHit[]
-    minus_hits = PrefixHashScanHit[]
-    count = scan_generic_prefix_hits_raw_range!(
-        plus_hits, minus_hits, raw, query, geometry, bounds...)
-    return plus_hits, minus_hits, count
-end
-
 
 function scan_generic_prefix_hits_raw_range(
-    raw, query, geometry,
-    candidate_first, candidate_last, plus_first, plus_last,
-    minus_first, minus_last, simd_backend::Val)
+    raw, query, geometry, bounds::PrefixScanBounds,
+    simd_backend::Val = default_prefix_hash_scan_simd_backend())
     plus_hits = PrefixHashScanHit[]
     minus_hits = PrefixHashScanHit[]
     count = scan_generic_prefix_hits_raw_range!(
-        plus_hits, minus_hits, raw, query, geometry,
-        candidate_first, candidate_last, plus_first, plus_last,
-        minus_first, minus_last, simd_backend)
+        plus_hits, minus_hits, raw, query, geometry, bounds, simd_backend)
     return plus_hits, minus_hits, count
 end
 
 function scan_generic_prefix_hits_range(
     chrom_seq::LongDNA{4}, query, geometry::PrefixScanGeometry{:generic},
-    candidate_first::Int, candidate_last::Int,
-    plus_first::Int, plus_last::Int,
-    minus_first::Int, minus_last::Int)
+    bounds::PrefixScanBounds)
 
     plus_hits = PrefixHashScanHit[]
     minus_hits = PrefixHashScanHit[]
     spec = prefix_scan_matcher_spec(geometry.matcher)
     motif_candidates = 0
-    @inbounds for candidate_start in candidate_first:candidate_last
+    @inbounds for candidate_start in bounds.all
         valid = true
         for offset in 0:(spec.span - 1)
             code = prefix_hash_scan_twobit_nibble(UInt8(
@@ -470,7 +387,7 @@ function scan_generic_prefix_hits_range(
             end
         end
         valid || continue
-        if plus_first <= candidate_start <= plus_last && spec.fwd_enabled &&
+        if candidate_start in bounds.plus && spec.fwd_enabled &&
                 prefix_hash_scan_generic_matches(
                     chrom_seq, candidate_start, spec.fwd_constraints)
             motif_candidates += 1
@@ -479,7 +396,7 @@ function scan_generic_prefix_hits_range(
             mask = prefix_hash_scan_candidate_mask(query, hash)
             mask == 0 || push!(plus_hits, PrefixHashScanHit(candidate_start, mask))
         end
-        if minus_first <= candidate_start <= minus_last && spec.rev_enabled &&
+        if candidate_start in bounds.minus && spec.rev_enabled &&
                 prefix_hash_scan_generic_matches(
                     chrom_seq, candidate_start, spec.rev_constraints)
             motif_candidates += 1
@@ -492,124 +409,25 @@ function scan_generic_prefix_hits_range(
     return plus_hits, minus_hits, motif_candidates
 end
 
-function scan_generic_prefix_hits_raw(
-    raw, dbi, query, geometry::PrefixScanGeometry{:generic},
-    stats = nothing; scan_threads::Int = Threads.nthreads(),
-    simd_backend::Val = default_prefix_hash_scan_simd_backend())
-
-    bounds = generic_prefix_scan_bounds(raw, geometry, dbi)
-    bounds === nothing && return PrefixHashScanHit[], PrefixHashScanHit[]
-    candidate_first, candidate_last, plus_first, plus_last, minus_first, minus_last = bounds
-    candidate_count = candidate_last - candidate_first + 1
-    thread_count = min(max(scan_threads, 1), candidate_count)
-    chunk_size = cld(candidate_count, thread_count)
-    tasks = map(candidate_first:chunk_size:candidate_last) do first_
-        last_ = min(first_ + chunk_size - 1, candidate_last)
-        Threads.@spawn scan_generic_prefix_hits_raw_range(
-            raw, query, geometry, first_, last_, plus_first, plus_last,
-            minus_first, minus_last, simd_backend)
-    end
-    plus_hits = PrefixHashScanHit[]
-    minus_hits = PrefixHashScanHit[]
-    motif_candidates = 0
-    for task in tasks
-        local_plus, local_minus, local_count = fetch(task)
-        append!(plus_hits, local_plus)
-        append!(minus_hits, local_minus)
-        motif_candidates += local_count
-    end
-    if dbi.motif.ambig_max > 0
-        scan_ambiguous_prefix_hits_range!(
-            plus_hits, minus_hits, raw, geometry, dbi, query,
-            geometry.prefix_bases, candidate_first, candidate_last,
-            plus_first, plus_last, minus_first, minus_last,
-            Val(dbi.motif.ambig_max), stats, simd_backend)
-    end
-    stats === nothing || (stats.motif_candidates += motif_candidates)
-    return plus_hits, minus_hits
-end
-
-function scan_generic_prefix_hits(
-    chrom_seq::LongDNA{4}, dbi, query, geometry::PrefixScanGeometry{:generic},
-    stats = nothing; scan_threads::Int = Threads.nthreads())
-
-    bounds = generic_prefix_scan_bounds(chrom_seq, geometry, dbi)
-    bounds === nothing && return PrefixHashScanHit[], PrefixHashScanHit[]
-    candidate_first, candidate_last, plus_first, plus_last, minus_first, minus_last = bounds
-    candidate_count = candidate_last - candidate_first + 1
-    thread_count = min(max(scan_threads, 1), candidate_count)
-    chunk_size = cld(candidate_count, thread_count)
-    tasks = map(candidate_first:chunk_size:candidate_last) do first_
-        last_ = min(first_ + chunk_size - 1, candidate_last)
-        Threads.@spawn scan_generic_prefix_hits_range(
-            chrom_seq, query, geometry, first_, last_, plus_first, plus_last,
-            minus_first, minus_last)
-    end
-    plus_hits = PrefixHashScanHit[]
-    minus_hits = PrefixHashScanHit[]
-    motif_candidates = 0
-    for task in tasks
-        local_plus, local_minus, local_count = fetch(task)
-        append!(plus_hits, local_plus)
-        append!(minus_hits, local_minus)
-        motif_candidates += local_count
-    end
-    if dbi.motif.ambig_max > 0
-        scan_ambiguous_prefix_hits_range!(
-            plus_hits, minus_hits, chrom_seq, geometry, dbi, query,
-            geometry.prefix_bases, candidate_first, candidate_last,
-            plus_first, plus_last, minus_first, minus_last,
-            Val(dbi.motif.ambig_max), stats)
-    end
-    stats === nothing || (stats.motif_candidates += motif_candidates)
-    return plus_hits, minus_hits
-end
-
-scan_prefix_hits(
-    geometry::PrefixScanGeometry{:generic}, chrom_seq, dbi, query, hash_len,
-    stats = nothing; kwargs...) =
-    scan_generic_prefix_hits(
-        chrom_seq, dbi, query, geometry, stats; kwargs...)
-
-scan_prefix_hits_raw(
-    geometry::PrefixScanGeometry{:generic}, raw, dbi, query, stats = nothing;
-    kwargs...) =
-    scan_generic_prefix_hits_raw(raw, dbi, query, geometry, stats; kwargs...)
+scan_prefix_hits_range(
+    geometry::PrefixScanGeometry{:generic}, chrom_seq, query, hash_len, bounds) =
+    scan_generic_prefix_hits_range(chrom_seq, query, geometry, bounds)
 
 scan_prefix_hits_raw_range!(
     geometry::PrefixScanGeometry{:generic}, plus_hits, minus_hits,
-    raw, query, bounds...) =
+    raw, query, args...) =
     scan_generic_prefix_hits_raw_range!(
-        plus_hits, minus_hits, raw, query, geometry, bounds...)
+        plus_hits, minus_hits, raw, query, geometry, args...)
 
 scan_prefix_hits_raw_range_bucketed!(
     geometry::PrefixScanGeometry{:generic}, plus_hits, minus_hits,
     plus_candidates, minus_candidates, plus_radix_scratch,
-    minus_radix_scratch, radix_counts, raw, query, bounds...) =
+    minus_radix_scratch, radix_counts, raw, query, args...) =
     scan_generic_prefix_hits_raw_range_bucketed!(
         plus_hits, minus_hits, plus_candidates, minus_candidates,
         plus_radix_scratch, minus_radix_scratch, radix_counts,
-        raw, query, geometry, bounds...)
+        raw, query, geometry, args...)
 
 scan_prefix_hits_raw_range(
-    geometry::PrefixScanGeometry{:generic}, raw, query, bounds...) =
-    scan_generic_prefix_hits_raw_range(raw, query, geometry, bounds...)
-
-function scan_verify_prefix_raw_range!(
-    geometry::PrefixScanGeometry{:generic}, plus, minus, raw, query,
-    candidate_first, candidate_last, plus_first, plus_last,
-    minus_first, minus_last, global_offset, dbi, guides_, myers_profiles,
-    distance, stats, simd_backend::Val = default_prefix_hash_scan_simd_backend())
-
-    plus_hits, minus_hits, motif_candidates = scan_generic_prefix_hits_raw_range(
-        raw, query, geometry, candidate_first, candidate_last,
-        plus_first, plus_last, minus_first, minus_last, simd_backend)
-    stats === nothing || (stats.motif_candidates += motif_candidates)
-    evaluate_prefix_hash_scan_hits!(
-        plus, raw, geometry, plus_hits, global_offset, dbi, false,
-        guides_, myers_profiles, distance, stats)
-    evaluate_prefix_hash_scan_hits!(
-        minus, raw, geometry, minus_hits, global_offset, dbi, true,
-        guides_, myers_profiles, distance, stats)
-    return plus, minus
-end
+    geometry::PrefixScanGeometry{:generic}, raw, query, args...) =
+    scan_generic_prefix_hits_raw_range(raw, query, geometry, args...)

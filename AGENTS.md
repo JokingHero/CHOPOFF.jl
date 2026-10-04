@@ -10,19 +10,34 @@ CHOPOFF.jl is a Julia package for **sensitive and fast CRISPR off-target detecti
 
 ## Local Environment
 
-This workspace uses a full Julia install outside the repo:
+This workspace uses the full Julia 1.10.10 installation in sibling `../Soft/` and
+the profiling environment in sibling `../profiletools/`. From the repository root:
 
 ```bash
-export JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot:
-JULIA=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia
+source scripts/dev_env.sh
+julia --version
+```
+
+The script preserves explicit `JULIA_BIN`, `JULIA_DEPOT_PATH`, and
+`CHOPOFF_PROFILE_ENV` overrides, leaves the current directory unchanged, and does
+not set the thread count or modify global shell configuration. Set
+`JULIA_NUM_THREADS=1` for initial validation and `8` for profiling. The human
+reference remains on its existing mount; override `CHOPOFF_PROFILE_GENOME` if it moves.
+
+Keep the checked-in manifests when moving the workspace. If package loading reports
+missing dependencies, instantiate only the affected environment (without `Pkg.update()`):
+
+```bash
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
+julia --project="$CHOPOFF_PROFILE_ENV" -e 'using Pkg; Pkg.instantiate()'
 ```
 
 Do not use `build/bin/julia` for development. It belongs to the standalone app output and is missing files needed by `Pkg`.
 
-If Git reports dubious ownership, use a process-local override or configure this repo as safe:
+If Git reports dubious ownership, use a process-local override from the repository root:
 
 ```bash
-git config --global --add safe.directory /home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl
+git -c safe.directory="$PWD" status
 ```
 
 ## Common Commands
@@ -31,12 +46,11 @@ git config --global --add safe.directory /home/rstudio/livemount/kornel_dev/temp
 
 ```bash
 # Run all tests (test runner assumes cwd=test)
-(cd test && JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
-  /home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=.. runtests.jl)
+source scripts/dev_env.sh
+(cd test && JULIA_NUM_THREADS=1 julia --project=.. runtests.jl)
 
 # Run specific test file
-JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
-  /home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. -e 'include("test/src/utils.jl")'
+julia --project=. -e 'include("test/src/utils.jl")'
 
 # Build standalone application
 ./build_standalone.sh
@@ -46,6 +60,10 @@ JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot
 # Build documentation
 ./compute_coverage.sh
 ```
+
+In this container `/tmp` is a symlink to `/home/rstudio/tmp`. Database tests
+create many temporary files. If that volume is slow, set `TMPDIR` to a writable
+container-local directory (for example `/var/tmp`) before starting Julia.
 
 ### Speed Benchmark (Sassy vs prefixHashDB)
 
@@ -74,7 +92,8 @@ Environment variables used by the benchmark:
 Profiling tools are installed in a separate Julia environment, not in the CHOPOFF project:
 
 ```bash
-PROFILE_ENV=/home/rstudio/livemount/kornel_dev/temp_upload/profiletools
+source scripts/dev_env.sh
+# CHOPOFF_PROFILE_ENV points to ../profiletools
 # installed there: PProf, StatProfilerHTML, BenchmarkTools, TimerOutputs
 ```
 
@@ -85,18 +104,17 @@ Local profiling runner, artifacts, guides, and human outputs live under ignored 
 CHOPOFF_PROFILE_MODE=cpu \
 CHOPOFF_PROFILE_BACKEND=auto \
 JULIA_NUM_THREADS=8 \
-JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
-/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
+julia --project=. \
   test/local_human/profile_human_sassy.jl
 
 # Allocation profile
 CHOPOFF_PROFILE_MODE=allocs CHOPOFF_PROFILE_BACKEND=auto JULIA_NUM_THREADS=8 \
-JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
-/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
+julia --project=. \
   test/local_human/profile_human_sassy.jl
 ```
 
 Useful env controls:
+- `CHOPOFF_PROFILE_ENV`: defaults to sibling `../profiletools`
 - `CHOPOFF_PROFILE_MODE`: `baseline`, `cpu`, `allocs`, `all`, `scaling`
 - `CHOPOFF_PROFILE_BACKEND`: `auto`, `avx512`, `avx2_pext`, or `avx2_safe`
 - `CHOPOFF_PROFILE_GUIDE_LIMIT`: limit guides for smoke runs (`0` means all)

@@ -147,32 +147,23 @@ function load_prefix_hash_scan_paths(
     return paths, source
 end
 
-function fold_prefix_hash(path_row, guide_formatted, hash_type::Type{<:Unsigned})
-    h = zero(hash_type)
-    @inbounds for path_idx in path_row
-        h = (h << 2) | convert(hash_type, guide_formatted[Int(path_idx)])
-    end
-    return h
-end
-
 function resolve_prefix_hash_scan_query_variant(query_variant::Symbol, nguides::Int = 0)
     query_variant == :auto && return nguides <= 64 ? :bitmask64 : :columnwise
     query_variant == :bruteforce && return :bruteforce
     if query_variant == :bitmask64 && nguides > 64
         error("query_variant=:bitmask64 supports at most 64 guides.")
     end
-    query_variant in (:baseline, :columnwise, :bitmask64) && return query_variant
-    error("query_variant must be :auto, :baseline, :columnwise, :bitmask64, or :bruteforce.")
+    query_variant in (:columnwise, :bitmask64) && return query_variant
+    error("query_variant must be :auto, :columnwise, :bitmask64, or :bruteforce.")
 end
 
 function prefix_hash_scan_query_variant()
     raw = lowercase(strip(get(ENV, "CHOPOFF_PREFIX_HASH_SCAN_QUERY", "auto")))
     raw == "auto" && return :auto
-    raw == "baseline" && return :baseline
     raw == "columnwise" && return :columnwise
     raw == "bitmask64" && return :bitmask64
     raw == "bruteforce" && return :bruteforce
-    error("Invalid CHOPOFF_PREFIX_HASH_SCAN_QUERY='$raw'. Allowed values: auto, baseline, columnwise, bitmask64, bruteforce.")
+    error("Invalid CHOPOFF_PREFIX_HASH_SCAN_QUERY='$raw'. Allowed values: auto, columnwise, bitmask64, bruteforce.")
 end
 
 function oriented_prefix_hash_scan_guides(guides::Vector{LongDNA{4}}, motif::Motif)
@@ -193,20 +184,6 @@ function unique_sorted_prefix_hashes!(hashes::Vector{T}) where {T <: Unsigned}
         end
     end
     resize!(hashes, write_idx)
-    return hashes
-end
-
-function prefix_hashes_baseline(
-    paths,
-    guide_formatted,
-    hash_type::Type{<:Unsigned})
-
-    hashes = Set{hash_type}()
-    for path_row in eachrow(paths)
-        push!(hashes, fold_prefix_hash(path_row, guide_formatted, hash_type))
-    end
-    hashes = collect(hashes)
-    sort!(hashes)
     return hashes
 end
 
@@ -240,14 +217,9 @@ end
 function prefix_hash_scan_guide_hashes(
     paths,
     guide::LongDNA{4},
-    hash_type::Type{<:Unsigned};
-    query_variant::Symbol = prefix_hash_scan_query_variant())
+    hash_type::Type{<:Unsigned})
 
-    variant = resolve_prefix_hash_scan_query_variant(query_variant)
     guide_formatted = guide_to_template_format(guide; alphabet = ALPHABET_TWOBIT)
-    if variant == :baseline
-        return prefix_hashes_baseline(paths, guide_formatted, hash_type)
-    end
     return prefix_hashes_columnwise(paths, guide_formatted, hash_type)
 end
 
@@ -276,26 +248,18 @@ function build_prefix_hash_scan_map_from_paths(
             stats.query_format_ns += time_ns() - format_start
         end
 
-        if variant == :baseline
-            fold_start = prefix_hash_scan_timer(stats)
-            hashes = prefix_hashes_baseline(paths, guide_formatted, hash_type)
-            if stats !== nothing
-                stats.query_fold_ns += time_ns() - fold_start
-            end
-        else
-            hashes = Vector{hash_type}(undef, size(paths, 1))
-            fold_start = prefix_hash_scan_timer(stats)
-            fill_prefix_hashes_columnwise!(hashes, paths, guide_formatted)
-            if stats !== nothing
-                stats.query_fold_ns += time_ns() - fold_start
-            end
+        hashes = Vector{hash_type}(undef, size(paths, 1))
+        fold_start = prefix_hash_scan_timer(stats)
+        fill_prefix_hashes_columnwise!(hashes, paths, guide_formatted)
+        if stats !== nothing
+            stats.query_fold_ns += time_ns() - fold_start
+        end
 
-            dedup_start = prefix_hash_scan_timer(stats)
-            sort!(hashes)
-            unique_sorted_prefix_hashes!(hashes)
-            if stats !== nothing
-                stats.query_dedup_ns += time_ns() - dedup_start
-            end
+        dedup_start = prefix_hash_scan_timer(stats)
+        sort!(hashes)
+        unique_sorted_prefix_hashes!(hashes)
+        if stats !== nothing
+            stats.query_dedup_ns += time_ns() - dedup_start
         end
 
         if stats !== nothing

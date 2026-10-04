@@ -424,8 +424,7 @@ function verify_prefix_hash_scan_bitmask_candidate!(
     is_es,
     seen,
     stats::Union{Nothing, PrefixHashScanStats};
-    distance_first::Bool = false,
-    myers_profiles::Union{Nothing, Vector{PrefixHashScanMyersProfile}} = nothing)
+    distance_first::Bool = false)
 
     strand = is_antisense ? "-" : "+"
     ot = LongDNA{4}()
@@ -441,20 +440,7 @@ function verify_prefix_hash_scan_bitmask_candidate!(
             stats.alignment_calls += 1
         end
         align_start = time_ns()
-        if myers_profiles !== nothing
-            if stats !== nothing
-                stats.distance_calls += 1
-            end
-            dist = prefix_hash_scan_raw_myers_distance(
-                geometry, myers_profiles[guide_idx], chrom_seq, first(candidate_range),
-                is_antisense, distance)
-            if dist > distance
-                if stats !== nothing
-                    stats.align_ns += time_ns() - align_start
-                end
-                continue
-            end
-        elseif distance_first
+        if distance_first
             if isempty(ot)
                 materialize_start = time_ns()
                 ot, pos = materialize_normalized_candidate_specialized(
@@ -771,6 +757,56 @@ function commit_prefix_hash_scan_verified!(
     if stats !== nothing
         stats.emit_ns += time_ns() - emit_start
         stats.emitted_rows += 1
+    end
+    return nothing
+end
+
+# Commits streamed hits in deterministic output order: chromosome, then strand
+# (plus before minus), then chunk.
+function commit_prefix_hash_scan_chunks!(
+    out,
+    chunk_results,
+    chrom_chunk_ranges,
+    chrom_names::Vector{String},
+    guides::Vector{LongDNA{4}},
+    early_stopping::Vector{Int},
+    es_acc,
+    is_es,
+    seen,
+    stats::Union{Nothing, PrefixHashScanStats};
+    prelimited::Bool)
+
+    for chrom_idx in eachindex(chrom_chunk_ranges)
+        chrom_name = chrom_names[chrom_idx]
+        chunk_range = chrom_chunk_ranges[chrom_idx]
+        if stats !== nothing
+            for chunk_idx in chunk_range
+                result_ = chunk_results[chunk_idx]
+                result_ === nothing && continue
+                merge_prefix_hash_scan_worker_stats!(stats, result_.stats)
+            end
+        end
+        for strand in (:plus, :minus)
+            for chunk_idx in chunk_range
+                result_ = chunk_results[chunk_idx]
+                result_ === nothing && continue
+                hits = getfield(result_, strand)
+                for hit in hits
+                    commit_prefix_hash_scan_verified!(
+                        out,
+                        hit,
+                        guides[hit.guide_idx],
+                        chrom_name,
+                        early_stopping,
+                        es_acc,
+                        is_es,
+                        seen,
+                        stats,
+                        prelimited = prelimited,
+                    )
+                end
+            end
+        end
     end
     return nothing
 end

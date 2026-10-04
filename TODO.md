@@ -129,3 +129,6 @@ Secondary benchmark workflows:
 - `julia --project=. scripts/benchmark_sassy_vs_prefixhash.jl`
 - `julia --project=. scripts/benchmark_sassy_minima_backend.jl`
 - `julia --project=. scripts/benchmark_sassy_traceback.jl`
+
+## Lossless 01*0 seeds
+Maybe combining the papers 01*0 seeds with my strategies will make things uber better

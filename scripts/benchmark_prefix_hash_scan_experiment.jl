@@ -41,7 +41,7 @@ function main()
     variants = parse_symbol_list("CHOPOFF_SCAN_EXPERIMENT_VARIANTS", "bitmask64")
     backends = parse_symbol_list(
         "CHOPOFF_SCAN_EXPERIMENT_BACKENDS",
-        "legacy,fused_dict,fused_directory,fused_fasta_simd,streaming_fasta_simd,streaming_fasta_simd_fused",
+        "legacy,fused_directory,streaming_fasta_simd",
     )
     bucket_bases = parse_int_list("CHOPOFF_SCAN_EXPERIMENT_BUCKET_BASES", "9,10,11")
     prefilter_bits = parse_int_list(
@@ -77,21 +77,12 @@ function main()
                     backends : [:legacy]
                 for backend in supported_backends
                     buckets = backend in (
-                        :fused_directory, :fused_fasta_simd,
-                        :streaming_fasta_simd, :streaming_fasta_simd_fused) ?
+                        :fused_directory, :streaming_fasta_simd) ?
                         bucket_bases : [first(bucket_bases)]
-                    verifies = backend in (
-                        :fused_fasta_simd, :streaming_fasta_simd,
-                        :streaming_fasta_simd_fused) ?
-                        (backend in (
-                            :streaming_fasta_simd,
-                            :streaming_fasta_simd_fused) ?
-                            filter(in((:myers_raw,)), verify_variants) :
-                            verify_variants) :
+                    verifies = backend == :streaming_fasta_simd ?
+                        filter(in((:myers_raw,)), verify_variants) :
                         (backend == :legacy ? [:align] : filter(!=(:myers_raw), verify_variants))
-                    prefilters = backend in (
-                        :fused_fasta_simd, :streaming_fasta_simd,
-                        :streaming_fasta_simd_fused) ?
+                    prefilters = backend == :streaming_fasta_simd ?
                         prefilter_bits : [0]
                     for bucket in buckets, verify in verifies, prefilter in prefilters
                         label = "$(variant)_$(backend)_b$(bucket)_p$(prefilter)_$(verify)_d$(distance)_n$(length(guides))"

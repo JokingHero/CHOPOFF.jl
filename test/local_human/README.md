@@ -18,8 +18,8 @@ Run:
 
 ```bash
 JULIA_NUM_THREADS=8 \
-JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
-/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
+JULIA_DEPOT_PATH=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/julia_depot: \
+/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/bin/julia --project=. \
 test/local_human/run_human_sassy.jl
 ```
 
@@ -27,7 +27,7 @@ The runner builds/reuses prefixHashDB by default. To run SASSY only:
 
 ```bash
 CHOPOFF_HUMAN_COMPARE_PREFIX=0 JULIA_NUM_THREADS=8 \
-/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
+/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/bin/julia --project=. \
 test/local_human/run_human_sassy.jl
 ```
 
@@ -42,7 +42,7 @@ the real server first:
 ```bash
 SASSY_BENCH_OUT=/tmp/sassy_zen_backends.csv \
 JULIA_NUM_THREADS=8 \
-/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
+/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/bin/julia --project=. \
   scripts/benchmark_sassy_minima_backend.jl
 ```
 
@@ -78,25 +78,25 @@ Run the fast synthetic smoke matrix:
 ```bash
 CHOPOFF_GENERIC_PARITY_MODE=smoke \
 CHOPOFF_GENERIC_PARITY_OUT=/tmp/chopoff_generic_parity_smoke \
-JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
-/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
+JULIA_DEPOT_PATH=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/julia_depot: \
+/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/bin/julia --project=. \
   test/local_human/benchmark_human_generic_parity.jl
 ```
 
 Launch the full qualification as a background job:
 
 ```bash
-GENERIC_OUT=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl/test/local_human/outputs/generic_parity_grch38
-GENERIC_LOG=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl/test/local_human/outputs/generic_parity_grch38.log
+GENERIC_OUT=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/CHOPOFF.jl/test/local_human/outputs/generic_parity_grch38
+GENERIC_LOG=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/CHOPOFF.jl/test/local_human/outputs/generic_parity_grch38.log
 
 nohup setsid env \
-  JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
+  JULIA_DEPOT_PATH=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/julia_depot: \
   CHOPOFF_GENERIC_PARITY_MODE=qualification \
   CHOPOFF_GENERIC_PARITY_OUT="$GENERIC_OUT" \
   CHOPOFF_GENERIC_PARITY_THREADS=24 \
-  /home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia \
-  --project=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl \
-  /home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl/test/local_human/benchmark_human_generic_parity.jl \
+  /home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/bin/julia \
+  --project=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/CHOPOFF.jl \
+  /home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/CHOPOFF.jl/test/local_human/benchmark_human_generic_parity.jl \
   </dev/null >"$GENERIC_LOG" 2>&1 &
 
 PID=$!
@@ -124,8 +124,8 @@ CHOPOFF_TUNING_RUNS=11 \
 CHOPOFF_TUNING_ALLOCATION_RUNS=3 \
 CHOPOFF_TUNING_OUT=test/local_human/outputs/prefix_hash_scan_ambiguity \
 JULIA_NUM_THREADS=8 \
-JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
-/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia --project=. \
+JULIA_DEPOT_PATH=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/julia_depot: \
+/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/bin/julia --project=. \
   scripts/benchmark_prefix_hash_scan_tuning.jl
 ```
 
@@ -174,21 +174,21 @@ detail rows and duplicate multiplicity are compared with prefixHashScan.
 Launch the default sweep:
 
 ```bash
-SWEEP_OUT=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl/test/local_human/outputs/prefix_sweep_20260722
-SWEEP_LOG=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl/test/local_human/outputs/prefix_sweep_20260722/overnight.log
+SWEEP_OUT=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/CHOPOFF.jl/test/local_human/outputs/prefix_sweep_20260722
+SWEEP_LOG=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/CHOPOFF.jl/test/local_human/outputs/prefix_sweep_20260722/overnight.log
 mkdir -p "$SWEEP_OUT"
 
 nohup setsid env \
-  JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
+  JULIA_DEPOT_PATH=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/julia_depot: \
   CHOPOFF_HUMAN_SWEEP_OUT="$SWEEP_OUT" \
   CHOPOFF_HUMAN_SWEEP_RUNS=5 \
   CHOPOFF_HUMAN_SWEEP_THREADS=24 \
   CHOPOFF_HUMAN_SWEEP_MOTIFS=Cas9,Cas12a \
   CHOPOFF_HUMAN_SWEEP_DISTANCES=0,1,2,3,4 \
   CHOPOFF_HUMAN_SWEEP_REBUILD=0 \
-  /home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia \
-  --project=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl \
-  /home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl/test/local_human/benchmark_human_prefix_sweep.jl \
+  /home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/bin/julia \
+  --project=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/CHOPOFF.jl \
+  /home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/CHOPOFF.jl/test/local_human/benchmark_human_prefix_sweep.jl \
   </dev/null >"$SWEEP_LOG" 2>&1 &
 
 PID=$!
@@ -228,9 +228,9 @@ CHOPOFF_HUMAN_SWEEP_STAGE=parity \
 CHOPOFF_HUMAN_SWEEP_OUT=/absolute/path/to/prefix_sweep \
 CHOPOFF_HUMAN_SWEEP_MOTIFS=Cas9,Cas12a \
 CHOPOFF_HUMAN_SWEEP_DISTANCES=0,1,2,3,4 \
-JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
-/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia \
-  --project=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl \
+JULIA_DEPOT_PATH=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/julia_depot: \
+/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/bin/julia \
+  --project=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/CHOPOFF.jl \
   test/local_human/benchmark_human_prefix_sweep.jl
 ```
 
@@ -243,15 +243,15 @@ For a short sample-genome smoke run:
 
 ```bash
 SMOKE_ROOT=$(mktemp -d)
-CHOPOFF_HUMAN_GENOME=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl/test/sample_data/genome/semirandom.fa \
+CHOPOFF_HUMAN_GENOME=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/CHOPOFF.jl/test/sample_data/genome/semirandom.fa \
 CHOPOFF_HUMAN_SWEEP_OUT="$SMOKE_ROOT/output" \
 CHOPOFF_HUMAN_SWEEP_INDEX_PARENT="$SMOKE_ROOT/indexes" \
 CHOPOFF_HUMAN_SWEEP_DISTANCES=0,1 \
 CHOPOFF_HUMAN_SWEEP_RUNS=1 \
 CHOPOFF_HUMAN_SWEEP_THREADS=2 \
 CHOPOFF_HUMAN_SWEEP_GUIDE_LIMIT=1 \
-JULIA_DEPOT_PATH=/home/rstudio/livemount/kornel_dev/temp_upload/Soft/julia_depot: \
-/home/rstudio/livemount/kornel_dev/temp_upload/Soft/bin/julia \
-  --project=/home/rstudio/livemount/kornel_dev/temp_upload/CHOPOFF.jl \
+JULIA_DEPOT_PATH=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/julia_depot: \
+/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/bin/julia \
+  --project=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/CHOPOFF.jl \
   test/local_human/benchmark_human_prefix_sweep.jl
 ```

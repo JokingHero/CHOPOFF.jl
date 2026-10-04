@@ -45,6 +45,69 @@ end
 @inline prefix_scan_candidate_last_offset(geometry::PrefixScanGeometry) =
     prefix_scan_candidate_bases(geometry) - 1
 
+# Candidate window starts, in buffer coordinates, allowed on each strand.
+# `all` is the span a kernel walks; it covers only the nonempty strand ranges.
+struct PrefixScanBounds
+    all::UnitRange{Int}
+    plus::UnitRange{Int}
+    minus::UnitRange{Int}
+end
+
+function prefix_scan_bounds(plus::UnitRange{Int}, minus::UnitRange{Int})
+    isempty(plus) && isempty(minus) && return nothing
+    isempty(plus) && return PrefixScanBounds(minus, plus, minus)
+    isempty(minus) && return PrefixScanBounds(plus, plus, minus)
+    return PrefixScanBounds(
+        min(first(plus), first(minus)):max(last(plus), last(minus)),
+        plus, minus)
+end
+
+# Candidate starts per strand for a sequence of length `n` whose known bases
+# span `seq_start:seq_stop`, following `findguides`: the strand whose extension
+# lies left of the window may start up to `motif.distance` bases before the
+# first known base; the other may end up to `motif.distance` bases after the
+# last one. A strand the motif does not search gets an empty range.
+function prefix_scan_strand_ranges(
+    geometry::PrefixScanGeometry, motif::Motif,
+    n::Int, seq_start::Int, seq_stop::Int)
+
+    last_offset = prefix_scan_candidate_last_offset(geometry)
+    function strand_range(is_antisense::Bool, pattern)
+        isempty(pattern) && return 1:0
+        xor(is_antisense, motif.extends5) &&
+            return max(seq_start - motif.distance, 1):(seq_stop - last_offset)
+        return seq_start:(min(seq_stop + motif.distance, n) - last_offset)
+    end
+    return strand_range(false, motif.fwd), strand_range(true, motif.rve)
+end
+
+function prefix_scan_bounds(
+    geometry::PrefixScanGeometry, seq::Union{LongDNA{4}, AbstractVector{UInt8}},
+    dbi::DBInfo)
+
+    n = length(seq)
+    n < prefix_scan_candidate_bases(geometry) && return nothing
+    seq_start, seq_stop = prefix_scan_known_span(seq)
+    return prefix_scan_bounds(prefix_scan_strand_ranges(
+        geometry, dbi.motif, n, seq_start, seq_stop)...)
+end
+
+prefix_scan_known_span(chrom_seq::LongDNA{4}) = locate_telomeres(chrom_seq)
+
+function prefix_scan_known_span(raw::AbstractVector{UInt8})
+    seq_start = 1
+    seq_stop = length(raw)
+    @inbounds while seq_start <= seq_stop &&
+            (raw[seq_start] == UInt8('N') || raw[seq_start] == UInt8('n'))
+        seq_start += 1
+    end
+    @inbounds while seq_stop > 0 &&
+            (raw[seq_stop] == UInt8('N') || raw[seq_stop] == UInt8('n'))
+        seq_stop -= 1
+    end
+    return seq_start, seq_stop
+end
+
 mutable struct PrefixHashScanStats
     motif_candidates::Int
     ambiguous_prefixes::Int
@@ -357,6 +420,109 @@ function validate_prefix_hash_scan_query(
 end
 
 
+function resolve_prefix_hash_scan_plan(
+    guides::Vector{LongDNA{4}},
+    motif::Motif,
+    dbi::DBInfo,
+    distance::Int,
+    hash_len::Int,
+    early_stopping::Vector{Int},
+    query_variant::Symbol,
+    scan_backend::Symbol,
+    simd_backend::Symbol,
+    bucket_bases::Int,
+    stream_chunk_bases::Int,
+    prefilter_bits::Int,
+    lookup_variant::Symbol,
+    verify_variant::Symbol,
+    output::Symbol)
+
+    hash_type = smallestutype(parse(UInt, repeat("1", hash_len * 2); base = 2))
+    resolved_query_variant =
+        resolve_prefix_hash_scan_query_variant(query_variant, length(guides))
+    scan_backend in (
+        :auto, :legacy, :fused_directory, :streaming_fasta_simd,
+        :streaming_2bit_simd) ||
+        error("scan_backend must be :auto, :legacy, :fused_directory, :streaming_fasta_simd, or :streaming_2bit_simd.")
+    geometry = resolve_prefix_scan_geometry(motif, distance, hash_len)
+    scan_kind = geometry === nothing ? :none : prefix_scan_kind(geometry)
+    resolved_simd_backend = resolve_prefix_hash_scan_simd_backend(
+        simd_backend; scan_kind)
+    supports_fused = geometry !== nothing &&
+        resolved_query_variant == :bitmask64
+    supports_raw_simd = supports_fused &&
+        hash_len == (geometry::PrefixScanGeometry).prefix_bases &&
+        resolved_simd_backend != :none
+    supports_fasta_simd = supports_raw_simd && dbi.gi.is_fa
+    supports_twobit_simd = supports_raw_simd && !dbi.gi.is_fa
+    resolved_scan_backend = if scan_backend != :auto
+        scan_backend
+    elseif supports_fasta_simd
+        :streaming_fasta_simd
+    elseif supports_twobit_simd
+        :streaming_2bit_simd
+    elseif supports_fused
+        :fused_directory
+    else
+        :legacy
+    end
+    if output == :counts
+        resolved_scan_backend in (
+            :streaming_fasta_simd, :streaming_2bit_simd) ||
+            (resolved_scan_backend = :legacy)
+    end
+    if resolved_scan_backend != :legacy && !supports_fused
+        error("Fused scan backends require an optimized distance-0-through-4, 16-base-prefix geometry and at most 64 guides.")
+    end
+    if resolved_scan_backend == :streaming_fasta_simd && !supports_fasta_simd
+        resolved_scan_backend = :fused_directory
+    end
+    if resolved_scan_backend == :streaming_2bit_simd && !supports_twobit_simd
+        resolved_scan_backend = :fused_directory
+    end
+    # Derive the early-stopping state only once the backend is final: only the
+    # streaming backends consume it, and the downgrades above can leave one.
+    early_stop_state = all(==(typemax(Int)), early_stopping) ||
+        !(resolved_scan_backend in (
+            :streaming_fasta_simd, :streaming_2bit_simd)) ? nothing :
+        PrefixHashScanEarlyStopState(length(guides), early_stopping)
+    uses_raw_simd = resolved_scan_backend in (
+        :streaming_fasta_simd, :streaming_2bit_simd)
+    if simd_backend != :auto && !uses_raw_simd
+        error("simd_backend=$(repr(simd_backend)) requires an applicable raw SIMD scan backend.")
+    end
+    effective_simd_backend = uses_raw_simd ? resolved_simd_backend : :none
+    resolved_lookup_variant = if lookup_variant == :auto
+        resolved_scan_backend in (:streaming_fasta_simd, :streaming_2bit_simd) &&
+            prefilter_bits != 0 && bucket_bases == 11 &&
+            stream_chunk_bases + prefix_scan_candidate_last_offset(
+                geometry::PrefixScanGeometry) + distance <= typemax(UInt32) ?
+            :bucketed : :inline
+    else
+        lookup_variant
+    end
+    if resolved_lookup_variant == :bucketed
+        resolved_scan_backend in (:streaming_fasta_simd, :streaming_2bit_simd) ||
+            error("lookup_variant=:bucketed requires a buffered streaming SIMD backend.")
+        prefilter_bits != 0 ||
+            error("lookup_variant=:bucketed requires a nonzero prefilter.")
+        bucket_bases == 11 ||
+            error("lookup_variant=:bucketed currently requires bucket_bases=11.")
+        stream_chunk_bases + prefix_scan_candidate_last_offset(
+            geometry::PrefixScanGeometry) + distance <= typemax(UInt32) ||
+            error("lookup_variant=:bucketed requires chunks smaller than 4 GiB.")
+    end
+    if verify_variant == :myers_raw && !uses_raw_simd
+        error("verify_variant=:myers_raw requires a raw SIMD backend.")
+    end
+    if uses_raw_simd && !(verify_variant in (:auto, :myers_raw))
+        error("Streaming SIMD backends require verify_variant=:auto or :myers_raw.")
+    end
+    return (; geometry, hash_type, resolved_query_variant, resolved_scan_backend,
+        resolved_lookup_variant, effective_simd_backend, uses_raw_simd,
+        early_stop_state)
+end
+
 """
 ```
 search_prefixHashScan(
@@ -426,13 +592,12 @@ These select between equivalent implementations. They exist for benchmarking
 and are not needed for correct results; every combination is expected to
 produce identical output. They are not covered by semantic versioning.
 
-`query_variant` - `:auto`, `:baseline`, `:columnwise`, `:bitmask64`, or
-`:bruteforce`. `:bruteforce` skips the prefix-hash filter and verifies every
+`query_variant` - `:auto`, `:columnwise`, `:bitmask64`, or `:bruteforce`. `:bruteforce` skips the prefix-hash filter and verifies every
 motif candidate, so it is the reference for checking the filter has no false
 negatives. `:bitmask64` supports at most 64 guides.
 
-`scan_backend` - Pins the scan engine, e.g. `:legacy`, `:fused_directory`,
-`:streaming_fasta_simd`, `:streaming_2bit_simd`. `:auto` picks the fastest
+`scan_backend` - Pins the scan engine: `:legacy`, `:fused_directory`,
+`:streaming_fasta_simd`, or `:streaming_2bit_simd`. `:auto` picks the fastest
 applicable one.
 
 `query_build_backend` - `:auto`, `:serial`, or `:parallel` query construction.
@@ -507,113 +672,18 @@ function search_prefixHashScan(
     if stats !== nothing
         stats.metadata_ns += time_ns() - metadata_start
     end
-    hash_type = smallestutype(parse(UInt, repeat("1", hash_len * 2); base = 2))
-    resolved_query_variant =
-        resolve_prefix_hash_scan_query_variant(query_variant, length(guides))
-    scan_backend in (
-        :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd,
-        :streaming_fasta_simd, :streaming_fasta_simd_fused,
-        :streaming_2bit_simd) ||
-        error("scan_backend must be :auto, :legacy, :fused_dict, :fused_directory, :fused_fasta_simd, :streaming_fasta_simd, :streaming_fasta_simd_fused, or :streaming_2bit_simd.")
-    geometry = resolve_prefix_scan_geometry(motif, distance, hash_len)
-    scan_kind = geometry === nothing ? :none : prefix_scan_kind(geometry)
-    resolved_simd_backend = resolve_prefix_hash_scan_simd_backend(
-        simd_backend; scan_kind)
-    supports_fused = geometry !== nothing &&
-        resolved_query_variant == :bitmask64
-    supports_raw_simd = supports_fused &&
-        hash_len == (geometry::PrefixScanGeometry).prefix_bases &&
-        resolved_simd_backend != :none
-    supports_fasta_simd = supports_raw_simd && dbi.gi.is_fa
-    supports_twobit_simd = supports_raw_simd && !dbi.gi.is_fa
-    resolved_scan_backend = if scan_backend != :auto
-        scan_backend
-    elseif supports_fasta_simd
-        :streaming_fasta_simd
-    elseif supports_twobit_simd
-        :streaming_2bit_simd
-    elseif supports_fused
-        :fused_directory
-    else
-        :legacy
-    end
-    if output == :counts
-        resolved_scan_backend == :streaming_fasta_simd_fused &&
-            (resolved_scan_backend = :streaming_fasta_simd)
-        resolved_scan_backend in (
-            :streaming_fasta_simd, :streaming_2bit_simd) ||
-            (resolved_scan_backend = :legacy)
-    end
-    if resolved_scan_backend != :legacy && !supports_fused
-        error("Fused scan backends require an optimized distance-0-through-4, 16-base-prefix geometry and at most 64 guides.")
-    end
-    if resolved_scan_backend in (
-            :fused_fasta_simd, :streaming_fasta_simd,
-            :streaming_fasta_simd_fused) &&
-            !supports_fasta_simd
-        resolved_scan_backend = :fused_directory
-    end
-    if resolved_scan_backend == :streaming_2bit_simd && !supports_twobit_simd
-        resolved_scan_backend = :fused_directory
-    end
-    # Derive the early-stopping state only once the backend is final. The
-    # downgrades above used to run afterwards, so a requested streaming backend
-    # that fell back to :fused_directory left a live state attached to an
-    # engine that never consumes it. Only the two streaming backends thread
-    # early stopping through their chunk workers; :streaming_fasta_simd_fused
-    # does not (stream_prefix_hash_scan_chunk's :fused branch takes no
-    # early_stop_state), so it is deliberately excluded here.
-    early_stop_state = all(==(typemax(Int)), early_stopping) ||
-        !(resolved_scan_backend in (
-            :streaming_fasta_simd, :streaming_2bit_simd)) ? nothing :
-        PrefixHashScanEarlyStopState(length(guides), early_stopping)
-    uses_raw_simd = resolved_scan_backend in (
-        :fused_fasta_simd, :streaming_fasta_simd,
-        :streaming_fasta_simd_fused, :streaming_2bit_simd)
-    if simd_backend != :auto && !uses_raw_simd
-        error("simd_backend=$(repr(simd_backend)) requires an applicable raw SIMD scan backend.")
-    end
-    effective_simd_backend = uses_raw_simd ? resolved_simd_backend : :none
-    resolved_lookup_variant = if lookup_variant == :auto
-        resolved_scan_backend in (:streaming_fasta_simd, :streaming_2bit_simd) &&
-            prefilter_bits != 0 && bucket_bases == 11 &&
-            stream_chunk_bases + prefix_scan_candidate_last_offset(
-                geometry::PrefixScanGeometry) + distance <= typemax(UInt32) ?
-            :bucketed : :inline
-    else
-        lookup_variant
-    end
-    if resolved_lookup_variant == :bucketed
-        resolved_scan_backend in (:streaming_fasta_simd, :streaming_2bit_simd) ||
-            error("lookup_variant=:bucketed requires a buffered streaming SIMD backend.")
-        prefilter_bits != 0 ||
-            error("lookup_variant=:bucketed requires a nonzero prefilter.")
-        bucket_bases == 11 ||
-            error("lookup_variant=:bucketed currently requires bucket_bases=11.")
-        stream_chunk_bases + prefix_scan_candidate_last_offset(
-            geometry::PrefixScanGeometry) + distance <= typemax(UInt32) ||
-            error("lookup_variant=:bucketed requires chunks smaller than 4 GiB.")
-    end
-    if verify_variant == :myers_raw &&
-            !(resolved_scan_backend in (
-                :fused_fasta_simd, :streaming_fasta_simd,
-                :streaming_fasta_simd_fused, :streaming_2bit_simd))
-        error("verify_variant=:myers_raw requires a raw SIMD backend.")
-    end
-    if resolved_scan_backend in (
-            :streaming_fasta_simd, :streaming_fasta_simd_fused,
-            :streaming_2bit_simd) &&
-            !(verify_variant in (:auto, :myers_raw))
-        error("Streaming SIMD backends require verify_variant=:auto or :myers_raw.")
-    end
+    (; geometry, hash_type, resolved_query_variant, resolved_scan_backend,
+        resolved_lookup_variant, effective_simd_backend, uses_raw_simd,
+        early_stop_state) = resolve_prefix_hash_scan_plan(
+        guides, motif, dbi, distance, hash_len, early_stopping,
+        query_variant, scan_backend, simd_backend, bucket_bases,
+        stream_chunk_bases, prefilter_bits, lookup_variant, verify_variant,
+        output)
     if verbose
         worker_count = min(scan_threads, Threads.nthreads(), length(guides))
         resolved_query_build_backend = resolve_prefix_hash_scan_query_build_backend(
             query_build_backend, worker_count)
-        scheduler = resolved_scan_backend in (
-            :streaming_fasta_simd, :streaming_fasta_simd_fused,
-            :streaming_2bit_simd) ?
-            :chunk : :record
+        scheduler = uses_raw_simd ? :chunk : :record
         @info(
             "prefixHashScan execution",
             scan_geometry = geometry === nothing ? :generic : prefix_scan_kind(geometry),
@@ -629,9 +699,7 @@ function search_prefixHashScan(
     end
 
     query_start = prefix_hash_scan_timer(stats)
-    if resolved_scan_backend in (
-            :fused_directory, :fused_fasta_simd, :streaming_fasta_simd,
-            :streaming_fasta_simd_fused, :streaming_2bit_simd)
+    if resolved_scan_backend != :legacy
         query, guides_ = build_prefix_hash_scan_compact_query(
             guides,
             motif,
@@ -639,10 +707,7 @@ function search_prefixHashScan(
             hash_len,
             stats;
             bucket_bases = bucket_bases,
-            prefilter_bits = resolved_scan_backend in (
-                :fused_fasta_simd, :streaming_fasta_simd,
-                :streaming_fasta_simd_fused, :streaming_2bit_simd) ?
-                prefilter_bits : 0,
+            prefilter_bits = uses_raw_simd ? prefilter_bits : 0,
             query_build_backend = query_build_backend,
             query_threads = scan_threads,
             paths = _paths,
@@ -674,46 +739,25 @@ function search_prefixHashScan(
     es_acc = zeros(Int, length(guides), length(early_stopping))
     is_es = falses(length(guides))
     seen = [Set{Tuple{String, Int, String, Int, String, String, String}}() for _ in guides]
-    candidate_guides = Int[]
     use_bruteforce_query = resolved_query_variant == :bruteforce
     use_bitmask_query = query isa PrefixHashScanBitmaskQuery
-    use_direct_specialized_hash = geometry !== nothing
-    use_fused_scan = resolved_scan_backend in (
-        :fused_dict, :fused_directory, :fused_fasta_simd,
-        :streaming_fasta_simd, :streaming_fasta_simd_fused,
-        :streaming_2bit_simd)
-    use_myers_raw = verify_variant == :myers_raw ||
-        (verify_variant == :auto && resolved_scan_backend in (
-            :fused_fasta_simd, :streaming_fasta_simd,
-            :streaming_fasta_simd_fused, :streaming_2bit_simd))
+    use_fused_scan = resolved_scan_backend != :legacy
     use_distance_first = verify_variant == :distance_first ||
-        (verify_variant == :auto && use_fused_scan && !use_myers_raw)
-    myers_profiles = use_myers_raw || output == :counts &&
-            resolved_scan_backend in (
-                :streaming_fasta_simd, :streaming_2bit_simd) ?
+        (verify_variant == :auto && use_fused_scan && !uses_raw_simd)
+    myers_profiles = uses_raw_simd ?
         build_prefix_hash_scan_myers_profiles(guides_) : nothing
+    run_stream(stream_fn) = stream_fn(
+        geometry::PrefixScanGeometry, dbi.gi.filepath, reference_lengths,
+        query, dbi, guides_, myers_profiles::Vector{PrefixHashScanMyersProfile},
+        distance, stream_chunk_bases, scan_threads,
+        Val(resolved_lookup_variant == :bucketed ?
+            :bucketed_reuse : :buffered_reuse),
+        stats, early_stop_state; simd_backend = Val(effective_simd_backend))
 
     if output == :counts
         scan_start = prefix_hash_scan_timer(stats)
-        counts = if resolved_scan_backend in (
-                :streaming_fasta_simd, :streaming_2bit_simd)
-            chunk_results = stream_prefix_hash_scan_counts(
-                geometry::PrefixScanGeometry,
-                dbi.gi.filepath,
-                reference_lengths,
-                query,
-                dbi,
-                guides_,
-                myers_profiles::Vector{PrefixHashScanMyersProfile},
-                distance,
-                stream_chunk_bases,
-                scan_threads,
-                Val(resolved_lookup_variant == :bucketed ?
-                    :bucketed_reuse : :buffered_reuse),
-                stats,
-                early_stop_state,
-                simd_backend = Val(effective_simd_backend),
-            )
+        counts = if uses_raw_simd
+            chunk_results = run_stream(stream_prefix_hash_scan_counts)
             merged = early_stop_state === nothing ?
                 zeros(Int, length(guides), distance + 1) :
                 prefix_hash_scan_early_stop_counts(early_stop_state)
@@ -728,8 +772,7 @@ function search_prefixHashScan(
             search_prefix_hash_scan_legacy_counts(
                 dbi, reference_lengths, query, guides_, geometry, distance,
                 hash_len, hash_type,
-                use_bruteforce_query, use_bitmask_query,
-                use_direct_specialized_hash, stats)
+                use_bruteforce_query, use_bitmask_query, stats)
         end
         merge_prefix_hash_scan_early_stop_stats!(stats, early_stop_state)
         stats === nothing || (stats.scan_ns += time_ns() - scan_start)
@@ -744,278 +787,238 @@ function search_prefixHashScan(
         _append_output ||
             write(out, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
 
-        if resolved_scan_backend in (
-                :streaming_fasta_simd, :streaming_fasta_simd_fused,
-                :streaming_2bit_simd)
+        if uses_raw_simd
             scan_start = prefix_hash_scan_timer(stats)
-            chunk_results, chrom_chunk_ranges = stream_prefix_hash_scan(
-                geometry::PrefixScanGeometry,
-                dbi.gi.filepath,
-                reference_lengths,
-                query,
-                dbi,
-                guides_,
-                myers_profiles,
-                distance,
-                stream_chunk_bases,
-                scan_threads,
-                Val(resolved_scan_backend == :streaming_fasta_simd_fused ?
-                    :fused : (resolved_lookup_variant == :bucketed ?
-                        :bucketed_reuse : :buffered_reuse)),
-                stats,
-                Val(:chunk),
-                early_stop_state,
-                simd_backend = Val(effective_simd_backend),
-            )
-            for chrom_idx in eachindex(chrom_chunk_ranges)
-                chrom_name = dbi.gi.chrom[chrom_idx]
-                chunk_range = chrom_chunk_ranges[chrom_idx]
-                if stats !== nothing
-                    for chunk_idx in chunk_range
-                        result_ = chunk_results[chunk_idx]
-                        result_ === nothing && continue
-                        merge_prefix_hash_scan_worker_stats!(stats, result_.stats)
-                    end
+            chunk_results, chrom_chunk_ranges = run_stream(stream_prefix_hash_scan)
+            commit_prefix_hash_scan_chunks!(
+                out, chunk_results, chrom_chunk_ranges, dbi.gi.chrom, guides,
+                early_stopping, es_acc, is_es, seen, stats;
+                prelimited = early_stop_state !== nothing)
+            stats === nothing || (stats.scan_ns += time_ns() - scan_start)
+            return nothing
+        end
+
+        scan_start = prefix_hash_scan_timer(stats)
+        search_prefix_hash_scan_legacy_detail!(
+            out, dbi, reference_lengths, query, guides, guides_, motif,
+            geometry, distance, hash_len, hash_type, early_stopping,
+            es_acc, is_es, seen, scan_threads, use_fused_scan,
+            use_distance_first, use_bruteforce_query, use_bitmask_query,
+            stats)
+        stats === nothing || (stats.scan_ns += time_ns() - scan_start)
+    end
+    merge_prefix_hash_scan_early_stop_stats!(stats, early_stop_state)
+    return
+end
+
+function foreach_prefix_hash_scan_record(
+    f, dbi::DBInfo, reference_lengths, stats::Union{Nothing, PrefixHashScanStats})
+
+    ref = open(dbi.gi.filepath, "r")
+    try
+        reader = dbi.gi.is_fa ? FASTA.Reader(ref; copy = false) : TwoBit.Reader(ref)
+        records = dbi.gi.is_fa ?
+            PrefixHashScanFASTARecords(
+                reader, dbi.gi.chrom, reference_lengths) :
+            PrefixHashScanIndexedRecords(reader, dbi.gi.chrom)
+        for (chrom_name, record, record_io_ns) in records
+            convert_start = prefix_hash_scan_timer(stats)
+            chrom_seq = dbi.gi.is_fa ?
+                FASTA.sequence(LongDNA{4}, record) :
+                TwoBit.sequence(LongDNA{4}, record)
+            if stats !== nothing
+                sequence_convert_ns = time_ns() - convert_start
+                stats.record_io_ns += record_io_ns
+                stats.sequence_convert_ns += sequence_convert_ns
+                stats.chrom_load_ns += record_io_ns + sequence_convert_ns
+            end
+            f(chrom_name, chrom_seq)
+        end
+    finally
+        close(ref)
+    end
+    return nothing
+end
+
+# Calls `f(candidate_range, is_antisense, candidate_mask)` for every motif
+# candidate that passes the prefix-hash filter. Non-bitmask queries leave their
+# guide indices in `candidate_guides`. Bruteforce passes every candidate that
+# still has an unretired guide.
+function foreach_prefix_hash_scan_legacy_candidate(
+    f,
+    chrom_seq::LongDNA{4},
+    dbi::DBInfo,
+    query,
+    geometry,
+    hash_len::Int,
+    hash_type::Type{<:Unsigned},
+    use_bruteforce_query::Bool,
+    use_bitmask_query::Bool,
+    candidate_guides::Vector{Int},
+    is_es::BitVector,
+    stats::Union{Nothing, PrefixHashScanStats})
+
+    for is_antisense in (false, true)
+        findguides_start = prefix_hash_scan_timer(stats)
+        positions = findguides(dbi, chrom_seq, is_antisense)
+        stats === nothing ||
+            (stats.findguides_ns += time_ns() - findguides_start)
+        for candidate_range in positions
+            stats === nothing || (stats.motif_candidates += 1)
+            candidate_mask = zero(UInt64)
+            if use_bruteforce_query
+                guide_count = count(!, is_es)
+                guide_count == 0 && continue
+            else
+                hash_start = prefix_hash_scan_timer(stats)
+                hashes = geometry !== nothing ?
+                    candidate_prefix_hashes_direct(
+                        geometry, chrom_seq, candidate_range, is_antisense,
+                        hash_len, hash_type) : nothing
+                if hashes === nothing
+                    stats === nothing ||
+                        (stats.candidate_hash_ns += time_ns() - hash_start)
+                    prefix_start = prefix_hash_scan_timer(stats)
+                    prefix = normalized_candidate_prefix(
+                        chrom_seq, candidate_range, dbi, is_antisense, hash_len)
+                    stats === nothing ||
+                        (stats.candidate_prefix_ns += time_ns() - prefix_start)
+                    hash_start = prefix_hash_scan_timer(stats)
+                    hashes = candidate_prefix_hashes(prefix, hash_type, stats)
                 end
-                for strand in (:plus, :minus)
-                    for chunk_idx in chunk_range
-                        result_ = chunk_results[chunk_idx]
-                        result_ === nothing && continue
-                        hits = getfield(result_, strand)
-                        for hit in hits
-                            commit_prefix_hash_scan_verified!(
-                                out,
-                                hit,
-                                guides[hit.guide_idx],
-                                chrom_name,
-                                early_stopping,
-                                es_acc,
-                                is_es,
-                                seen,
-                                stats,
-                                prelimited = early_stop_state !== nothing,
-                            )
-                        end
-                    end
+                stats === nothing ||
+                    (stats.candidate_hash_ns += time_ns() - hash_start)
+                lookup_start = prefix_hash_scan_timer(stats)
+                if use_bitmask_query
+                    candidate_mask = prefix_hash_scan_candidate_mask(query, hashes)
+                    has_candidate_guides = candidate_mask != 0
+                    guide_count = count_ones(candidate_mask)
+                else
+                    has_candidate_guides = append_prefix_hash_scan_guides!(
+                        candidate_guides, query, hashes)
+                    guide_count = length(candidate_guides)
                 end
+                stats === nothing ||
+                    (stats.query_lookup_ns += time_ns() - lookup_start)
+                has_candidate_guides || continue
             end
             if stats !== nothing
-                stats.scan_ns += time_ns() - scan_start
+                stats.prefix_hits += 1
+                stats.guide_pairs += guide_count
+                use_bruteforce_query &&
+                    (stats.bruteforce_guide_pairs += guide_count)
+            end
+            f(candidate_range, is_antisense, candidate_mask)
+        end
+    end
+    return nothing
+end
+
+@inline function foreach_prefix_hash_scan_legacy_guide(
+    f,
+    candidate_mask::UInt64,
+    candidate_guides::Vector{Int},
+    guide_count::Int,
+    use_bitmask_query::Bool,
+    use_bruteforce_query::Bool)
+
+    if use_bitmask_query
+        while candidate_mask != 0
+            f(trailing_zeros(candidate_mask) + 1)
+            candidate_mask &= candidate_mask - 1
+        end
+    else
+        foreach(f, use_bruteforce_query ? (1:guide_count) : candidate_guides)
+    end
+    return nothing
+end
+
+function search_prefix_hash_scan_legacy_detail!(
+    out::IO,
+    dbi::DBInfo,
+    reference_lengths,
+    query,
+    guides::Vector{LongDNA{4}},
+    guides_::Vector{LongDNA{4}},
+    motif::Motif,
+    geometry,
+    distance::Int,
+    hash_len::Int,
+    hash_type::Type{<:Unsigned},
+    early_stopping::Vector{Int},
+    es_acc::Matrix{Int},
+    is_es::BitVector,
+    seen,
+    scan_threads::Int,
+    use_fused_scan::Bool,
+    use_distance_first::Bool,
+    use_bruteforce_query::Bool,
+    use_bitmask_query::Bool,
+    stats::Union{Nothing, PrefixHashScanStats})
+
+    candidate_guides = Int[]
+    foreach_prefix_hash_scan_record(
+            dbi, reference_lengths, stats) do chrom_name, chrom_seq
+        if use_fused_scan
+            plus_hits, minus_hits = scan_prefix_hits(
+                geometry::PrefixScanGeometry, chrom_seq, dbi, query,
+                hash_len, stats; scan_threads = scan_threads)
+            for (is_antisense, hits) in ((false, plus_hits), (true, minus_hits))
+                if stats !== nothing
+                    stats.prefix_hits += length(hits)
+                    stats.guide_pairs += sum(hit -> count_ones(hit.mask), hits; init = 0)
+                end
+                for hit in hits
+                    candidate_range = hit.start:(hit.start +
+                        prefix_scan_candidate_last_offset(
+                            geometry::PrefixScanGeometry))
+                    verify_prefix_hash_scan_bitmask_candidate!(
+                        out,
+                        chrom_seq,
+                        candidate_range,
+                        geometry::PrefixScanGeometry,
+                        dbi,
+                        is_antisense,
+                        hit.mask,
+                        guides,
+                        guides_,
+                        chrom_name,
+                        distance,
+                        early_stopping,
+                        es_acc,
+                        is_es,
+                        seen,
+                        stats;
+                        distance_first = use_distance_first,
+                    )
+                end
             end
             return nothing
         end
 
-        ref = open(dbi.gi.filepath, "r")
-        try
-            reader = dbi.gi.is_fa ? FASTA.Reader(ref; copy = false) : TwoBit.Reader(ref)
-            records = dbi.gi.is_fa ?
-                PrefixHashScanFASTARecords(reader, dbi.gi.chrom, reference_lengths) :
-                PrefixHashScanIndexedRecords(reader, dbi.gi.chrom)
-            scan_start = time_ns()
-            for (chrom_name, record, record_io_ns) in records
-                if resolved_scan_backend == :fused_fasta_simd
-                    raw_part = FASTX.seq_data_part(record, 1:FASTX.seqsize(record))
-                    raw = @view record.data[raw_part]
-                    if stats !== nothing
-                        stats.record_io_ns += record_io_ns
-                        stats.chrom_load_ns += record_io_ns
-                    end
-                    plus_hits, minus_hits = scan_prefix_hits_raw(
-                        geometry::PrefixScanGeometry, raw, dbi, query, stats;
-                        scan_threads = scan_threads,
-                        simd_backend = Val(effective_simd_backend))
-                    for (is_antisense, hits) in ((false, plus_hits), (true, minus_hits))
-                        if stats !== nothing
-                            stats.prefix_hits += length(hits)
-                            stats.guide_pairs +=
-                                sum(hit -> count_ones(hit.mask), hits; init = 0)
-                        end
-                        for hit in hits
-                            verify_prefix_hash_scan_bitmask_candidate!(
-                                out,
-                                raw,
-                                hit.start:(hit.start + prefix_scan_candidate_last_offset(
-                                    geometry::PrefixScanGeometry)),
-                                geometry::PrefixScanGeometry,
-                                dbi,
-                                is_antisense,
-                                hit.mask,
-                                guides,
-                                guides_,
-                                chrom_name,
-                                distance,
-                                early_stopping,
-                                es_acc,
-                                is_es,
-                                seen,
-                                stats;
-                                distance_first = use_distance_first,
-                                myers_profiles = myers_profiles,
-                            )
-                        end
-                    end
-                    continue
-                end
-
-                convert_start = time_ns()
-                chrom_seq = dbi.gi.is_fa ?
-                    FASTA.sequence(LongDNA{4}, record) :
-                    TwoBit.sequence(LongDNA{4}, record)
-                sequence_convert_ns = time_ns() - convert_start
-                if stats !== nothing
-                    stats.record_io_ns += record_io_ns
-                    stats.sequence_convert_ns += sequence_convert_ns
-                    stats.chrom_load_ns += record_io_ns + sequence_convert_ns
-                end
-
-                if use_fused_scan
-                    plus_hits, minus_hits = scan_prefix_hits(
-                        geometry::PrefixScanGeometry, chrom_seq, dbi, query,
-                        hash_len, stats; scan_threads = scan_threads)
-                    for (is_antisense, hits) in ((false, plus_hits), (true, minus_hits))
-                        if stats !== nothing
-                            stats.prefix_hits += length(hits)
-                            stats.guide_pairs += sum(hit -> count_ones(hit.mask), hits; init = 0)
-                        end
-                        for hit in hits
-                            candidate_range = hit.start:(hit.start +
-                                prefix_scan_candidate_last_offset(
-                                    geometry::PrefixScanGeometry))
-                            verify_prefix_hash_scan_bitmask_candidate!(
-                                out,
-                                chrom_seq,
-                                candidate_range,
-                                geometry::PrefixScanGeometry,
-                                dbi,
-                                is_antisense,
-                                hit.mask,
-                                guides,
-                                guides_,
-                                chrom_name,
-                                distance,
-                                early_stopping,
-                                es_acc,
-                                is_es,
-                                seen,
-                                stats;
-                                distance_first = use_distance_first,
-                            )
-                        end
-                    end
-                    continue
-                end
-
-                for is_antisense in (false, true)
-                    findguides_start = time_ns()
-                    positions = findguides(dbi, chrom_seq, is_antisense)
-                    if stats !== nothing
-                        stats.findguides_ns += time_ns() - findguides_start
-                    end
-                    isempty(positions) && continue
-                    strand = is_antisense ? "-" : "+"
-
-                    for candidate_range in positions
-                        if stats !== nothing
-                            stats.motif_candidates += 1
-                        end
-
-                        candidate_mask = zero(UInt64)
-                        if use_bruteforce_query
-                            guide_count = count(!, is_es)
-                            has_candidate_guides = guide_count != 0
-                        else
-                            hash_start = time_ns()
-                            if use_direct_specialized_hash
-                                hashes = candidate_prefix_hashes_direct(
-                                    geometry::PrefixScanGeometry, chrom_seq,
-                                    candidate_range, is_antisense, hash_len, hash_type)
-                            else
-                                hashes = nothing
-                            end
-                            if hashes === nothing
-                                if stats !== nothing
-                                    stats.candidate_hash_ns += time_ns() - hash_start
-                                end
-                                prefix_start = time_ns()
-                                prefix = normalized_candidate_prefix(chrom_seq, candidate_range, dbi, is_antisense, hash_len)
-                                if stats !== nothing
-                                    stats.candidate_prefix_ns += time_ns() - prefix_start
-                                end
-                                hash_start = time_ns()
-                                hashes = candidate_prefix_hashes(prefix, hash_type, stats)
-                            end
-                            if stats !== nothing
-                                stats.candidate_hash_ns += time_ns() - hash_start
-                            end
-                            lookup_start = time_ns()
-                            if use_bitmask_query
-                                candidate_mask = prefix_hash_scan_candidate_mask(query, hashes)
-                                has_candidate_guides = candidate_mask != 0
-                                guide_count = count_ones(candidate_mask)
-                            else
-                                has_candidate_guides = append_prefix_hash_scan_guides!(candidate_guides, query, hashes)
-                                guide_count = length(candidate_guides)
-                            end
-                            if stats !== nothing
-                                stats.query_lookup_ns += time_ns() - lookup_start
-                            end
-                        end
-                        has_candidate_guides || continue
-
-                        if stats !== nothing
-                            stats.prefix_hits += 1
-                            stats.guide_pairs += guide_count
-                            if use_bruteforce_query
-                                stats.bruteforce_guide_pairs += guide_count
-                            end
-                        end
-
-                        materialize_start = time_ns()
-                        ot, pos = materialize_normalized_candidate(chrom_seq, candidate_range, dbi, is_antisense)
-                        if stats !== nothing
-                            stats.candidate_materialize_ns += time_ns() - materialize_start
-                        end
-                        verify_start = time_ns()
-                        if use_bitmask_query
-                            mask = candidate_mask
-                            while mask != 0
-                                guide_idx = trailing_zeros(mask) + 1
-                                mask &= mask - 1
-                                emit_prefix_hash_scan_legacy_hit!(
-                                    out, guide_idx, ot, pos, chrom_name,
-                                    strand, guides, guides_, distance, motif,
-                                    seen, es_acc, is_es, early_stopping, stats)
-                            end
-                        elseif use_bruteforce_query
-                            for guide_idx in eachindex(guides_)
-                                emit_prefix_hash_scan_legacy_hit!(
-                                    out, guide_idx, ot, pos, chrom_name,
-                                    strand, guides, guides_, distance, motif,
-                                    seen, es_acc, is_es, early_stopping, stats)
-                            end
-                        else
-                            for guide_idx in candidate_guides
-                                emit_prefix_hash_scan_legacy_hit!(
-                                    out, guide_idx, ot, pos, chrom_name,
-                                    strand, guides, guides_, distance, motif,
-                                    seen, es_acc, is_es, early_stopping, stats)
-                            end
-                        end
-                        if stats !== nothing
-                            stats.verify_ns += time_ns() - verify_start
-                        end
-                    end
-                end
+        foreach_prefix_hash_scan_legacy_candidate(
+                chrom_seq, dbi, query, geometry, hash_len, hash_type,
+                use_bruteforce_query, use_bitmask_query, candidate_guides,
+                is_es, stats) do candidate_range, is_antisense, candidate_mask
+            materialize_start = prefix_hash_scan_timer(stats)
+            ot, pos = materialize_normalized_candidate(
+                chrom_seq, candidate_range, dbi, is_antisense)
+            stats === nothing ||
+                (stats.candidate_materialize_ns += time_ns() - materialize_start)
+            strand = is_antisense ? "-" : "+"
+            verify_start = prefix_hash_scan_timer(stats)
+            foreach_prefix_hash_scan_legacy_guide(
+                    candidate_mask, candidate_guides, length(guides_),
+                    use_bitmask_query, use_bruteforce_query) do guide_idx
+                emit_prefix_hash_scan_legacy_hit!(
+                    out, guide_idx, ot, pos, chrom_name,
+                    strand, guides, guides_, distance, motif,
+                    seen, es_acc, is_es, early_stopping, stats)
             end
-            if stats !== nothing
-                stats.scan_ns += time_ns() - scan_start
-            end
-        finally
-            close(ref)
+            stats === nothing || (stats.verify_ns += time_ns() - verify_start)
         end
     end
-    merge_prefix_hash_scan_early_stop_stats!(stats, early_stop_state)
-    return
+    return nothing
 end
 
 function search_prefix_hash_scan_legacy_counts(
@@ -1029,137 +1032,36 @@ function search_prefix_hash_scan_legacy_counts(
     hash_type::Type{<:Unsigned},
     use_bruteforce_query::Bool,
     use_bitmask_query::Bool,
-    use_direct_specialized_hash::Bool,
     stats::Union{Nothing, PrefixHashScanStats})
 
     counts = zeros(Int, length(guides_), distance + 1)
     candidate_guides = Int[]
-    ref = open(dbi.gi.filepath, "r")
-    try
-        reader = dbi.gi.is_fa ? FASTA.Reader(ref; copy = false) : TwoBit.Reader(ref)
-        records = dbi.gi.is_fa ?
-            PrefixHashScanFASTARecords(
-                reader, dbi.gi.chrom, reference_lengths) :
-            PrefixHashScanIndexedRecords(reader, dbi.gi.chrom)
-        for (_, record, record_io_ns) in records
-            convert_start = prefix_hash_scan_timer(stats)
-            chrom_seq = dbi.gi.is_fa ?
-                FASTA.sequence(LongDNA{4}, record) :
-                TwoBit.sequence(LongDNA{4}, record)
-            if stats !== nothing
-                sequence_convert_ns = time_ns() - convert_start
-                stats.record_io_ns += record_io_ns
-                stats.sequence_convert_ns += sequence_convert_ns
-                stats.chrom_load_ns += record_io_ns + sequence_convert_ns
-            end
-            for is_antisense in (false, true)
-                findguides_start = prefix_hash_scan_timer(stats)
-                positions = findguides(dbi, chrom_seq, is_antisense)
-                stats === nothing ||
-                    (stats.findguides_ns += time_ns() - findguides_start)
-                for candidate_range in positions
-                    stats === nothing || (stats.motif_candidates += 1)
-                    candidate_mask = zero(UInt64)
-                    if use_bruteforce_query
-                        candidate_indices = eachindex(guides_)
-                        guide_count = count_ones(
-                            (length(guides_) == 64 ? typemax(UInt64) :
-                                (UInt64(1) << length(guides_)) - UInt64(1)))
-                    else
-                        hash_start = prefix_hash_scan_timer(stats)
-                        hashes = use_direct_specialized_hash ?
-                            candidate_prefix_hashes_direct(
-                                geometry::PrefixScanGeometry, chrom_seq,
-                                candidate_range, is_antisense, hash_len,
-                                hash_type) : nothing
-                        if hashes === nothing
-                            stats === nothing ||
-                                (stats.candidate_hash_ns += time_ns() - hash_start)
-                            prefix_start = prefix_hash_scan_timer(stats)
-                            prefix = normalized_candidate_prefix(
-                                chrom_seq, candidate_range, dbi,
-                                is_antisense, hash_len)
-                            stats === nothing ||
-                                (stats.candidate_prefix_ns +=
-                                    time_ns() - prefix_start)
-                            hash_start = prefix_hash_scan_timer(stats)
-                            hashes = candidate_prefix_hashes(
-                                prefix, hash_type, stats)
-                        end
-                        stats === nothing ||
-                            (stats.candidate_hash_ns += time_ns() - hash_start)
-                        lookup_start = prefix_hash_scan_timer(stats)
-                        if use_bitmask_query
-                            candidate_mask = prefix_hash_scan_candidate_mask(
-                                query, hashes)
-                            has_candidate_guides = candidate_mask != 0
-                            candidate_indices = nothing
-                            guide_count = count_ones(candidate_mask)
-                        else
-                            has_candidate_guides =
-                                append_prefix_hash_scan_guides!(
-                                    candidate_guides, query, hashes)
-                            candidate_indices = candidate_guides
-                            guide_count = length(candidate_guides)
-                        end
-                        stats === nothing ||
-                            (stats.query_lookup_ns += time_ns() - lookup_start)
-                        has_candidate_guides || continue
-                    end
-                    if stats !== nothing
-                        stats.prefix_hits += 1
-                        stats.guide_pairs += guide_count
-                        use_bruteforce_query &&
-                            (stats.bruteforce_guide_pairs += guide_count)
-                    end
-
-                    materialize_start = prefix_hash_scan_timer(stats)
-                    ot, _ = materialize_normalized_candidate(
-                        chrom_seq, candidate_range, dbi, is_antisense)
-                    stats === nothing ||
-                        (stats.candidate_materialize_ns +=
-                            time_ns() - materialize_start)
-                    verify_start = prefix_hash_scan_timer(stats)
-                    if use_bitmask_query
-                        while candidate_mask != 0
-                            guide_idx = trailing_zeros(candidate_mask) + 1
-                            candidate_mask &= candidate_mask - 1
-                            align_start = prefix_hash_scan_timer(stats)
-                            if stats !== nothing
-                                stats.alignment_calls += 1
-                                stats.distance_calls += 1
-                            end
-                            dist = levenshtein(
-                                guides_[guide_idx], ot, distance, iscompatible)
-                            stats === nothing ||
-                                (stats.align_ns += time_ns() - align_start)
-                            if dist <= distance
-                                counts[guide_idx, dist + 1] += 1
-                            end
-                        end
-                    else
-                        for guide_idx in candidate_indices
-                            align_start = prefix_hash_scan_timer(stats)
-                            if stats !== nothing
-                                stats.alignment_calls += 1
-                                stats.distance_calls += 1
-                            end
-                            dist = levenshtein(
-                                guides_[guide_idx], ot, distance, iscompatible)
-                            stats === nothing ||
-                                (stats.align_ns += time_ns() - align_start)
-                            if dist <= distance
-                                counts[guide_idx, dist + 1] += 1
-                            end
-                        end
-                    end
-                    stats === nothing ||
-                        (stats.verify_ns += time_ns() - verify_start)
+    no_retired_guides = falses(length(guides_))
+    foreach_prefix_hash_scan_record(dbi, reference_lengths, stats) do _, chrom_seq
+        foreach_prefix_hash_scan_legacy_candidate(
+                chrom_seq, dbi, query, geometry, hash_len, hash_type,
+                use_bruteforce_query, use_bitmask_query, candidate_guides,
+                no_retired_guides, stats) do candidate_range, is_antisense, candidate_mask
+            materialize_start = prefix_hash_scan_timer(stats)
+            ot, _ = materialize_normalized_candidate(
+                chrom_seq, candidate_range, dbi, is_antisense)
+            stats === nothing ||
+                (stats.candidate_materialize_ns += time_ns() - materialize_start)
+            verify_start = prefix_hash_scan_timer(stats)
+            foreach_prefix_hash_scan_legacy_guide(
+                    candidate_mask, candidate_guides, length(guides_),
+                    use_bitmask_query, use_bruteforce_query) do guide_idx
+                align_start = prefix_hash_scan_timer(stats)
+                if stats !== nothing
+                    stats.alignment_calls += 1
+                    stats.distance_calls += 1
                 end
+                dist = levenshtein(guides_[guide_idx], ot, distance, iscompatible)
+                stats === nothing || (stats.align_ns += time_ns() - align_start)
+                dist <= distance && (counts[guide_idx, dist + 1] += 1)
             end
+            stats === nothing || (stats.verify_ns += time_ns() - verify_start)
         end
-    finally
-        close(ref)
     end
     return counts
 end

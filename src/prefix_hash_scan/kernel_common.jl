@@ -297,16 +297,12 @@ function scan_ambiguous_prefix_hits_range!(
     dbi::DBInfo,
     query,
     hash_len::Int,
-    candidate_first::Int,
-    candidate_last::Int,
-    plus_first::Int,
-    plus_last::Int,
-    minus_first::Int,
-    minus_last::Int,
+    bounds::PrefixScanBounds,
     ::Val{K},
     stats::Union{Nothing, PrefixHashScanStats} = nothing,
     simd_backend::Val = default_prefix_hash_scan_simd_backend()) where K
 
+    candidate_first, candidate_last = first(bounds.all), last(bounds.all)
     candidate_first > candidate_last && return nothing
     candidate_bases = prefix_scan_candidate_bases(geometry)
     for block_start in candidate_first:64:candidate_last
@@ -326,10 +322,10 @@ function scan_ambiguous_prefix_hits_range!(
             candidate = prefix_hash_scan_candidate_sequence(
                 source, candidate_start, candidate_bases)
             candidate === nothing && continue
-            for (is_antisense, hits, strand_first, strand_last) in (
-                    (false, plus_hits, plus_first, plus_last),
-                    (true, minus_hits, minus_first, minus_last))
-                strand_first <= candidate_start <= strand_last || continue
+            for (is_antisense, hits, strand_range) in (
+                    (false, plus_hits, bounds.plus),
+                    (true, minus_hits, bounds.minus))
+                candidate_start in strand_range || continue
                 pattern = is_antisense ? dbi.motif.rve : dbi.motif.fwd
                 isempty(pattern) && continue
                 matched, mask, ambiguous_prefix =
@@ -348,6 +344,47 @@ function scan_ambiguous_prefix_hits_range!(
     sort!(plus_hits; by = hit -> hit.start, alg = QuickSort)
     sort!(minus_hits; by = hit -> hit.start, alg = QuickSort)
     return nothing
+end
+
+# Whole-chromosome LongDNA scan for the :fused_directory fallback. Splits the
+# candidate span across tasks, each running the geometry's range kernel.
+function scan_prefix_hits(
+    geometry::PrefixScanGeometry,
+    chrom_seq::LongDNA{4},
+    dbi::DBInfo,
+    query,
+    hash_len::Int,
+    stats::Union{Nothing, PrefixHashScanStats} = nothing;
+    scan_threads::Int = Threads.nthreads())
+
+    bounds = prefix_scan_bounds(geometry, chrom_seq, dbi)
+    bounds === nothing && return PrefixHashScanHit[], PrefixHashScanHit[]
+    candidate_first, candidate_last = first(bounds.all), last(bounds.all)
+    thread_count = min(max(scan_threads, 1), length(bounds.all))
+    chunk_size = cld(length(bounds.all), thread_count)
+    tasks = map(candidate_first:chunk_size:candidate_last) do first_
+        part = PrefixScanBounds(
+            first_:min(first_ + chunk_size - 1, candidate_last),
+            bounds.plus, bounds.minus)
+        Threads.@spawn scan_prefix_hits_range(
+            geometry, chrom_seq, query, hash_len, part)
+    end
+    plus_hits = PrefixHashScanHit[]
+    minus_hits = PrefixHashScanHit[]
+    motif_candidates = 0
+    for task in tasks
+        local_plus, local_minus, local_count = fetch(task)
+        append!(plus_hits, local_plus)
+        append!(minus_hits, local_minus)
+        motif_candidates += local_count
+    end
+    if dbi.motif.ambig_max > 0
+        scan_ambiguous_prefix_hits_range!(
+            plus_hits, minus_hits, chrom_seq, geometry, dbi, query,
+            hash_len, bounds, Val(dbi.motif.ambig_max), stats)
+    end
+    stats === nothing || (stats.motif_candidates += motif_candidates)
+    return plus_hits, minus_hits
 end
 
 @inline function prefix_hash_scan_record_candidate!(

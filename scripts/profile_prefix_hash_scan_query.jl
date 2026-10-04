@@ -26,11 +26,11 @@ function parse_int_env(name::String, default::Int)
 end
 
 function parse_variants()
-    raw = strip(get(ENV, "CHOPOFF_QUERY_PROFILE_VARIANTS", "baseline,columnwise,bitmask64"))
+    raw = strip(get(ENV, "CHOPOFF_QUERY_PROFILE_VARIANTS", "columnwise,bitmask64"))
     variants = Symbol[]
     for item in split(raw, ',')
         name = Symbol(strip(item))
-        name in (:baseline, :columnwise, :bitmask64, :bruteforce) || error("Unknown query variant: $name")
+        name in (:columnwise, :bitmask64, :bruteforce) || error("Unknown query variant: $name")
         push!(variants, name)
     end
     isempty(variants) && error("No query variants selected.")
@@ -121,10 +121,10 @@ function profile_case(case, distance::Int, hash_len::Int, runs::Int, variants::V
                 warm_stats;
                 query_variant = variant,
             )
-            if variant == :baseline
+            if baseline_query === nothing
                 baseline_query = normalize_query_map(warm_query)
-            elseif baseline_query !== nothing
-                normalize_query_map(warm_query) == baseline_query || error("Variant $variant does not match baseline query map for $(case.label).")
+            else
+                normalize_query_map(warm_query) == baseline_query || error("Variant $variant does not match the first query map for $(case.label).")
             end
         end
 
