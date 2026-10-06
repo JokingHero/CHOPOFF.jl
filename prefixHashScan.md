@@ -157,7 +157,9 @@ check.
 
 Tests compare the streaming backends against independent references:
 
-- `scan_backend=:legacy` uses `findguides`, a `Dict` query, and `align`;
+- `scan_backend=:legacy` uses `findguides`, a `Dict` query, its own prefix
+  extraction (`normalized_candidate_prefix`), and `align`, so it shares no
+  code with the generic geometry or kernel;
 - `query_variant=:bruteforce` skips the prefix filter and verifies every motif
   candidate on the legacy engine, which checks the filter for false negatives;
 - the allocating `scan_generic_prefix_hits_raw_range` wrapper performs the
@@ -824,3 +826,5 @@ measurements in this document are unchanged.
 | `query_build_backend=:serial` | Built per-guide hash lists on one task | Parallel construction improved query build by 56% with identical output (Appendix A) | `f27312d2` |
 | `query_variant=:columnwise` and the `CHOPOFF_PREFIX_HASH_SCAN_QUERY` variable | `Dict` from hash to guide-index vectors for more than 64 guides | Sequential 64-guide batching replaced one-pass large queries (Appendix A) | `f27312d2` |
 | `scripts/benchmark_prefix_hash_scan_experiment.jl`, `scripts/profile_prefix_hash_scan_query.jl` | Swept the backend, verify, bucket, prefilter, and query variants above | Nothing left to compare | `f27312d2` |
+| `candidate_prefix_hashes_direct` | Legacy-engine prefix hashing through the generic geometry's offsets | Reached only when tests pinned `:legacy` on an eligible motif; it made the legacy reference depend on the code it checks | `f27312d2` |
+| `CAS9_D3_PREFIX_SCAN_GEOMETRY`, `CAS12A_D3_PREFIX_SCAN_GEOMETRY`, Cas9-default `stream_prefix_hash_scan` and `prefix_hash_scan_raw_myers_distance` methods, `prefix_hash_scan_guide_hashes`, Dict-input `build_prefix_hash_scan_directory` | Test conveniences inside the package | Tests now define them locally | `f27312d2` |

@@ -183,27 +183,6 @@ function fill_prefix_hashes_columnwise!(
     return hashes
 end
 
-function prefix_hashes_columnwise(
-    paths,
-    guide_formatted,
-    hash_type::Type{<:Unsigned})
-
-    hashes = Vector{hash_type}(undef, size(paths, 1))
-    fill_prefix_hashes_columnwise!(hashes, paths, guide_formatted)
-    sort!(hashes)
-    unique_sorted_prefix_hashes!(hashes)
-    return hashes
-end
-
-function prefix_hash_scan_guide_hashes(
-    paths,
-    guide::LongDNA{4},
-    hash_type::Type{<:Unsigned})
-
-    guide_formatted = guide_to_template_format(guide; alphabet = ALPHABET_TWOBIT)
-    return prefix_hashes_columnwise(paths, guide_formatted, hash_type)
-end
-
 function build_prefix_hash_scan_map_from_paths(
     paths,
     guides_::Vector{LongDNA{4}},
@@ -323,37 +302,6 @@ end
 
 @inline prefix_hash_scan_candidate_mask(query::PrefixHashScanBitmaskQuery, hash::Unsigned) =
     get(query.masks, hash, zero(UInt64))
-
-function build_prefix_hash_scan_directory(
-    query::PrefixHashScanBitmaskQuery,
-    hash_len::Int,
-    bucket_bases::Int)
-
-    1 <= bucket_bases < hash_len || error("bucket_bases must be in 1:(hash_len - 1).")
-    suffix_bits = 2 * (hash_len - bucket_bases)
-    suffix_bits <= 16 || error("Directory suffix must fit in UInt16.")
-
-    keys_ = sort!(UInt32.(collect(keys(query.masks))))
-    nbuckets = 1 << (2 * bucket_bases)
-    offsets = Vector{UInt32}(undef, nbuckets + 1)
-    suffixes = Vector{UInt16}(undef, length(keys_))
-    masks = Vector{UInt64}(undef, length(keys_))
-    suffix_mask = (UInt32(1) << suffix_bits) - UInt32(1)
-
-    key_idx = 1
-    @inbounds for bucket in 0:(nbuckets - 1)
-        offsets[bucket + 1] = UInt32(key_idx - 1)
-        while key_idx <= length(keys_) && Int(keys_[key_idx] >> suffix_bits) == bucket
-            key = keys_[key_idx]
-            suffixes[key_idx] = UInt16(key & suffix_mask)
-            masks[key_idx] = query.masks[key]
-            key_idx += 1
-        end
-    end
-    offsets[end] = UInt32(length(keys_))
-    return PrefixHashScanDirectory(offsets, suffixes, masks, UInt8(hash_len), UInt8(bucket_bases))
-end
-
 
 function merge_prefix_hash_scan_hash_lists(
     lists::Vector{Vector{T}}) where T <: Unsigned

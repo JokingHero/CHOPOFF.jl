@@ -345,7 +345,7 @@ end
 
 function prefix_hash_scan_chunk_work(
     reference_lengths, chunk_bases::Int,
-    geometry::PrefixScanGeometry = CAS9_D3_PREFIX_SCAN_GEOMETRY)
+    geometry::PrefixScanGeometry)
     work = PrefixHashScanChunkWork[]
     chrom_chunk_ranges = Vector{UnitRange{Int}}(undef, length(reference_lengths))
     for chrom_idx in eachindex(reference_lengths)
@@ -469,7 +469,3 @@ function stream_prefix_hash_scan_counts(
         early_stop_state, simd_backend)
     return results
 end
-
-stream_prefix_hash_scan(genome_path::String, args...) =
-    stream_prefix_hash_scan(
-        CAS9_D3_PREFIX_SCAN_GEOMETRY, genome_path, args...)

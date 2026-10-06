@@ -1,13 +1,5 @@
 # Geometry-neutral scalar and compact-lookup helpers. ISA primitives live in isa.jl.
 
-@inline function prefix_hash_scan_twobit_nibble(nibble::UInt8)
-    nibble == 0x01 && return UInt8(0)
-    nibble == 0x02 && return UInt8(1)
-    nibble == 0x04 && return UInt8(2)
-    nibble == 0x08 && return UInt8(3)
-    return UInt8(0xff)
-end
-
 @inline function prefix_hash_scan_reverse_codes(hash::UInt32)
     reversed = bitreverse(hash)
     return ((reversed & UInt32(0xaaaaaaaa)) >> 1) |

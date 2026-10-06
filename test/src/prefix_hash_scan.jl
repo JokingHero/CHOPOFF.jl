@@ -134,15 +134,41 @@ function direct_prefix_hashes(
     return hashes
 end
 
+const PHS_CAS9_D3 = CHOPOFF.resolve_prefix_scan_geometry(
+    Motif("Cas9"; distance = 3), 3, 16)
+const PHS_CAS12A_D3 = CHOPOFF.resolve_prefix_scan_geometry(
+    Motif("Cas12a"; distance = 3), 3, 16)
+
+# Every concrete prefix hash a guide yields under `paths`, folded row by row.
+function phs_guide_hashes(paths, guide::LongDNA{4}, hash_type)
+    formatted = CHOPOFF.guide_to_template_format(
+        guide; alphabet = CHOPOFF.ALPHABET_TWOBIT)
+    return sort!(unique([
+        foldl((h, i) -> (h << 2) | hash_type(formatted[Int(i)]),
+            row; init = zero(hash_type))
+        for row in eachrow(paths)]))
+end
+
+# Prefix hashes of one `findguides` candidate through the legacy helpers.
+phs_candidate_hashes(chrom_seq, candidate_range, dbi, is_antisense, hash_len, hash_type) =
+    CHOPOFF.candidate_prefix_hashes(CHOPOFF.normalized_candidate_prefix(
+        chrom_seq, candidate_range, dbi, is_antisense, hash_len), hash_type, nothing)
+
+function phs_directory(query::CHOPOFF.PrefixHashScanBitmaskQuery, hash_len, bucket_bases)
+    keys_ = sort!(UInt32.(collect(keys(query.masks))))
+    return CHOPOFF.build_prefix_hash_scan_directory(
+        keys_, [query.masks[key] for key in keys_], hash_len, bucket_bases)
+end
+
 # Whole-sequence raw Cas9 scan, single range; ambig_max=0 fixtures only.
 function phs_scan_cas9_raw(raw, dbi, query)
     plus = CHOPOFF.PrefixHashScanHit[]
     minus = CHOPOFF.PrefixHashScanHit[]
     bounds = CHOPOFF.prefix_scan_bounds(
-        CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, raw, dbi)
+        PHS_CAS9_D3, raw, dbi)
     bounds === nothing ||
         CHOPOFF.scan_generic_prefix_hits_raw_range!(
-            plus, minus, raw, query, CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, bounds)
+            plus, minus, raw, query, PHS_CAS9_D3, bounds)
     return plus, minus
 end
 
@@ -284,7 +310,7 @@ end
         end
 
         # The portable kernel must not contain x86 intrinsics.
-        geometry = CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY
+        geometry = PHS_CAS9_D3
         kernel_ir(backend) = sprint() do io
             code_llvm(io, CHOPOFF.scan_generic_prefix_hits_raw_range_impl!,
                 Tuple{Vector{CHOPOFF.PrefixHashScanHit},
@@ -374,7 +400,7 @@ end
     end
 
     @testset "Cas9 distance-3 geometry" begin
-        geometry = CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY
+        geometry = PHS_CAS9_D3
         @test geometry.guide_bases == 20
         @test geometry.pam_bases == 3
         @test geometry.prefix_bases == 16
@@ -382,7 +408,7 @@ end
         @test CHOPOFF.prefix_scan_candidate_bases(geometry) == 23
         @test CHOPOFF.prefix_scan_candidate_last_offset(geometry) == 22
 
-        work, ranges = CHOPOFF.prefix_hash_scan_chunk_work([22, 23, 24], 8)
+        work, ranges = CHOPOFF.prefix_hash_scan_chunk_work([22, 23, 24], 8, geometry)
         @test ranges == [1:0, 1:1, 2:2]
         @test [(item.chrom_idx, item.core_first, item.core_last) for item in work] ==
             [(2, 1, 1), (3, 1, 2)]
@@ -413,7 +439,7 @@ end
                 motif, 0, hash_len)
             guide = LongDNA{4}(join(
                 ("ACGT"[mod1(idx * 3 + guide_len, 4)] for idx in 1:guide_len)))
-            observed = Set(UInt32.(CHOPOFF.prefix_hash_scan_guide_hashes(
+            observed = Set(UInt32.(phs_guide_hashes(
                 paths, guide, UInt32)))
             @test source == :canonical_remap
             @test observed == direct_prefix_hashes(guide, hash_len, 0)
@@ -430,7 +456,7 @@ end
                 motif, distance, hash_len, stats)
             guide = LongDNA{4}(join(
                 ("ACGT"[mod1(idx * 3 + guide_len, 4)] for idx in 1:guide_len)))
-            observed = Set(UInt32.(CHOPOFF.prefix_hash_scan_guide_hashes(
+            observed = Set(UInt32.(phs_guide_hashes(
                 paths, guide, UInt32)))
             @test source == :canonical_remap
             @test stats.path_source == :canonical_remap
@@ -1032,7 +1058,7 @@ end
     end
 
     @testset "specialized Cas12a geometries and backends" begin
-        geometry = CHOPOFF.CAS12A_D3_PREFIX_SCAN_GEOMETRY
+        geometry = PHS_CAS12A_D3
         @test CHOPOFF.prefix_scan_kind(geometry) == :cas12a
         @test geometry.guide_bases == 21
         @test geometry.pam_bases == 4
@@ -1086,13 +1112,11 @@ end
                     chrom_seq, candidate_range, dbi, is_antisense, 16)
                 expected_hash = CHOPOFF.candidate_prefix_hashes(
                     prefix, UInt32, nothing)
-                direct_hash = CHOPOFF.candidate_prefix_hashes_direct(CHOPOFF.CAS12A_D3_PREFIX_SCAN_GEOMETRY, 
-                    chrom_seq, candidate_range, is_antisense, 16, UInt32)
-                @test direct_hash == expected_hash
+                @test !isempty(expected_hash)
 
                 expected_materialized = CHOPOFF.materialize_normalized_candidate(
                     chrom_seq, candidate_range, dbi, is_antisense)
-                raw_observed = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS12A_D3_PREFIX_SCAN_GEOMETRY, 
+                raw_observed = CHOPOFF.materialize_normalized_candidate_specialized(PHS_CAS12A_D3, 
                     collect(codeunits(seq)), first(candidate_range), dbi, is_antisense)
                 @test raw_observed == expected_materialized
             end
@@ -1420,23 +1444,12 @@ end
         ])
         guides_ = CHOPOFF.oriented_prefix_hash_scan_guides(guides, motif)
 
-        for guide in guides_
-            guide_formatted = CHOPOFF.guide_to_template_format(
-                guide; alphabet = CHOPOFF.ALPHABET_TWOBIT)
-            expected = sort!(unique([
-                foldl((h, i) -> (h << 2) | hash_type(guide_formatted[Int(i)]),
-                    row; init = zero(hash_type))
-                for row in eachrow(paths)]))
-            @test CHOPOFF.prefix_hash_scan_guide_hashes(
-                paths, guide, hash_type) == expected
-        end
-
         bitmask_stats = CHOPOFF.PrefixHashScanStats()
         bitmask_query = CHOPOFF.build_prefix_hash_scan_map_from_paths(
             paths, guides_, hash_type, bitmask_stats)
         expected_map = Dict{hash_type, Vector{Int}}()
         for (guide_idx, guide) in enumerate(guides_)
-            for hash in CHOPOFF.prefix_hash_scan_guide_hashes(paths, guide, hash_type)
+            for hash in phs_guide_hashes(paths, guide, hash_type)
                 push!(get!(expected_map, hash, Int[]), guide_idx)
             end
         end
@@ -1476,32 +1489,6 @@ end
             UInt8[1 2; 2 3], many_guides, UInt8)
     end
 
-    @testset "direct Cas9 candidate hash matches prefix helper" begin
-        motif = Motif("Cas9"; distance = 2)
-        hash_len = 16
-        hash_type = phs_hash_type(hash_len)
-        genome = joinpath(tdir, "cas9_direct_hash.fa")
-        seq = repeat("A", 30) * "ACGTACGTACGTACGTACGT" * "AGG" * repeat("C", 20) * "CC" * "A" * "TGCATGCATGCATGCATGCA" * repeat("A", 30)
-        write_phs_fasta(genome, "chr1", seq)
-        chrom_seq = LongDNA{4}(seq)
-        dbi = DBInfo(genome, "prefix_hash_scan_direct_hash", motif)
-        @test CHOPOFF.prefix_scan_kind(
-            CHOPOFF.resolve_prefix_scan_geometry(motif, 2, hash_len)) == :cas9
-        # Both strands must actually yield candidates, otherwise the loop below
-        # runs zero times and the testset passes without asserting anything.
-        @test !isempty(CHOPOFF.findguides(dbi, chrom_seq, false))
-        @test !isempty(CHOPOFF.findguides(dbi, chrom_seq, true))
-        for is_antisense in (false, true)
-            positions = CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
-            isempty(positions) && continue
-            candidate_range = first(positions)
-            prefix = CHOPOFF.normalized_candidate_prefix(chrom_seq, candidate_range, dbi, is_antisense, hash_len)
-            old_hashes = CHOPOFF.candidate_prefix_hashes(prefix, hash_type, nothing)
-            direct_hashes = CHOPOFF.candidate_prefix_hashes_direct(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, chrom_seq, candidate_range, is_antisense, hash_len, hash_type)
-            @test direct_hashes == old_hashes
-        end
-    end
-
     @testset "prefix helper matches materialized candidate" begin
         check_prefix_helper_matches_materialized(tdir, repeat("A", 30) * "ACGTACGTACGTACGTACGT" * "AGG" * repeat("A", 30), Motif("Cas9"; distance = 2), 8, "cas9_helper")
         check_prefix_helper_matches_materialized(tdir, repeat("A", 30) * "TTTA" * "TGCATGCATGCATGCATGCAT" * repeat("A", 30), Motif("Cas12a"; distance = 2), 8, "cas12a_helper")
@@ -1527,7 +1514,7 @@ end
                 for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
                     expected = CHOPOFF.materialize_normalized_candidate(
                         chrom_seq, candidate_range, dbi, is_antisense)
-                    raw_observed = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
+                    raw_observed = CHOPOFF.materialize_normalized_candidate_specialized(PHS_CAS9_D3, 
                         collect(codeunits(seq)), first(candidate_range), dbi, is_antisense)
                     @test raw_observed == expected
                 end
@@ -1556,13 +1543,13 @@ end
         masks = Dict{UInt32, UInt64}()
         for is_antisense in (false, true)
             for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
-                hash = only(CHOPOFF.candidate_prefix_hashes_direct(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
-                    chrom_seq, candidate_range, is_antisense, hash_len, UInt32))
+                hash = only(phs_candidate_hashes(
+                    chrom_seq, candidate_range, dbi, is_antisense, hash_len, UInt32))
                 masks[hash] = get(masks, hash, UInt64(0)) | UInt64(1)
             end
         end
         query = CHOPOFF.PrefixHashScanBitmaskQuery(masks)
-        directory = CHOPOFF.build_prefix_hash_scan_directory(query, hash_len, 8)
+        directory = phs_directory(query, hash_len, 8)
         expected = phs_scan_cas9_raw(raw, dbi, directory)
         for bits in (22, 24, 26)
             filtered = CHOPOFF.build_prefix_hash_scan_prefilter(
@@ -1580,20 +1567,20 @@ end
 
         plus_raw = collect(codeunits(String(guide) * "AGG" * "RYN"))
         plus_dbi = DBInfo(fixture_genome, "raw_myers_plus", motif3)
-        plus_ot, _ = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
+        plus_ot, _ = CHOPOFF.materialize_normalized_candidate_specialized(PHS_CAS9_D3, 
             plus_raw, 1, plus_dbi, false)
         @test CHOPOFF.prefix_hash_scan_raw_myers_distance(
-            profile, plus_raw, 1, false, 3) ==
+            PHS_CAS9_D3, profile, plus_raw, 1, false, 3) ==
             CHOPOFF.levenshtein(guide_oriented, plus_ot, 3, iscompatible)
 
         minus_guide = String(reverse(complement(guide)))
         minus_raw = collect(codeunits("RYNCCN" * minus_guide))
         minus_start = 4
         minus_dbi = DBInfo(fixture_genome, "raw_myers_minus", motif3)
-        minus_ot, _ = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
+        minus_ot, _ = CHOPOFF.materialize_normalized_candidate_specialized(PHS_CAS9_D3, 
             minus_raw, minus_start, minus_dbi, true)
         @test CHOPOFF.prefix_hash_scan_raw_myers_distance(
-            profile, minus_raw, minus_start, true, 3) ==
+            PHS_CAS9_D3, profile, minus_raw, minus_start, true, 3) ==
             CHOPOFF.levenshtein(guide_oriented, minus_ot, 3, iscompatible)
     end
 
@@ -1659,8 +1646,8 @@ end
         expected = [Tuple{Int, UInt64}[] for _ in 1:2]
         for (strand_idx, is_antisense) in enumerate((false, true))
             for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
-                hash = only(CHOPOFF.candidate_prefix_hashes_direct(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
-                    chrom_seq, candidate_range, is_antisense, hash_len, hash_type))
+                hash = only(phs_candidate_hashes(
+                    chrom_seq, candidate_range, dbi, is_antisense, hash_len, hash_type))
                 mask = xor(UInt64(hash) * 0x9e3779b97f4a7c15, 0xd1b54a32d192ed03)
                 mask == 0 && (mask = 1)
                 query_masks[hash] = mask
@@ -1670,7 +1657,7 @@ end
 
         query = CHOPOFF.PrefixHashScanBitmaskQuery(query_masks)
 
-        directory = CHOPOFF.build_prefix_hash_scan_directory(query, hash_len, 8)
+        directory = phs_directory(query, hash_len, 8)
         raw = collect(codeunits(fused_seq))
         raw_plus, raw_minus = phs_scan_cas9_raw(raw, dbi, directory)
         @test [(hit.start, hit.mask) for hit in raw_plus] == expected[1]
@@ -1681,10 +1668,10 @@ end
         scratch_plus_id = objectid(scratch_plus)
         scratch_minus_id = objectid(scratch_minus)
         bounds = CHOPOFF.prefix_scan_bounds(
-            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, raw, dbi)
+            PHS_CAS9_D3, raw, dbi)
         motif_candidates = CHOPOFF.scan_generic_prefix_hits_raw_range!(
             scratch_plus, scratch_minus, raw, directory,
-            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, bounds)
+            PHS_CAS9_D3, bounds)
         @test scratch_plus == raw_plus
         @test scratch_minus == raw_minus
         @test motif_candidates >= length(scratch_plus) + length(scratch_minus)
@@ -1693,15 +1680,14 @@ end
 
         CHOPOFF.scan_generic_prefix_hits_raw_range!(
             scratch_plus, scratch_minus, raw, directory,
-            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY,
+            PHS_CAS9_D3,
             CHOPOFF.PrefixScanBounds(2:1, 2:1, 2:1))
         @test isempty(scratch_plus)
         @test isempty(scratch_minus)
         @test objectid(scratch_plus) == scratch_plus_id
         @test objectid(scratch_minus) == scratch_minus_id
 
-        bucket_directory = CHOPOFF.build_prefix_hash_scan_directory(
-            query, hash_len, 11)
+        bucket_directory = phs_directory(query, hash_len, 11)
         bucket_query = CHOPOFF.build_prefix_hash_scan_prefilter(
             bucket_directory, collect(keys(query_masks)), 26)
         bucket_plus = CHOPOFF.PrefixHashScanHit[]
@@ -1712,7 +1698,7 @@ end
                 bucket_plus, bucket_minus, lookup_scratch.plus_candidates,
                 lookup_scratch.minus_candidates, lookup_scratch.plus_radix,
                 lookup_scratch.minus_radix, lookup_scratch.radix_counts, raw,
-                bucket_query, CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, bounds)
+                bucket_query, PHS_CAS9_D3, bounds)
         @test bucket_plus == raw_plus
         @test bucket_minus == raw_minus
         @test bucket_motif_candidates == motif_candidates
@@ -1738,12 +1724,12 @@ end
         myers_profile = CHOPOFF.build_prefix_hash_scan_myers_profile(guide_oriented)
         for is_antisense in (false, true)
             for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
-                ot, _ = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
+                ot, _ = CHOPOFF.materialize_normalized_candidate_specialized(PHS_CAS9_D3, 
                     raw, first(candidate_range), dbi, is_antisense)
                 expected_distance = CHOPOFF.levenshtein(
                     guide_oriented, ot, 3, iscompatible)
                 observed_distance = CHOPOFF.prefix_hash_scan_raw_myers_distance(
-                    myers_profile, raw, first(candidate_range), is_antisense, 3)
+                    PHS_CAS9_D3, myers_profile, raw, first(candidate_range), is_antisense, 3)
                 @test observed_distance == expected_distance
             end
         end
@@ -1754,7 +1740,7 @@ end
             get(query_masks, UInt32(0x12345678), UInt64(0))
 
         work, work_ranges = CHOPOFF.prefix_hash_scan_chunk_work(
-            [0, 22, 23, 64, 65], 32)
+            [0, 22, 23, 64, 65], 32, PHS_CAS9_D3)
         @test isempty(work_ranges[1])
         @test isempty(work_ranges[2])
         @test [(item.chrom_idx, item.core_first, item.core_last) for item in work] == [
@@ -1768,7 +1754,7 @@ end
         stream_query = CHOPOFF.PrefixHashScanBitmaskQuery(
             Dict(hash => UInt64(1) for hash in keys(query_masks)))
         stream_directory = CHOPOFF.build_prefix_hash_scan_prefilter(
-            CHOPOFF.build_prefix_hash_scan_directory(stream_query, hash_len, 11),
+            phs_directory(stream_query, hash_len, 11),
             collect(keys(stream_query.masks)), 26)
         reference_lengths = FASTA.Index(fused_genome * ".fai").lengths
         function stream_result_tuples(results, ranges)
@@ -1793,10 +1779,10 @@ end
             chunk_stats = with_stats ? CHOPOFF.PrefixHashScanStats() : nothing
             chrom_stats = with_stats ? CHOPOFF.PrefixHashScanStats() : nothing
             chunk_results, chunk_ranges = CHOPOFF.stream_prefix_hash_scan(
-                fused_genome, reference_lengths, stream_directory, dbi,
+                PHS_CAS9_D3, fused_genome, reference_lengths, stream_directory, dbi,
                 [guide_oriented], [myers_profile], 3, 64, 4, chunk_stats)
             chrom_results, chrom_ranges = CHOPOFF.stream_prefix_hash_scan(
-                fused_genome, reference_lengths, stream_directory, dbi,
+                PHS_CAS9_D3, fused_genome, reference_lengths, stream_directory, dbi,
                 [guide_oriented], [myers_profile], 3,
                 maximum(reference_lengths), 4, chrom_stats)
             @test stream_result_tuples(chunk_results, chunk_ranges) ==

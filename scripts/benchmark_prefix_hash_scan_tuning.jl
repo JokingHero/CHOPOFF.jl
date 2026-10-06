@@ -109,8 +109,9 @@ function scan_prepared(
     genome, reference_lengths, dbi, prepared, config, scan_threads)
 
     query, guides_, profiles = prepared
+    geometry = CHOPOFF.resolve_prefix_scan_geometry(dbi.motif, 3, 16)
     return CHOPOFF.stream_prefix_hash_scan(
-        genome, reference_lengths, query, dbi, guides_, profiles, 3,
+        geometry, genome, reference_lengths, query, dbi, guides_, profiles, 3,
         config.chunk_bases, scan_threads, nothing)
 end
 

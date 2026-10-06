@@ -67,10 +67,6 @@ end
     return true
 end
 
-@inline prefix_hash_scan_raw_myers_distance(args...) =
-    prefix_hash_scan_raw_myers_distance(
-        CAS9_D3_PREFIX_SCAN_GEOMETRY, args...)
-
 @inline function prefix_hash_scan_raw_myers_distance(
     geometry::PrefixScanGeometry,
     profile::PrefixHashScanMyersProfile,

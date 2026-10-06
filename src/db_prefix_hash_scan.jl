@@ -313,11 +313,6 @@ include("prefix_hash_scan/isa.jl")
 include("prefix_hash_scan/kernel_common.jl")
 include("prefix_hash_scan/generic.jl")
 
-const CAS9_D3_PREFIX_SCAN_GEOMETRY =
-    resolve_prefix_scan_geometry(Motif("Cas9"; distance = 3), 3, 16)
-const CAS12A_D3_PREFIX_SCAN_GEOMETRY =
-    resolve_prefix_scan_geometry(Motif("Cas12a"; distance = 3), 3, 16)
-
 include("prefix_hash_scan/twobit.jl")
 include("prefix_hash_scan/streaming.jl")
 
@@ -666,7 +661,7 @@ function search_prefixHashScan(
             merged
         else
             search_prefix_hash_scan_legacy_counts(
-                dbi, reference_lengths, query, guides_, geometry, distance,
+                dbi, reference_lengths, query, guides_, distance,
                 hash_len, hash_type, use_bruteforce_query, stats)
         end
         merge_prefix_hash_scan_early_stop_stats!(stats, early_stop_state)
@@ -696,7 +691,7 @@ function search_prefixHashScan(
         scan_start = prefix_hash_scan_timer(stats)
         search_prefix_hash_scan_legacy_detail!(
             out, dbi, reference_lengths, query, guides, guides_, motif,
-            geometry, distance, hash_len, hash_type, early_stopping,
+            distance, hash_len, hash_type, early_stopping,
             es_acc, is_es, seen, use_bruteforce_query, stats)
         stats === nothing || (stats.scan_ns += time_ns() - scan_start)
     end
@@ -741,7 +736,6 @@ function foreach_prefix_hash_scan_legacy_candidate(
     chrom_seq::LongDNA{4},
     dbi::DBInfo,
     query,
-    geometry,
     hash_len::Int,
     hash_type::Type{<:Unsigned},
     use_bruteforce_query::Bool,
@@ -760,22 +754,13 @@ function foreach_prefix_hash_scan_legacy_candidate(
                 guide_count = count(!, is_es)
                 guide_count == 0 && continue
             else
+                prefix_start = prefix_hash_scan_timer(stats)
+                prefix = normalized_candidate_prefix(
+                    chrom_seq, candidate_range, dbi, is_antisense, hash_len)
+                stats === nothing ||
+                    (stats.candidate_prefix_ns += time_ns() - prefix_start)
                 hash_start = prefix_hash_scan_timer(stats)
-                hashes = geometry !== nothing ?
-                    candidate_prefix_hashes_direct(
-                        geometry, chrom_seq, candidate_range, is_antisense,
-                        hash_len, hash_type) : nothing
-                if hashes === nothing
-                    stats === nothing ||
-                        (stats.candidate_hash_ns += time_ns() - hash_start)
-                    prefix_start = prefix_hash_scan_timer(stats)
-                    prefix = normalized_candidate_prefix(
-                        chrom_seq, candidate_range, dbi, is_antisense, hash_len)
-                    stats === nothing ||
-                        (stats.candidate_prefix_ns += time_ns() - prefix_start)
-                    hash_start = prefix_hash_scan_timer(stats)
-                    hashes = candidate_prefix_hashes(prefix, hash_type, stats)
-                end
+                hashes = candidate_prefix_hashes(prefix, hash_type, stats)
                 stats === nothing ||
                     (stats.candidate_hash_ns += time_ns() - hash_start)
                 lookup_start = prefix_hash_scan_timer(stats)
@@ -822,7 +807,6 @@ function search_prefix_hash_scan_legacy_detail!(
     guides::Vector{LongDNA{4}},
     guides_::Vector{LongDNA{4}},
     motif::Motif,
-    geometry,
     distance::Int,
     hash_len::Int,
     hash_type::Type{<:Unsigned},
@@ -836,7 +820,7 @@ function search_prefix_hash_scan_legacy_detail!(
     foreach_prefix_hash_scan_record(
             dbi, reference_lengths, stats) do chrom_name, chrom_seq
         foreach_prefix_hash_scan_legacy_candidate(
-                chrom_seq, dbi, query, geometry, hash_len, hash_type,
+                chrom_seq, dbi, query, hash_len, hash_type,
                 use_bruteforce_query, is_es,
                 stats) do candidate_range, is_antisense, candidate_mask
             materialize_start = prefix_hash_scan_timer(stats)
@@ -865,7 +849,6 @@ function search_prefix_hash_scan_legacy_counts(
     reference_lengths,
     query,
     guides_::Vector{LongDNA{4}},
-    geometry,
     distance::Int,
     hash_len::Int,
     hash_type::Type{<:Unsigned},
@@ -876,7 +859,7 @@ function search_prefix_hash_scan_legacy_counts(
     no_retired_guides = falses(length(guides_))
     foreach_prefix_hash_scan_record(dbi, reference_lengths, stats) do _, chrom_seq
         foreach_prefix_hash_scan_legacy_candidate(
-                chrom_seq, dbi, query, geometry, hash_len, hash_type,
+                chrom_seq, dbi, query, hash_len, hash_type,
                 use_bruteforce_query, no_retired_guides,
                 stats) do candidate_range, is_antisense, candidate_mask
             materialize_start = prefix_hash_scan_timer(stats)

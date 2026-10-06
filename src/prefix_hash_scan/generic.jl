@@ -74,19 +74,6 @@ function resolve_generic_prefix_scan_geometry(
         guide_bases, span - guide_bases, hash_len, distance, matcher)
 end
 
-function candidate_prefix_hashes_direct(
-    geometry::PrefixScanGeometry,
-    chrom_seq::LongDNA{4}, candidate_range::UnitRange{Int64},
-    is_antisense::Bool, hash_len::Int,
-    hash_type::Type{<:Unsigned})
-
-    hash_len == geometry.prefix_bases || return nothing
-    hash = prefix_hash_scan_generic_hash_scalar(
-        chrom_seq, first(candidate_range), geometry.matcher, is_antisense)
-    hash === nothing && return nothing
-    return hash_type[convert(hash_type, hash)]
-end
-
 @generated function prefix_hash_scan_generic_valid(
     exact::UInt128, ::PrefixScanMatcher{Spec}) where Spec
 
@@ -237,10 +224,6 @@ end
 
 @inline prefix_hash_scan_source_code(raw::AbstractVector{UInt8}, pos::Int) =
     @inbounds prefix_hash_scan_raw_code(raw[pos])
-# Legacy engine: direct prefix hashing from a converted chromosome.
-@inline prefix_hash_scan_source_code(chrom_seq::LongDNA{4}, pos::Int) =
-    @inbounds prefix_hash_scan_twobit_nibble(UInt8(
-        BioSequences.extract_encoded_element(chrom_seq, pos)))
 
 @inline function prefix_hash_scan_generic_matches(
     raw::AbstractVector{UInt8}, candidate_start::Int, constraints)

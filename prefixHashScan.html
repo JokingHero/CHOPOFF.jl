@@ -562,7 +562,9 @@ contains no x86 intrinsics and no target features, which
 references:</p>
 <ul>
 <li><code>scan_backend=:legacy</code> uses <code>findguides</code>, a
-<code>Dict</code> query, and <code>align</code>;</li>
+<code>Dict</code> query, its own prefix extraction
+(<code>normalized_candidate_prefix</code>), and <code>align</code>, so
+it shares no code with the generic geometry or kernel;</li>
 <li><code>query_variant=:bruteforce</code> skips the prefix filter and
 verifies every motif candidate on the legacy engine, which checks the
 filter for false negatives;</li>
@@ -1854,6 +1856,25 @@ guides</td>
 <td>Swept the backend, verify, bucket, prefilter, and query variants
 above</td>
 <td>Nothing left to compare</td>
+<td><code>f27312d2</code></td>
+</tr>
+<tr class="even">
+<td><code>candidate_prefix_hashes_direct</code></td>
+<td>Legacy-engine prefix hashing through the generic geometry’s
+offsets</td>
+<td>Reached only when tests pinned <code>:legacy</code> on an eligible
+motif; it made the legacy reference depend on the code it checks</td>
+<td><code>f27312d2</code></td>
+</tr>
+<tr class="odd">
+<td><code>CAS9_D3_PREFIX_SCAN_GEOMETRY</code>,
+<code>CAS12A_D3_PREFIX_SCAN_GEOMETRY</code>, Cas9-default
+<code>stream_prefix_hash_scan</code> and
+<code>prefix_hash_scan_raw_myers_distance</code> methods,
+<code>prefix_hash_scan_guide_hashes</code>, Dict-input
+<code>build_prefix_hash_scan_directory</code></td>
+<td>Test conveniences inside the package</td>
+<td>Tests now define them locally</td>
 <td><code>f27312d2</code></td>
 </tr>
 </tbody>
