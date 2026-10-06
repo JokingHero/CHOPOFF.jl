@@ -394,8 +394,10 @@ The tradeoff is memory:
   performs random presence checks followed by bucket-ordered directory lookups.
 
 Which approach wins depends on query-table size, cache behavior, number of
-guides, PAM density, and candidate rate. A fair full-human benchmark against
-Rust Sassy v1 and v2 has not been completed.
+guides, PAM density, and candidate rate. On the PAMless GRCh38 workload, where
+Sassy needs no PAM post-filter, prefixHashScan was 5.4x to 7.3x faster than
+the fastest Sassy configuration at d0 through d3, and 1.4x faster at d4
+([PAMless benchmark](#pamless-versus-cas9-and-sassy)).
 
 ## Current performance
 
@@ -444,6 +446,69 @@ End-to-end values are medians of 5 alternating runs; outputs were identical.
 `:fused_directory` was removed after this measurement (Appendix B).
 On x86 the portable profile costs little because LLVM vectorizes the SWAR loop
 and the scan is a small share of the search. ARM performance is not measured.
+
+### PAMless versus Cas9 and Sassy
+
+GRCh38, the same 61 Cas9 guides (20 nt, no PAM), 24 threads, unlimited early
+stopping, October 6, 2026. PAMless uses `pamless=true`; Cas9 uses `NGG`. Sassy
+is stock `sassy search` v0.2.6 (master `7c9f8fc`) with `--max-n-frac 0` to
+match `ambig_max=0`. Sassy always computes tracebacks, so its closest CHOPOFF
+equivalent is detail output; d3 and d4 use count output because PAMless
+detail would be multi-GB. Medians of 5 runs (d0-d3, prefixHashScan), 3 runs
+(d4, prefixHashScan), 3-4 runs (Sassy d0-d3), and 1 run (Sassy d4). The host
+was shared and loaded (load average 16-60 on 48 cores), so expect
+run-to-run variation of about 30%.
+
+| Distance | Output | PAMless | Cas9 | PAMless/Cas9 | Sassy `-a dna` | Sassy IUPAC (default) | Sassy/PAMless |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 0 | detail | 3.98 s | 0.64 s | 6.2x | 22.6 s | 60.7 s | 5.7x |
+| 1 | detail | 4.95 s | 0.61 s | 8.1x | 26.5 s | 41.0 s | 5.4x |
+| 2 | detail | 4.67 s | 0.69 s | 6.7x | 34.2 s | 48.1 s | 7.3x |
+| 3 | counts | 6.37 s | 1.09 s | 5.8x | 39.7 s | 52.8 s | 6.2x |
+| 4 | counts | 48.97 s | 15.42 s | 3.2x | panics | 67.0 s | 1.4x |
+
+The Sassy/PAMless ratio uses the faster Sassy configuration that completed.
+Result rows (PAMless detail; Sassy): d0 75; 75. d1 848; 666. d2 23,792;
+20,236. d3 Sassy 408,883 and d4 Sassy 5,182,770.
+
+Counters: PAMless scans 5,891,652,878 candidate windows, 19.4x the
+304,418,266 Cas9 windows. Prefix hits grow by 17.8x at d2 (1,571,505 versus
+88,450), 16.2x at d3, and 19.3x at d4. The cost of losing the PAM filter is
+6-8x at d0-d2, not 19x, because the query and its construction are the same
+size and the scan kernel is not the only cost. d4 is dominated by query
+construction (12.3 s PAMless, 7.4 s Cas9, measured in a stats pass) and by
+280 million guide/window verifications.
+
+Correctness:
+
+- Every Cas9 detail row at d0-d2 appears in the PAMless output with the same
+  alignment and distance. `start` shifts by -3 on `+` and +3 on `-` (1,439 of
+  1,439 rows).
+- Every Sassy match at d1 and d2 has a PAMless row with the same distance
+  within ±k bases (666/666 and 20,236/20,236). At d0, per-guide counts are
+  identical.
+- PAMless rows exceed Sassy matches because CHOPOFF reports end-gap shadow
+  alignments, for example `...GGGG-C` one base next to an exact hit, as
+  separate loci. Sassy reports one local minimum per locus. Every PAMless row
+  at d1 and d2 lies within ±k of a Sassy match of equal or lower cost, except
+  4 (d1) and 42 (d2) shadows 2 bases from a Sassy match.
+
+Sassy observations:
+
+- Sassy parallelizes across FASTA records, not within a record, so chr1 sets
+  its wall time. prefixHashScan schedules 2 MiB chunks globally.
+- With the default IUPAC alphabet, `N` matches every base. N blocks generate
+  hits that are filtered only afterwards: one all-N 5 Mb chr21 slice took
+  6.4 s with v1 and 60 s with v2. `-a dna` avoids this (0.6 s) but panics at
+  d4 when a traceback reaches an `N` (`src/trace.rs:376`), and gives one extra
+  row at d3.
+- v2 (`search --v2`) is about 4x faster than v1 on clean sequence, but it took
+  582 s on GRCh38 at d2 because of N blocks. `--v2 -a dna` returned no matches.
+  The `crispr_v2_search` branch (March 2026, 133 commits behind master) adds
+  only `sassy crispr --v2`. v2 search is already merged into master.
+
+Reproduce with `test/local_human/benchmark_human_pamless.jl` and
+`test/local_human/run_sassy.sh`.
 
 Workload shape, Cas9 versus Cas12a at d3:
 
@@ -613,6 +678,20 @@ Open questions:
 Entries are newest first. Unless stated otherwise: GRCh38, 61 guides per motif,
 warm cache, exact output parity in every comparison. The host was shared, and
 identical runs varied by up to 40%.
+
+### PAMless and Sassy (October 6, 2026)
+
+Results are in [PAMless versus Cas9 and Sassy](#pamless-versus-cas9-and-sassy).
+A first 3-run pass at load average about 55 gave PAMless d0-d2 medians of
+4.7-7.8 s with no trend by distance. A 5-run rerun at load 16-33 gave the
+reported d0-d3 values. A chr21 pilot (61 guides, k=3) measured Sassy v1 at
+15.2 s and v2 at 65.9 s, which exposed the N-block cost. Sassy was built with
+`RUSTFLAGS="-C target-cpu=native"` and Rust 1.99.0. The July
+`run_rust_sassy_v2.sh` baseline was removed. It ran a custom
+`chopoff_batch_crispr` binary with CHOPOFF-side PAM filtering, which is no
+longer in the Sassy source tree. `run_sassy.sh` replaces it with stock
+`sassy search` and `sassy crispr`. Outputs:
+`test/local_human/outputs/pamless_20261006*`.
 
 ### Generic kernel replaces hand-written kernels (August 2 to October 4, 2026)
 

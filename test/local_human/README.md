@@ -135,28 +135,47 @@ The ambiguity parity CSV checks that every lower-level result multiset is
 contained in the next level. Runs, allocations, diagnostics, parity, and final
 result CSVs are written under `CHOPOFF_TUNING_OUT`.
 
-## Rust SASSY v2 Batch Baseline
+## Stock Sassy baseline
 
-This local-only baseline calls Rust SASSY v2 `encode_patterns` +
-`search_encoded_patterns` directly. It batches all guide+`NGG` patterns, then
-applies strict PAM and reference ambiguity filtering. It is for speed ceiling
-measurement, not exact CHOPOFF output parity: it does not run CHOPOFF traceback
-or emit CHOPOFF's guide/PAM-side normalized coordinates.
-
-Run after Cargo/Rust is available on `PATH`:
+`run_sassy.sh` times the stock Rust Sassy CLI on GRCh38 with no
+CHOPOFF-specific code. Build it once with a Rust toolchain:
 
 ```bash
-test/local_human/run_rust_sassy_v2.sh
+export RUSTUP_HOME=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/rust/rustup
+export CARGO_HOME=/home/rstudio/kornel_workspace/CRISPR/CHOPOFF_parent/Soft/rust/cargo
+export PATH=$CARGO_HOME/bin:$PATH
+(cd sassy && git pull --ff-only && RUSTFLAGS="-C target-cpu=native" cargo build --release)
 ```
 
-Outputs are written to `test/local_human/outputs/rust_v2_<timestamp>/`:
+`CHOPOFF_SASSY_MODE=search` (default) runs PAMless `sassy search` on the guides.
+`CHOPOFF_SASSY_MODE=crispr` appends `CHOPOFF_SASSY_PAM` (default `NGG`) and runs
+`sassy crispr`, where `k` excludes the PAM.
 
-- `summary.csv`: records, guide count, raw/accepted match counts, elapsed seconds.
-- `rust_sassy_v2.csv`: accepted candidate rows from the Rust v2 batch search.
+```bash
+CHOPOFF_SASSY_MODE=search \
+CHOPOFF_SASSY_DISTANCES="0 1 2 3" \
+CHOPOFF_SASSY_RUNS=3 \
+test/local_human/run_sassy.sh
+```
 
-Compare `elapsed_s` with the Julia human runner and profiler outputs to decide
-whether porting v2 pattern tiling is worth doing before micro-optimizing the
-current per-guide Julia scan.
+Other variables: `CHOPOFF_SASSY_GENOME`, `CHOPOFF_SASSY_GUIDES`,
+`CHOPOFF_SASSY_OUT`, `CHOPOFF_SASSY_THREADS` (24), and `CHOPOFF_SASSY_CONFIGS`,
+a space-separated `name:args` list where `_` stands for a space. The search
+default is `v1_iupac: v1_dna:-a_dna v2_iupac:--v2`. Every run uses
+`--max-n-frac 0` to match `ambig_max=0`. Outputs are `timings.csv`,
+`version.txt`, and one TSV and log per configuration and distance.
+
+Pitfalls found on GRCh38 (sassy `7c9f8fc`):
+
+- With the IUPAC default, `N` matches every base, so N blocks are slow. v2
+  took 582 s at d2.
+- `-a dna` avoids that cost but panics at d4 when a traceback reaches an `N`.
+  `--v2 -a dna` returns no matches.
+- Sassy parallelizes across FASTA records, so chr1 sets the wall time.
+
+The PAMless CHOPOFF side is `benchmark_human_pamless.jl`. It times
+`pamless=true` against Cas9 on the same guides and checks that Cas9 rows are
+contained in the PAMless rows.
 
 ## Overnight prefixHashDB/prefixHashScan Distance Sweep
 
