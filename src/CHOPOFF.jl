@@ -400,6 +400,11 @@ function parse_commandline(args::Array{String})
             arg_type = String
             range_tester = x -> x in ("auto", "avx512", "avx2", "portable")
             default = "auto"
+        "--progress_interval"
+            help = "Minimum seconds between scan progress messages."
+            arg_type = Float64
+            range_tester = x -> x >= 0
+            default = 30.0
     end
 
     @add_arg_table! s["search"]["sassy"] begin
@@ -681,6 +686,7 @@ function main(args::Array{String})
                 output = Symbol(scan_args["output_mode"]),
                 simd_backend = Symbol(scan_args["simd_backend"]),
                 verbose = true,
+                progress_interval = scan_args["progress_interval"],
             )
         elseif args["%COMMAND%"] == "sassy"
             sassy_args = args["sassy"]

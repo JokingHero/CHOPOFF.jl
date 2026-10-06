@@ -382,7 +382,8 @@ function run_prefix_hash_scan_chunks(
     scan_threads::Int,
     stats,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState},
-    simd_backend::Val) where R
+    simd_backend::Val,
+    progress::Union{Nothing, PrefixHashScanProgress}) where R
 
     index = is_fasta(genome_path) ?
         FASTA.Index(genome_path * ".fai") :
@@ -396,6 +397,10 @@ function run_prefix_hash_scan_chunks(
         reference_lengths, chunk_bases, geometry)
     if early_stop_state !== nothing
         early_stop_state.work_items_total = length(work)
+    end
+    if progress !== nothing
+        progress.total_bases = sum(
+            item -> item.core_last - item.core_first + 1, work; init = 0)
     end
     results = Vector{Union{Nothing, R}}(nothing, length(work))
     next_work = Threads.Atomic{Int}(1)
@@ -415,6 +420,8 @@ function run_prefix_hash_scan_chunks(
                         ctx, worker, item, reference_lengths[item.chrom_idx],
                         known_bounds[item.chrom_idx],
                         prefix_hash_scan_worker_stats(stats), early_stop_state)
+                    report_prefix_hash_scan_progress!(
+                        progress, item.core_last - item.core_first + 1)
                 end
             finally
                 close(worker.io)
@@ -438,13 +445,14 @@ function stream_prefix_hash_scan(
     scan_threads::Int,
     stats,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
-    ; simd_backend::Val = default_prefix_hash_scan_simd_backend())
+    ; simd_backend::Val = default_prefix_hash_scan_simd_backend(),
+    progress::Union{Nothing, PrefixHashScanProgress} = nothing)
 
     return run_prefix_hash_scan_chunks(
         stream_prefix_hash_scan_chunk, PrefixHashScanChromResult,
         geometry, genome_path, reference_lengths, query, dbi, guides_,
         myers_profiles, distance, chunk_bases, scan_threads, stats,
-        early_stop_state, simd_backend)
+        early_stop_state, simd_backend, progress)
 end
 
 function stream_prefix_hash_scan_counts(
@@ -460,12 +468,13 @@ function stream_prefix_hash_scan_counts(
     scan_threads::Int,
     stats,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
-    ; simd_backend::Val = default_prefix_hash_scan_simd_backend())
+    ; simd_backend::Val = default_prefix_hash_scan_simd_backend(),
+    progress::Union{Nothing, PrefixHashScanProgress} = nothing)
 
     results, _ = run_prefix_hash_scan_chunks(
         stream_prefix_hash_scan_count_chunk, PrefixHashScanCountResult,
         geometry, genome_path, reference_lengths, query, dbi, guides_,
         myers_profiles, distance, chunk_bases, scan_threads, stats,
-        early_stop_state, simd_backend)
+        early_stop_state, simd_backend, progress)
     return results
 end

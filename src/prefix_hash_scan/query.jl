@@ -478,7 +478,12 @@ function build_prefix_hash_scan_compact_query(
         stats.query_insert_ns += time_ns() - merge_start
         stats.query_variant = :bitmask64
     end
-    return directory, guides_
+    # Per-guide hash lists are transient: they are freed after the merge.
+    memory = (;
+        path_bytes = Base.summarysize(paths),
+        guide_hash_bytes = sizeof(UInt32) * sum(length, lists),
+        query_bytes = Base.summarysize(directory))
+    return directory, guides_, memory
 end
 
 @inline function prefix_hash_scan_candidate_mask(query::PrefixHashScanDirectory, hash::Unsigned)

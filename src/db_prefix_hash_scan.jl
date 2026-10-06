@@ -127,13 +127,17 @@ mutable struct PrefixHashScanStats
     work_items_total::Int
     work_items_claimed::Int
     retired_guides::Int
+    path_bytes::Int
+    guide_hash_bytes::Int
+    query_bytes::Int
+    peak_rss_bytes::Int
     path_source::Symbol
     query_variant::Symbol
     scan_backend::Symbol
     simd_backend::Symbol
 end
 
-# Built from the field types rather than a positional list of 34 zeros and four
+# Built from the field types rather than a positional list of 38 zeros and four
 # symbols, so adding a counter to the struct needs no edit here or in reset!.
 PrefixHashScanStats() = PrefixHashScanStats(
     (T === Symbol ? :none : zero(T)
@@ -143,6 +147,54 @@ PrefixHashScanStats() = PrefixHashScanStats(
 @inline prefix_hash_scan_timer(::PrefixHashScanStats) = time_ns()
 @inline prefix_hash_scan_worker_stats(::Nothing) = nothing
 @inline prefix_hash_scan_worker_stats(::PrefixHashScanStats) = PrefixHashScanStats()
+
+# Throttled scan progress for `verbose` searches. Workers add finished bases;
+# the one that wins the compare-and-swap on `next_report_ns` logs, so reporting
+# needs no polling task and adds no latency at the end of the scan.
+const PREFIX_HASH_SCAN_PROGRESS_INTERVAL_S = 30
+
+mutable struct PrefixHashScanProgress
+    label::String
+    total_bases::Int
+    done_bases::Threads.Atomic{Int}
+    start_ns::UInt64
+    next_report_ns::Threads.Atomic{UInt64}
+    interval_ns::UInt64
+end
+
+function PrefixHashScanProgress(
+    label::String, interval_s::Real = PREFIX_HASH_SCAN_PROGRESS_INTERVAL_S)
+    interval_ns = round(UInt64, interval_s * 1e9)
+    start_ns = time_ns()
+    return PrefixHashScanProgress(
+        label, 0, Threads.Atomic{Int}(0), start_ns,
+        Threads.Atomic{UInt64}(start_ns + interval_ns), interval_ns)
+end
+
+@inline report_prefix_hash_scan_progress!(::Nothing, bases::Int) = nothing
+
+function report_prefix_hash_scan_progress!(
+    progress::PrefixHashScanProgress, bases::Int)
+    done = Threads.atomic_add!(progress.done_bases, bases) + bases
+    now = time_ns()
+    next = progress.next_report_ns[]
+    now < next && return nothing
+    Threads.atomic_cas!(
+        progress.next_report_ns, next, now + progress.interval_ns) === next ||
+        return nothing
+    elapsed = (now - progress.start_ns) / 1e9
+    total = max(progress.total_bases, 1)
+    @info(
+        "prefixHashScan progress",
+        batch = progress.label,
+        percent = round(100 * done / total; digits = 1),
+        elapsed_s = round(elapsed; digits = 1),
+        eta_s = round(elapsed * max(total - done, 0) / max(done, 1); digits = 1),
+    )
+    return nothing
+end
+
+prefix_hash_scan_bytes(bytes::Integer) = Base.format_bytes(bytes)
 
 function reset!(stats::PrefixHashScanStats)
     for (name, T) in zip(
@@ -464,6 +516,7 @@ search_prefixHashScan(
     simd_backend::Symbol = :auto,
     output::Symbol = :detail,
     verbose::Bool = false,
+    progress_interval::Real = 30,
     kwargs...)
 ```
 
@@ -513,7 +566,12 @@ resolves from the CPU and the scan geometry.
 without traceback. Note this is not the same schema as `summarize_offtargets`,
 which has no `complete` column.
 
-`verbose` - Print a summary of the resolved engine and timings.
+`verbose` - Log the resolved engine, the path, guide-hash, and query memory,
+scan progress at most every `progress_interval` seconds, and a per-batch
+summary with elapsed time and process peak RSS.
+
+`progress_interval` - Minimum seconds between `verbose` progress records,
+default 30.
 
 ## Tuning arguments
 
@@ -556,10 +614,12 @@ function search_prefixHashScan(
     stream_chunk_bases::Int = 2 * 1024 * 1024,
     output::Symbol = :detail,
     verbose::Bool = false,
+    progress_interval::Real = PREFIX_HASH_SCAN_PROGRESS_INTERVAL_S,
     stats::Union{Nothing, PrefixHashScanStats} = nothing,
     _append_output::Bool = false,
     _collect_counts::Bool = false,
-    _paths = nothing)
+    _paths = nothing,
+    _batch::Tuple{Int, Int} = (1, 1))
 
     validate_prefix_hash_scan_query(
         guides, motif, distance, early_stopping, output)
@@ -569,12 +629,15 @@ function search_prefixHashScan(
         error("hash_len must be in 1:16.")
     end
     scan_threads >= 1 || error("scan_threads must be positive.")
+    progress_interval >= 0 || error("progress_interval must not be negative.")
     stream_chunk_bases >= 64 ||
         error("stream_chunk_bases must be at least 64.")
 
     if stats !== nothing
         reset!(stats)
     end
+    search_start = time_ns()
+    batch_label = "$(_batch[1])/$(_batch[2])"
 
     metadata_start = prefix_hash_scan_timer(stats)
     dbi, reference_lengths = prefix_hash_scan_dbinfo(genome_path, motif)
@@ -585,7 +648,7 @@ function search_prefixHashScan(
         uses_raw_simd, early_stop_state) = resolve_prefix_hash_scan_plan(
         guides, motif, dbi, distance, hash_len, early_stopping,
         query_variant, scan_backend, simd_backend, stream_chunk_bases)
-    if verbose
+    if verbose && _batch[1] == 1
         scheduler = uses_raw_simd ? :chunk : :record
         @info(
             "prefixHashScan execution",
@@ -599,9 +662,9 @@ function search_prefixHashScan(
         )
     end
 
-    query_start = prefix_hash_scan_timer(stats)
+    query_start = time_ns()
     if uses_raw_simd
-        query, guides_ = build_prefix_hash_scan_compact_query(
+        query, guides_, memory = build_prefix_hash_scan_compact_query(
             guides,
             motif,
             distance,
@@ -612,6 +675,7 @@ function search_prefixHashScan(
         )
     elseif query_variant == :bruteforce
         query = nothing
+        memory = (; path_bytes = 0, guide_hash_bytes = 0, query_bytes = 0)
         guides_ = oriented_prefix_hash_scan_guides(guides, motif)
         if stats !== nothing
             stats.query_variant = :bruteforce
@@ -626,11 +690,44 @@ function search_prefixHashScan(
             stats;
             paths = _paths,
         )
+        memory = (; path_bytes = 0, guide_hash_bytes = 0,
+            query_bytes = Base.summarysize(query))
     end
+    query_ns = time_ns() - query_start
     if stats !== nothing
         stats.scan_backend = resolved_scan_backend
         stats.simd_backend = effective_simd_backend
-        stats.query_build_ns += time_ns() - query_start
+        stats.query_build_ns += query_ns
+        stats.path_bytes = memory.path_bytes
+        stats.guide_hash_bytes = memory.guide_hash_bytes
+        stats.query_bytes = memory.query_bytes
+    end
+    if verbose
+        @info(
+            "prefixHashScan memory",
+            batch = batch_label,
+            paths = prefix_hash_scan_bytes(memory.path_bytes),
+            transient_guide_hashes =
+                prefix_hash_scan_bytes(memory.guide_hash_bytes),
+            query = prefix_hash_scan_bytes(memory.query_bytes),
+            query_build_s = round(query_ns / 1e9; digits = 2),
+        )
+    end
+    progress = verbose ?
+        PrefixHashScanProgress(batch_label, progress_interval) : nothing
+    function report_done()
+        stats === nothing || (stats.peak_rss_bytes = Int(Sys.maxrss()))
+        verbose || return nothing
+        @info(
+            "prefixHashScan batch done",
+            batch = batch_label,
+            elapsed_s = round((time_ns() - search_start) / 1e9; digits = 2),
+            scan_s = round((time_ns() - progress.start_ns) / 1e9; digits = 2),
+            peak_rss = prefix_hash_scan_bytes(Sys.maxrss()),
+            chunks_claimed = early_stop_state === nothing ? "all" :
+                "$(early_stop_state.work_items_claimed[])/$(early_stop_state.work_items_total)",
+        )
+        return nothing
     end
 
     es_acc = zeros(Int, length(guides), length(early_stopping))
@@ -643,7 +740,8 @@ function search_prefixHashScan(
         geometry::PrefixScanGeometry, dbi.gi.filepath, reference_lengths,
         query, dbi, guides_, myers_profiles::Vector{PrefixHashScanMyersProfile},
         distance, stream_chunk_bases, scan_threads,
-        stats, early_stop_state; simd_backend = Val(effective_simd_backend))
+        stats, early_stop_state; simd_backend = Val(effective_simd_backend),
+        progress = progress)
 
     if output == :counts
         scan_start = prefix_hash_scan_timer(stats)
@@ -662,10 +760,11 @@ function search_prefixHashScan(
         else
             search_prefix_hash_scan_legacy_counts(
                 dbi, reference_lengths, query, guides_, distance,
-                hash_len, hash_type, use_bruteforce_query, stats)
+                hash_len, hash_type, use_bruteforce_query, stats, progress)
         end
         merge_prefix_hash_scan_early_stop_stats!(stats, early_stop_state)
         stats === nothing || (stats.scan_ns += time_ns() - scan_start)
+        report_done()
         _collect_counts && return counts
         write_prefix_hash_scan_counts(
             output_file, guides, counts, early_stopping, stats)
@@ -692,15 +791,20 @@ function search_prefixHashScan(
         search_prefix_hash_scan_legacy_detail!(
             out, dbi, reference_lengths, query, guides, guides_, motif,
             distance, hash_len, hash_type, early_stopping,
-            es_acc, is_es, seen, use_bruteforce_query, stats)
+            es_acc, is_es, seen, use_bruteforce_query, stats, progress)
         stats === nothing || (stats.scan_ns += time_ns() - scan_start)
     end
     merge_prefix_hash_scan_early_stop_stats!(stats, early_stop_state)
+    report_done()
     return
 end
 
 function foreach_prefix_hash_scan_record(
-    f, dbi::DBInfo, reference_lengths, stats::Union{Nothing, PrefixHashScanStats})
+    f, dbi::DBInfo, reference_lengths, stats::Union{Nothing, PrefixHashScanStats},
+    progress::Union{Nothing, PrefixHashScanProgress})
+
+    progress === nothing ||
+        (progress.total_bases = sum(reference_lengths; init = 0))
 
     ref = open(dbi.gi.filepath, "r")
     try
@@ -721,6 +825,7 @@ function foreach_prefix_hash_scan_record(
                 stats.chrom_load_ns += record_io_ns + sequence_convert_ns
             end
             f(chrom_name, chrom_seq)
+            report_prefix_hash_scan_progress!(progress, length(chrom_seq))
         end
     finally
         close(ref)
@@ -815,10 +920,11 @@ function search_prefix_hash_scan_legacy_detail!(
     is_es::BitVector,
     seen,
     use_bruteforce_query::Bool,
-    stats::Union{Nothing, PrefixHashScanStats})
+    stats::Union{Nothing, PrefixHashScanStats},
+    progress::Union{Nothing, PrefixHashScanProgress})
 
     foreach_prefix_hash_scan_record(
-            dbi, reference_lengths, stats) do chrom_name, chrom_seq
+            dbi, reference_lengths, stats, progress) do chrom_name, chrom_seq
         foreach_prefix_hash_scan_legacy_candidate(
                 chrom_seq, dbi, query, hash_len, hash_type,
                 use_bruteforce_query, is_es,
@@ -853,11 +959,13 @@ function search_prefix_hash_scan_legacy_counts(
     hash_len::Int,
     hash_type::Type{<:Unsigned},
     use_bruteforce_query::Bool,
-    stats::Union{Nothing, PrefixHashScanStats})
+    stats::Union{Nothing, PrefixHashScanStats},
+    progress::Union{Nothing, PrefixHashScanProgress})
 
     counts = zeros(Int, length(guides_), distance + 1)
     no_retired_guides = falses(length(guides_))
-    foreach_prefix_hash_scan_record(dbi, reference_lengths, stats) do _, chrom_seq
+    foreach_prefix_hash_scan_record(
+            dbi, reference_lengths, stats, progress) do _, chrom_seq
         foreach_prefix_hash_scan_legacy_candidate(
                 chrom_seq, dbi, query, hash_len, hash_type,
                 use_bruteforce_query, no_retired_guides,
@@ -963,7 +1071,8 @@ search_prefixHashScan(
     scan_threads::Int = Threads.nthreads(),
     simd_backend::Symbol = :auto,
     output::Symbol = :detail,
-    verbose::Bool = false)
+    verbose::Bool = false,
+    progress_interval::Real = 30)
 ```
 
 Find all off-targets for `guides` within `distance` by scanning `genome_path`
@@ -1024,6 +1133,10 @@ without traceback; counts above an early-stopping limit are capped and the row
 is marked incomplete. This is not the same schema as `summarize_offtargets`,
 which has no `complete` column.
 
+`verbose` - Log the resolved engine, guide batching, per-batch memory, scan
+progress at most every `progress_interval` seconds (default 30), and a
+per-batch summary.
+
 See the four-argument method for the scan tuning options.
 
 # Examples
@@ -1043,8 +1156,10 @@ function search_prefixHashScan(
     scan_threads::Int = Threads.nthreads(),
     simd_backend::Symbol = :auto,
     output::Symbol = :detail,
-    verbose::Bool = false)
+    verbose::Bool = false,
+    progress_interval::Real = PREFIX_HASH_SCAN_PROGRESS_INTERVAL_S)
 
+    progress_interval >= 0 || error("progress_interval must not be negative.")
     distance in 0:4 ||
         error("search_prefixHashScan supports distances 0 through 4.")
     isempty(guides) &&
@@ -1098,10 +1213,12 @@ function search_prefixHashScan(
                 scan_threads = scan_threads,
                 simd_backend = simd_backend,
                 output = output,
-                verbose = verbose && batch_idx == 1,
+                verbose = verbose,
+                progress_interval = progress_interval,
                 _append_output = batch_idx > 1,
                 _collect_counts = output == :counts,
                 _paths = prepared_paths,
+                _batch = (batch_idx, batch_count),
             )
             output == :counts && (counts[first_idx:last_idx, :] .= result)
         end

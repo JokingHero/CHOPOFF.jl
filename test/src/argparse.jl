@@ -69,7 +69,7 @@ end
         portable_args = vcat(args, ["--simd_backend", "portable"])
         @test CHOPOFF.parse_commandline(portable_args)[
             "search"]["prefixHashScan"]["simd_backend"] == "portable"
-        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(args)
+        @test_logs (:info, r"prefixHashScan execution") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") CHOPOFF.main(args)
         @test read(actual) == read(expected)
 
         counts_expected = joinpath(tdir, "counts_expected.csv")
@@ -84,7 +84,7 @@ end
         parsed_counts = CHOPOFF.parse_commandline(counts_args)
         @test parsed_counts["search"]["prefixHashScan"]["output_mode"] ==
             "counts"
-        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(counts_args)
+        @test_logs (:info, r"prefixHashScan execution") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") CHOPOFF.main(counts_args)
         @test read(counts_actual) == read(counts_expected)
 
         twobit_genome = joinpath(
@@ -94,7 +94,7 @@ end
             "search", "--guides", guides_path, "--output", twobit_actual,
             "prefixHashScan", "--genome", twobit_genome,
         ]
-        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(twobit_args)
+        @test_logs (:info, r"prefixHashScan execution") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") CHOPOFF.main(twobit_args)
         @test read(twobit_actual) == read(expected)
 
         large_guides_path = joinpath(tdir, "large_guides.txt")
@@ -109,7 +109,7 @@ end
             "search", "--guides", large_guides_path,
             "--output", large_actual, "prefixHashScan", "--genome", genome,
         ]
-        @test_logs (:info, r"prefixHashScan guide batching") (:info, r"prefixHashScan execution") CHOPOFF.main(
+        @test_logs (:info, r"prefixHashScan guide batching") (:info, r"prefixHashScan execution") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") CHOPOFF.main(
             large_args)
         @test read(large_actual) == read(large_expected)
 
@@ -138,7 +138,8 @@ end
         ]
         parsed_cas12a = CHOPOFF.parse_commandline(cas12a_args)
         @test parsed_cas12a["search"]["prefixHashScan"]["motif"] == "Cas12a"
-        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(cas12a_args)
+        @test parsed_cas12a["search"]["prefixHashScan"]["progress_interval"] == 30.0
+        @test_logs (:info, r"prefixHashScan execution") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") CHOPOFF.main(cas12a_args)
         @test read(cas12a_actual) == read(cas12a_expected)
 
 
@@ -152,7 +153,7 @@ end
             "--output", cas12a_d1_actual, "prefixHashScan",
             "--genome", cas12a_genome, "--motif", "Cas12a",
         ]
-        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+        @test_logs (:info, r"prefixHashScan execution") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") CHOPOFF.main(
             cas12a_d1_args)
         @test read(cas12a_d1_actual) == read(cas12a_d1_expected)
 
@@ -166,7 +167,7 @@ end
             "--output", generic_actual, "prefixHashScan",
             "--genome", genome, "--motif", "Cas9_NGA",
         ]
-        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+        @test_logs (:info, r"prefixHashScan execution") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") CHOPOFF.main(
             generic_args)
         @test read(generic_actual) == read(generic_expected)
 
@@ -189,7 +190,7 @@ end
         ]
         parsed_pamless = CHOPOFF.parse_commandline(pamless_args)
         @test parsed_pamless["search"]["prefixHashScan"]["no_pam"]
-        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+        @test_logs (:info, r"prefixHashScan execution") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") CHOPOFF.main(
             pamless_args)
         @test read(pamless_actual) == read(pamless_expected)
         @test_throws ErrorException CHOPOFF.main(vcat(
@@ -288,7 +289,7 @@ end
                     "--fwd_pam", case.fwd_pam,
                     case.flags...,
                 ]
-                @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+                @test_logs (:info, r"prefixHashScan execution") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") CHOPOFF.main(
                     custom_args)
                 @test read(actual_output) == read(expected_output)
                 result = DataFrame(CSV.File(actual_output))
@@ -345,7 +346,7 @@ end
             "--output", distance_two_actual,
             "prefixHashScan", "--genome", genome,
         ]
-        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+        @test_logs (:info, r"prefixHashScan execution") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") CHOPOFF.main(
             distance_two)
         @test read(distance_two_actual) == read(distance_two_expected)
 
@@ -358,7 +359,7 @@ end
             "--output", distance_four_actual,
             "prefixHashScan", "--genome", genome,
         ]
-        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+        @test_logs (:info, r"prefixHashScan execution") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") CHOPOFF.main(
             distance_four)
         @test read(distance_four_actual) == read(distance_four_expected)
 
@@ -390,7 +391,7 @@ end
             "--genome", ambiguous_genome, "--ambig_max", "1",
         ]
         @test CHOPOFF.parse_commandline(ambiguous_args)["search"]["prefixHashScan"]["ambig_max"] == 1
-        @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(
+        @test_logs (:info, r"prefixHashScan execution") (:info, r"prefixHashScan memory") (:info, r"prefixHashScan batch done") CHOPOFF.main(
             ambiguous_args)
         @test read(ambiguous_actual) == read(ambiguous_expected)
         invalid_ambiguous_args = copy(ambiguous_args)

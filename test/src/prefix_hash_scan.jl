@@ -767,9 +767,13 @@ end
 
         @test_logs min_level=Logging.Info search_prefixHashScan(
             [guide], genome, public_out; early_stopping = fill(100, 4))
-        @test_logs (:info, r"prefixHashScan execution") search_prefixHashScan(
-            [guide], genome, verbose_out;
-            early_stopping = fill(100, 4), verbose = true)
+        @test_logs(
+            (:info, r"prefixHashScan execution"),
+            (:info, r"prefixHashScan memory"),
+            (:info, r"prefixHashScan batch done"),
+            search_prefixHashScan(
+                [guide], genome, verbose_out;
+                early_stopping = fill(100, 4), verbose = true))
         motif = setdist(Motif("Cas9"), 3)
         CHOPOFF.search_prefixHashScan(
             [guide], genome, motif, engine_out;
@@ -780,6 +784,37 @@ end
             distance = 3, early_stopping = fill(100, 4), stats = twobit_stats)
         @test read(public_out) == read(verbose_out) == read(engine_out) == read(twobit_out)
         @test twobit_stats.scan_backend == :streaming_2bit_simd
+        @test twobit_stats.path_bytes > 0
+        @test twobit_stats.guide_hash_bytes ==
+            sizeof(UInt32) * twobit_stats.query_hashes
+        @test twobit_stats.query_bytes > 0
+        @test twobit_stats.peak_rss_bytes > 0
+        legacy_stats = CHOPOFF.PrefixHashScanStats()
+        CHOPOFF.search_prefixHashScan(
+            [guide], genome, motif, joinpath(tdir, "supported_api_legacy.csv");
+            distance = 3, early_stopping = fill(100, 4),
+            scan_backend = :legacy, stats = legacy_stats)
+        @test legacy_stats.guide_hash_bytes == 0
+        @test legacy_stats.query_bytes > 0
+
+        # One worker logs per interval; a zero interval logs every report.
+        progress = CHOPOFF.PrefixHashScanProgress("1/1", UInt64(0))
+        progress.total_bases = 100
+        @test_logs (:info, r"prefixHashScan progress") CHOPOFF.report_prefix_hash_scan_progress!(
+            progress, 40)
+        @test progress.done_bases[] == 40
+        quiet = CHOPOFF.PrefixHashScanProgress("1/1")
+        quiet.total_bases = 100
+        @test_logs min_level=Logging.Info CHOPOFF.report_prefix_hash_scan_progress!(
+            quiet, 40)
+        @test_logs min_level=Logging.Info CHOPOFF.report_prefix_hash_scan_progress!(
+            nothing, 40)
+        @test_logs (:info, r"prefixHashScan progress") match_mode=:any search_prefixHashScan(
+            [guide], genome, joinpath(tdir, "supported_api_progress.csv");
+            early_stopping = fill(100, 4), verbose = true, progress_interval = 0)
+        @test_throws ErrorException search_prefixHashScan(
+            [guide], genome, joinpath(tdir, "supported_api_progress.csv");
+            progress_interval = -1)
         @test twobit_stats.simd_backend ==
             CHOPOFF.resolve_prefix_hash_scan_simd_backend(:auto; scan_kind = :cas9)
 
@@ -875,9 +910,16 @@ end
         batch1_out = joinpath(tdir, "supported_api_batch1.csv")
         large_guides = fill(guide, 65)
         write(large_out, "old output must be replaced\n")
-        search_prefixHashScan(
-            large_guides, genome, large_out;
-            early_stopping = fill(100, 4))
+        @test_logs(
+            (:info, r"prefixHashScan guide batching"),
+            (:info, r"prefixHashScan execution"),
+            (:info, r"prefixHashScan memory"),
+            (:info, r"prefixHashScan batch done"),
+            (:info, r"prefixHashScan memory"),
+            (:info, r"prefixHashScan batch done"),
+            search_prefixHashScan(
+                large_guides, genome, large_out;
+                early_stopping = fill(100, 4), verbose = true))
         CHOPOFF.search_prefixHashScan(
             large_guides[1:64], genome, motif, batch64_out;
             distance = 3, early_stopping = fill(100, 4))

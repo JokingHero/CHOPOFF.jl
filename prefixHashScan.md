@@ -305,6 +305,41 @@ chunks when all guides are retired. Count output caps each bucket and reports
 `complete=false`; non-triggering buckets may then be partial lower bounds.
 Detail output keeps any valid capped subset, which may vary with scheduling.
 
+### 11. Progress and memory reporting
+
+`verbose=true` logs these `@info` records. The CLI always sets it.
+
+| Record | When | Fields |
+|---|---|---|
+| `prefixHashScan guide batching` | once, more than 64 guides | guides, batch size, batches |
+| `prefixHashScan execution` | once | geometry, reference format, scan and SIMD backends, scheduler, threads, chunk size |
+| `prefixHashScan memory` | each batch, after query construction | `paths`, `transient_guide_hashes`, `query`, `query_build_s` |
+| `prefixHashScan progress` | at most every `progress_interval` seconds (default 30) during the scan | `batch`, `percent`, `elapsed_s`, `eta_s` |
+| `prefixHashScan batch done` | each batch | `elapsed_s`, `scan_s`, `peak_rss`, `chunks_claimed` |
+
+Memory fields:
+
+- `paths`: the symbolic path matrix. Every batch shares it.
+- `transient_guide_hashes`: the sorted per-guide hash lists before the
+  cross-guide merge, 4 bytes per hash. They are freed after the merge, so this
+  is the main transient peak at d4 (about 450 MB for 61 Cas9 guides).
+- `query`: the compact directory and the 8 MiB presence bitmap. The `:legacy`
+  engine reports its `Dict` size and no path or guide-hash memory.
+- `peak_rss`: `Sys.maxrss()`, the peak resident set of the whole process since
+  it started, not of this search.
+
+Progress counts reference bases in finished chunks (streaming) or chromosomes
+(`:legacy`). Workers add finished bases to an atomic counter. The worker that
+wins a compare-and-swap on the next report time writes the record, so reporting
+needs no polling task and adds no latency at the end of the scan. Searches
+shorter than the interval log no progress record. The CLI sets it with
+`--progress_interval`. `scan_s` includes result commit.
+`chunks_claimed` is `"all"` without early stopping and `claimed/total` with it.
+
+`PrefixHashScanStats` stores the same sizes in `path_bytes`,
+`guide_hash_bytes`, `query_bytes`, and `peak_rss_bytes`. With `verbose=false`
+the only added work is one `nothing` check per chunk or chromosome.
+
 ## Pseudocode
 
 ```text
@@ -554,7 +589,11 @@ with 7.61 s query construction.
     Cross-run reuse is out of scope for the one-shot workload.
 11. The 8.4 MB presence bitmap is probed in genome order and may be
     memory-latency bound.
-12. Guide lengths above 28 bases are not qualified at d4: prefixHashDB, the
+12. Progress counts only finished work. When early stopping retires every
+    guide, the last progress record stays below 100%. `peak_rss` is a
+    process-lifetime peak, so a later batch cannot report a lower value than an
+    earlier one.
+13. Guide lengths above 28 bases are not qualified at d4: prefixHashDB, the
     current oracle, uses a packed representation limited to 32 bases.
 
 ## Roadmap
@@ -583,6 +622,8 @@ and one bounded reference scan per 64-guide batch.
 - 2bit streaming and bounded IUPAC reference ambiguity (`ambig_max=0:3`).
 - AVX-512F/BW and `:portable` backends with parity tests and codegen
   verification.
+- Progress and path, guide-hash, query, and peak-RSS memory reporting through
+  `verbose` and `PrefixHashScanStats` (October 6, 2026).
 - Representative generic qualification against prefixHashDB: full GRCh38
   Cas9-NGA, CasX, and 25-base-guide cases, 65-guide multi-batch searches, d0
   through d4, ambiguity zero through three, and bounded internal-PAM, PAMless,
@@ -604,10 +645,9 @@ and one bounded reference scan per 64-guide batch.
 
 ### Remaining work, in priority order
 
-1. **Product completion.** Add path/query memory and progress reporting.
-2. **Qualification maintenance.** Add randomized property tests and qualify
+1. **Qualification maintenance.** Add randomized property tests and qualify
    guide lengths above 28 with an oracle other than prefixHashDB.
-3. **Portable performance.** Measure `:portable` on ARM (for example Graviton or
+2. **Portable performance.** Measure `:portable` on ARM (for example Graviton or
    Apple Silicon) and on AMD Zen1/Zen2, where microcoded `PDEP` may make
    portable packing faster than `:avx2`. Add an ARM SIMD path only if profiling
    justifies it.
@@ -630,7 +670,7 @@ motifs when:
 6. Cas9/d3 and Cas12a/d3 detail latency regresses by no more than 3% unless a
    measured feature-level benefit justifies it.
 
-Gates 1-3 and 6 are met. Keep `prefixHashDB` as the persistent-index backend
+Gates 1-4 and 6 are met. Keep `prefixHashDB` as the persistent-index backend
 for repeated or heavily capped workloads.
 
 ## Performance research
