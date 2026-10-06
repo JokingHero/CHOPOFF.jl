@@ -103,6 +103,12 @@ end
         vcf_detail = DataFrame(CSV.File(detail_path_vcf))
         vcf_res = summarize_offtargets(vcf_detail; distance = 2)
 
+        # Repeated guides are searched once.
+        detail_path_vcf_dup = joinpath(vcf_path, "output_dup.csv")
+        search_vcfDB(vcf_storage_path, vcat(guides, guides[1:3]), detail_path_vcf_dup;
+            distance = 2, early_stopping = [300, 300, 300])
+        @test read(detail_path_vcf_dup, String) == read(detail_path_vcf, String)
+
         ar_file = joinpath(dirname(pathof(CHOPOFF)), "..", 
             "test", "sample_data", "artificial_results.csv")
         ar_detail = DataFrame(CSV.File(ar_file))
@@ -312,6 +318,12 @@ end
         pdbes = DataFrame(CSV.File(detail_path_es))
         failed = antijoin(ldb, pdbes, on = [:guide, :distance, :chromosome, :start, :strand])
         @test nrow(failed) == 0
+
+        # Repeated guides are searched once; threads never share a part file.
+        detail_path_dup = joinpath(phdb_path, "detail_dup.csv")
+        search_prefixHashDB(phdb_path, vcat(guides, guides, guides[1:3]), detail_path_dup;
+            distance = 3, early_stopping = [300, 300, 300, 300])
+        @test read(detail_path_dup, String) == read(detail_path_es, String)
 
         # find all offtargets with es with overlap filtering - we dont support ambigous guides anymore
         search_prefixHashDB(phdb_path, guides,

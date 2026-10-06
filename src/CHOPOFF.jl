@@ -396,9 +396,9 @@ function parse_commandline(args::Array{String})
             range_tester = x -> x in ("detail", "counts")
             default = "detail"
         "--simd_backend"
-            help = "prefixHashScan SIMD backend: auto, avx512, or avx2."
+            help = "prefixHashScan SIMD backend: auto, avx512, avx2, or portable."
             arg_type = String
-            range_tester = x -> x in ("auto", "avx512", "avx2")
+            range_tester = x -> x in ("auto", "avx512", "avx2", "portable")
             default = "auto"
     end
 

@@ -201,8 +201,8 @@ you would order from the lab e.g.:
 # Arguments
 
 `output_file` - Path and name for the output file, this will be comma separated table, therefore `.csv` extension is preferred. 
-This search will create intermediate files which will have same name as `output_file`, but with a sequence prefix. Final file
-will contain all those intermediate files.
+Partial results are written to a private hidden folder next to `output_file` and
+merged into it when the search finishes; no other file in that folder is read or deleted.
 
 `distance` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
 which off-targets are considered.
@@ -235,10 +235,9 @@ function search_linearDB(
         guides_ = reverse.(guides_)
     end
 
-    mkpath(dirname(output_file))
-    ThreadsX.map(p -> search_prefix(p, distance, ldb.dbi, dirname(output_file), guides_, storage_dir), prefixes)
-    
-    cleanup_detail(output_file)
+    with_detail_parts(output_file) do parts_dir
+        ThreadsX.map(p -> search_prefix(p, distance, ldb.dbi, parts_dir, guides_, storage_dir), prefixes)
+    end
     return
 end
 
@@ -273,8 +272,7 @@ you would order from the lab e.g.:
 # Arguments
 
 `output_file` - Path and name for the output file, this will be comma separated table, therefore `.csv` extension is preferred. 
-This search will create intermediate files which will have same name as `output_file`, but with a sequence prefix. Final file
-will contain all those intermediate files.
+Results are written directly to `output_file`.
 
 `distance` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
 which off-targets are considered.

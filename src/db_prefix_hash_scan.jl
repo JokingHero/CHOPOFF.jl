@@ -6,16 +6,6 @@ struct PrefixScanGeometry{Kind, M}
     matcher::M
 end
 
-PrefixScanGeometry{Kind}(
-    guide_bases::Int, pam_bases::Int, prefix_bases::Int, distance::Int) where Kind =
-    PrefixScanGeometry{Kind, Nothing}(
-        guide_bases, pam_bases, prefix_bases, distance, nothing)
-
-const CAS9_D3_PREFIX_SCAN_GEOMETRY =
-    PrefixScanGeometry{:cas9}(20, 3, 16, 3)
-const CAS12A_D3_PREFIX_SCAN_GEOMETRY =
-    PrefixScanGeometry{:cas12a}(21, 4, 16, 3)
-
 @inline prefix_scan_kind(::PrefixScanGeometry{Kind}) where Kind = Kind
 
 function matches_prefix_scan_motif(motif::Motif, name::String)
@@ -32,11 +22,9 @@ function resolve_prefix_scan_geometry(
 
     distance in 0:4 || return nothing
     1 <= hash_len <= 16 || return nothing
-    hash_len == 16 && matches_prefix_scan_motif(motif, "Cas9") &&
-        return PrefixScanGeometry{:cas9}(20, 3, 16, distance)
-    hash_len == 16 && matches_prefix_scan_motif(motif, "Cas12a") &&
-        return PrefixScanGeometry{:cas12a}(21, 4, 16, distance)
-    return resolve_generic_prefix_scan_geometry(motif, distance, hash_len)
+    kind = matches_prefix_scan_motif(motif, "Cas9") ? :cas9 :
+        matches_prefix_scan_motif(motif, "Cas12a") ? :cas12a : :generic
+    return resolve_generic_prefix_scan_geometry(motif, distance, hash_len, kind)
 end
 
 @inline prefix_scan_candidate_bases(geometry::PrefixScanGeometry) =
@@ -325,10 +313,15 @@ end
 
 include("prefix_hash_scan/query.jl")
 include("prefix_hash_scan/verification.jl")
+include("prefix_hash_scan/isa.jl")
 include("prefix_hash_scan/kernel_common.jl")
-include("prefix_hash_scan/cas9.jl")
-include("prefix_hash_scan/cas12a.jl")
 include("prefix_hash_scan/generic.jl")
+
+const CAS9_D3_PREFIX_SCAN_GEOMETRY =
+    resolve_prefix_scan_geometry(Motif("Cas9"; distance = 3), 3, 16)
+const CAS12A_D3_PREFIX_SCAN_GEOMETRY =
+    resolve_prefix_scan_geometry(Motif("Cas12a"; distance = 3), 3, 16)
+
 include("prefix_hash_scan/twobit.jl")
 include("prefix_hash_scan/streaming.jl")
 
@@ -451,8 +444,7 @@ function resolve_prefix_hash_scan_plan(
     supports_fused = geometry !== nothing &&
         resolved_query_variant == :bitmask64
     supports_raw_simd = supports_fused &&
-        hash_len == (geometry::PrefixScanGeometry).prefix_bases &&
-        resolved_simd_backend != :none
+        hash_len == (geometry::PrefixScanGeometry).prefix_bases
     supports_fasta_simd = supports_raw_simd && dbi.gi.is_fa
     supports_twobit_simd = supports_raw_simd && !dbi.gi.is_fa
     resolved_scan_backend = if scan_backend != :auto
@@ -576,7 +568,8 @@ stops accumulating hits at a given distance once its limit is reached.
 
 `scan_threads` - Threads used for the genome scan.
 
-`simd_backend` - `:auto`, `:avx2`, or `:avx512` for raw SIMD scans. `:auto`
+`simd_backend` - `:auto`, `:avx2`, `:avx512`, or `:portable` for raw SIMD
+scans. `:portable` uses plain Julia bit operations and runs on any CPU. `:auto`
 resolves from the CPU and the scan geometry.
 
 `output` - `:detail` writes aligned loci with the usual CHOPOFF columns;
@@ -1119,22 +1112,6 @@ function write_prefix_hash_scan_counts(
     return nothing
 end
 
-function with_atomic_prefix_hash_scan_output(
-    f::Function, output_file::String)
-
-    output_dir = dirname(output_file)
-    mkpath(output_dir)
-    temporary, temporary_io = mktemp(output_dir; cleanup = false)
-    close(temporary_io)
-    try
-        f(temporary)
-        Base.Filesystem.rename(temporary, output_file; force = true)
-    finally
-        ispath(temporary) && rm(temporary; force = true)
-    end
-    return nothing
-end
-
 function prefix_hash_scan_pamless_motif(
     guide_bases::Int, distance::Int, ambig_max::Int = 0)
 
@@ -1210,7 +1187,8 @@ distance 1"...
 
 `scan_threads` - Threads used for the genome scan.
 
-`simd_backend` - `:auto`, `:avx2`, or `:avx512` for raw SIMD scans. `:auto`
+`simd_backend` - `:auto`, `:avx2`, `:avx512`, or `:portable` for raw SIMD
+scans. `:portable` uses plain Julia bit operations and runs on any CPU. `:auto`
 resolves from the CPU and the scan geometry.
 
 `output` - `:detail` writes aligned loci with the usual CHOPOFF columns.
@@ -1311,7 +1289,7 @@ function search_prefixHashScan(
         return nothing
     end
     if output == :detail && batch_count > 1
-        with_atomic_prefix_hash_scan_output(output_file) do temporary
+        with_atomic_output(output_file) do temporary
             run_batches(temporary)
         end
     else

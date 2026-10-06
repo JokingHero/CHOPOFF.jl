@@ -1,5 +1,6 @@
 # Motif-specialized generic scanner. Motif decisions live in the matcher type,
-# so generated block operations contain no runtime motif branches.
+# so generated block operations contain no runtime motif branches. The geometry
+# `Kind` (:cas9, :cas12a, :generic) is a label for backend policy and stats.
 
 struct PrefixScanMatcher{Spec} end
 
@@ -30,7 +31,7 @@ function prefix_scan_normalized_offsets(
 end
 
 function resolve_generic_prefix_scan_geometry(
-    motif::Motif, distance::Int, hash_len::Int)
+    motif::Motif, distance::Int, hash_len::Int, kind::Symbol = :generic)
 
     distance in 0:4 || return nothing
     hash_len == 16 || return nothing
@@ -69,21 +70,19 @@ function resolve_generic_prefix_scan_geometry(
         rev_pos_offset = motif.extends5 ? 0 : span - 1,
     )
     matcher = PrefixScanMatcher{spec}()
-    return PrefixScanGeometry{:generic, typeof(matcher)}(
+    return PrefixScanGeometry{kind, typeof(matcher)}(
         guide_bases, span - guide_bases, hash_len, distance, matcher)
 end
 
 function candidate_prefix_hashes_direct(
-    geometry::PrefixScanGeometry{:generic},
+    geometry::PrefixScanGeometry,
     chrom_seq::LongDNA{4}, candidate_range::UnitRange{Int64},
     is_antisense::Bool, hash_len::Int,
     hash_type::Type{<:Unsigned})
 
     hash_len == geometry.prefix_bases || return nothing
-    spec = prefix_scan_matcher_spec(geometry.matcher)
-    offsets = is_antisense ? spec.rev_offsets : spec.fwd_offsets
     hash = prefix_hash_scan_generic_hash_scalar(
-        chrom_seq, first(candidate_range), offsets, is_antisense)
+        chrom_seq, first(candidate_range), geometry.matcher, is_antisense)
     hash === nothing && return nothing
     return hash_type[convert(hash_type, hash)]
 end
@@ -172,20 +171,75 @@ end
 
 @generated function prefix_hash_scan_generic_hash(
     low::UInt128, high::UInt128, bit::Int,
-    ::PrefixScanMatcher{Spec}, ::Val{Anti}) where {Spec, Anti}
+    ::PrefixScanMatcher{Spec}, ::Val{Anti}, simd_backend::Val) where {Spec, Anti}
 
     offsets = collect((Anti ? Spec.rev_offsets : Spec.fwd_offsets)[1:16])
+    complement_expr = Anti ? :(xor(hash, typemax(UInt32))) : :hash
+    if all(offsets[idx] == offsets[idx - 1] - 1 for idx in 2:16)
+        # reverse_codes(pack(rev16(low), rev16(high))) == pack(low, high).
+        shift = minimum(offsets)
+        return quote
+            hash = prefix_hash_scan_pack_codes(
+                UInt64((low >> (bit + $shift)) & UInt128(0xffff)),
+                UInt64((high >> (bit + $shift)) & UInt128(0xffff)),
+                simd_backend)
+            $complement_expr
+        end
+    end
     low_bits = prefix_scan_hash_bits_expr(:low, offsets)
     high_bits = prefix_scan_hash_bits_expr(:high, offsets)
-    complement_expr = Anti ? :(xor(hash, typemax(UInt32))) : :hash
     return quote
         low16 = $low_bits
         high16 = $high_bits
         hash = prefix_hash_scan_reverse_codes(
-            prefix_hash_scan_pack_codes(low16, high16))
+            prefix_hash_scan_pack_codes(low16, high16, simd_backend))
         $complement_expr
     end
 end
+
+# `base` when every reference offset of a strand (see below) is
+# `base + step * ref_idx`, otherwise `nothing`.
+function prefix_scan_affine_base(offsets, step::Int, span::Int)
+    guide_bases = length(offsets)
+    isempty(offsets) && return nothing
+    base = offsets[1] - step
+    all(offsets[idx] == base + step * idx for idx in 1:guide_bases) || return nothing
+    tail_base = step > 0 ? span - guide_bases - 1 : guide_bases
+    return base == tail_base ? base : nothing
+end
+
+# Offset from the candidate start of reference base `ref_idx`: the oriented
+# guide bases, then the edit-distance extension beyond the guide end.
+@generated function prefix_scan_reference_offset(
+    ::PrefixScanMatcher{Spec}, is_antisense::Bool, ref_idx::Int) where Spec
+
+    function strand_expr(offsets, step)
+        guide_bases = length(offsets)
+        base = prefix_scan_affine_base(offsets, step, Spec.span)
+        base === nothing || return :($base + $step * ref_idx)
+        tail = step > 0 ? :($(Spec.span - guide_bases - 1) + ref_idx) :
+            :($guide_bases - ref_idx)
+        isempty(offsets) && return tail
+        return :(ref_idx <= $guide_bases ? $(offsets)[ref_idx] : $tail)
+    end
+    fwd = strand_expr(Spec.fwd_offsets, Spec.fwd_step)
+    rev = strand_expr(Spec.rev_offsets, Spec.rev_step)
+    return :(is_antisense ? $rev : $fwd)
+end
+
+@generated function prefix_scan_reference_is_affine(
+    ::PrefixScanMatcher{Spec}, is_antisense::Bool) where Spec
+
+    fwd = prefix_scan_affine_base(Spec.fwd_offsets, Spec.fwd_step, Spec.span) !== nothing
+    rev = prefix_scan_affine_base(Spec.rev_offsets, Spec.rev_step, Spec.span) !== nothing
+    return :(is_antisense ? $rev : $fwd)
+end
+
+@inline prefix_hash_scan_source_code(raw::AbstractVector{UInt8}, pos::Int) =
+    @inbounds prefix_hash_scan_raw_code(raw[pos])
+@inline prefix_hash_scan_source_code(chrom_seq::LongDNA{4}, pos::Int) =
+    @inbounds prefix_hash_scan_twobit_nibble(UInt8(
+        BioSequences.extract_encoded_element(chrom_seq, pos)))
 
 @inline function prefix_hash_scan_generic_matches(
     raw::AbstractVector{UInt8}, candidate_start::Int, constraints)
@@ -211,15 +265,13 @@ end
 end
 
 @inline function prefix_hash_scan_generic_hash_scalar(
-    source, candidate_start::Int, offsets, is_antisense::Bool)
+    source, candidate_start::Int, matcher::PrefixScanMatcher, is_antisense::Bool)
 
     hash = UInt32(0)
-    @inbounds for offset in offsets[1:16]
-        code = source isa AbstractVector{UInt8} ?
-            prefix_hash_scan_raw_code(source[candidate_start + offset]) :
-            prefix_hash_scan_twobit_nibble(UInt8(
-                BioSequences.extract_encoded_element(
-                    source, candidate_start + offset)))
+    for ref_idx in 1:16
+        code = prefix_hash_scan_source_code(
+            source, candidate_start + prefix_scan_reference_offset(
+                matcher, is_antisense, ref_idx))
         code == 0xff && return nothing
         is_antisense && (code = UInt8(3) - code)
         hash = (hash << 2) | UInt32(code)
@@ -232,8 +284,8 @@ function scan_generic_prefix_hits_raw_range_impl!(
     minus_hits::Vector{PrefixHashScanHit},
     plus_candidates, minus_candidates, plus_radix_scratch,
     minus_radix_scratch, radix_counts,
-    raw::AbstractVector{UInt8}, query,
-    geometry::PrefixScanGeometry{:generic},
+    raw::Union{AbstractVector{UInt8}, LongDNA{4}}, query,
+    geometry::PrefixScanGeometry,
     bounds::PrefixScanBounds,
     simd_backend::Val,
     ::Val{Bucketed}) where Bucketed
@@ -278,7 +330,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
             candidate_start in bounds.plus || continue
             motif_candidates += 1
             hash = prefix_hash_scan_generic_hash(
-                low, high, bit, matcher, Val(false))
+                low, high, bit, matcher, Val(false), simd_backend)
             prefix_hash_scan_record_candidate!(
                 plus_hits, plus_candidates, query, candidate_start, hash,
                 Val(Bucketed))
@@ -290,7 +342,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
             candidate_start in bounds.minus || continue
             motif_candidates += 1
             hash = prefix_hash_scan_generic_hash(
-                low, high, bit, matcher, Val(true))
+                low, high, bit, matcher, Val(true), simd_backend)
             prefix_hash_scan_record_candidate!(
                 minus_hits, minus_candidates, query, candidate_start, hash,
                 Val(Bucketed))
@@ -302,7 +354,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
     @inbounds for candidate_start in block_start:candidate_last
         valid = true
         for offset in 0:(spec.span - 1)
-            if prefix_hash_scan_raw_code(raw[candidate_start + offset]) == 0xff
+            if prefix_hash_scan_source_code(raw, candidate_start + offset) == 0xff
                 valid = false
                 break
             end
@@ -313,7 +365,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
                     raw, candidate_start, spec.fwd_constraints)
             motif_candidates += 1
             hash = prefix_hash_scan_generic_hash_scalar(
-                raw, candidate_start, spec.fwd_offsets, false)
+                raw, candidate_start, matcher, false)
             prefix_hash_scan_record_candidate!(
                 plus_hits, plus_candidates, query, candidate_start, hash,
                 Val(Bucketed))
@@ -323,7 +375,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
                     raw, candidate_start, spec.rev_constraints)
             motif_candidates += 1
             hash = prefix_hash_scan_generic_hash_scalar(
-                raw, candidate_start, spec.rev_offsets, true)
+                raw, candidate_start, matcher, true)
             prefix_hash_scan_record_candidate!(
                 minus_hits, minus_candidates, query, candidate_start, hash,
                 Val(Bucketed))
@@ -367,60 +419,32 @@ function scan_generic_prefix_hits_raw_range(
     return plus_hits, minus_hits, count
 end
 
+# Converted-sequence scan for the fused and legacy backends. LongDNA profiles
+# are built with portable bit operations, so this path needs no AVX2 or BMI2.
 function scan_generic_prefix_hits_range(
-    chrom_seq::LongDNA{4}, query, geometry::PrefixScanGeometry{:generic},
+    chrom_seq::LongDNA{4}, query, geometry::PrefixScanGeometry,
     bounds::PrefixScanBounds)
 
     plus_hits = PrefixHashScanHit[]
     minus_hits = PrefixHashScanHit[]
-    spec = prefix_scan_matcher_spec(geometry.matcher)
-    motif_candidates = 0
-    @inbounds for candidate_start in bounds.all
-        valid = true
-        for offset in 0:(spec.span - 1)
-            code = prefix_hash_scan_twobit_nibble(UInt8(
-                BioSequences.extract_encoded_element(
-                    chrom_seq, candidate_start + offset)))
-            if code == 0xff
-                valid = false
-                break
-            end
-        end
-        valid || continue
-        if candidate_start in bounds.plus && spec.fwd_enabled &&
-                prefix_hash_scan_generic_matches(
-                    chrom_seq, candidate_start, spec.fwd_constraints)
-            motif_candidates += 1
-            hash = prefix_hash_scan_generic_hash_scalar(
-                chrom_seq, candidate_start, spec.fwd_offsets, false)
-            mask = prefix_hash_scan_candidate_mask(query, hash)
-            mask == 0 || push!(plus_hits, PrefixHashScanHit(candidate_start, mask))
-        end
-        if candidate_start in bounds.minus && spec.rev_enabled &&
-                prefix_hash_scan_generic_matches(
-                    chrom_seq, candidate_start, spec.rev_constraints)
-            motif_candidates += 1
-            hash = prefix_hash_scan_generic_hash_scalar(
-                chrom_seq, candidate_start, spec.rev_offsets, true)
-            mask = prefix_hash_scan_candidate_mask(query, hash)
-            mask == 0 || push!(minus_hits, PrefixHashScanHit(candidate_start, mask))
-        end
-    end
-    return plus_hits, minus_hits, motif_candidates
+    count = scan_generic_prefix_hits_raw_range_impl!(
+        plus_hits, minus_hits, nothing, nothing, nothing, nothing, nothing,
+        chrom_seq, query, geometry, bounds, Val(:portable), Val(false))
+    return plus_hits, minus_hits, count
 end
 
 scan_prefix_hits_range(
-    geometry::PrefixScanGeometry{:generic}, chrom_seq, query, hash_len, bounds) =
+    geometry::PrefixScanGeometry, chrom_seq, query, hash_len, bounds) =
     scan_generic_prefix_hits_range(chrom_seq, query, geometry, bounds)
 
 scan_prefix_hits_raw_range!(
-    geometry::PrefixScanGeometry{:generic}, plus_hits, minus_hits,
+    geometry::PrefixScanGeometry, plus_hits, minus_hits,
     raw, query, args...) =
     scan_generic_prefix_hits_raw_range!(
         plus_hits, minus_hits, raw, query, geometry, args...)
 
 scan_prefix_hits_raw_range_bucketed!(
-    geometry::PrefixScanGeometry{:generic}, plus_hits, minus_hits,
+    geometry::PrefixScanGeometry, plus_hits, minus_hits,
     plus_candidates, minus_candidates, plus_radix_scratch,
     minus_radix_scratch, radix_counts, raw, query, args...) =
     scan_generic_prefix_hits_raw_range_bucketed!(
@@ -429,5 +453,5 @@ scan_prefix_hits_raw_range_bucketed!(
         raw, query, geometry, args...)
 
 scan_prefix_hits_raw_range(
-    geometry::PrefixScanGeometry{:generic}, raw, query, args...) =
+    geometry::PrefixScanGeometry, raw, query, args...) =
     scan_generic_prefix_hits_raw_range(raw, query, geometry, args...)

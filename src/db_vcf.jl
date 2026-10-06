@@ -409,8 +409,8 @@ you would order for the lab e.g.:
 # Arguments
 
 `output_file` - Path and name for the output file, this will be comma separated table, therefore `.csv` extension is preferred. 
-This search will create intermediate files which will have same name as `output_file`, but with a sequence prefix. Final file
-will contain all those intermediate files.
+Partial results are written to a private hidden folder next to `output_file` and
+merged into it when the search finishes; no other file in that folder is read or deleted. Repeated guides are searched once.
 
 `distance` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
 which off-targets are considered.
@@ -447,80 +447,81 @@ function search_vcfDB(
         error("For this database maximum distance is " * string(adb.mpt.dbi.motif.distance))
     end
 
-    guides_ = copy(guides)
+    # Each guide writes its own `detail_<guide>.csv` part, so a repeated guide
+    # would write the same file twice; search every distinct guide once.
+    guides_ = unique(guides)
     # reverse guides so that PAM is always on the left
     if adb.mpt.dbi.motif.extends5
         guides_ = reverse.(guides_)
     end
 
     paths = adb.mpt.paths[adb.mpt.paths_distances .<= distance, :]
-    mkpath(dirname(output_file))
-
-    Base.map(guides_) do g # maybe a function would be faster than lambda here?
-        guides_formated = CHOPOFF.guide_to_template_format(g; alphabet = CHOPOFF.ALPHABET_TWOBIT)
-        asa = guides_formated[paths]
-        asa = Base.map(x -> CHOPOFF.asUInt(eltype(adb.prefix), x), eachrow(asa))
-        asa = unique(asa)
-        asa = CHOPOFF.potential_ots_idx(asa, adb.prefix)
+    with_detail_parts(output_file;
+        first_line = "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand,variants\n") do parts_dir
+        Base.map(guides_) do g # maybe a function would be faster than lambda here?
+            guides_formated = CHOPOFF.guide_to_template_format(g; alphabet = CHOPOFF.ALPHABET_TWOBIT)
+            asa = guides_formated[paths]
+            asa = Base.map(x -> CHOPOFF.asUInt(eltype(adb.prefix), x), eachrow(asa))
+            asa = unique(asa)
+            asa = CHOPOFF.potential_ots_idx(asa, adb.prefix)
         
-        es_acc = zeros(Int64, length(early_stopping))   
-        detail_path = joinpath(dirname(output_file), "detail_" * string(g) * ".csv")
-        detail_file = open(detail_path, "w")
-        guide_stranded = adb.mpt.dbi.motif.extends5 ? reverse(g) : g
-        guide_stranded = string(guide_stranded)
-        if length(asa) == 0
+            es_acc = zeros(Int64, length(early_stopping))   
+            detail_path = joinpath(parts_dir, "detail_" * string(g) * ".csv")
+            detail_file = open(detail_path, "w")
+            guide_stranded = adb.mpt.dbi.motif.extends5 ? reverse(g) : g
+            guide_stranded = string(guide_stranded)
+            if length(asa) == 0
+                close(detail_file)
+                return
+            end
+
+            asa = vcat(collect.(asa)...)
+            prefixes = adb.prefix[asa]
+             asa = adb.prefix_idx[asa] # actual indxes of suffixes
+            
+            dups = CHOPOFF.duplicated(asa) .& CHOPOFF.duplicated(prefixes)
+            asa = asa[.!dups]
+            prefixes = prefixes[.!dups]
+            suffixes = adb.suffix[asa]
+            ots = LongDNA{4}.((convert.(ot_type, prefixes) .<< (2 * s_len)) .| 
+                    convert.(ot_type, suffixes), ot_len)
+
+            @inbounds for (i, ot) in enumerate(ots)
+                idx = asa[i] # actual index for chrom/pos/isplus/annot
+                bv_start = (idx - 1) * ot_len + 1
+                bv_end = idx * ot_len
+                bv = adb.is_ambig[bv_start:bv_end]
+                bv_start = sum(adb.is_ambig[1:bv_start]) + 1
+                bv_end = bv_start + sum(bv) - 1
+                ot[bv] = reinterpret.(DNA, adb.ambig[bv_start:bv_end])
+                
+                aln = CHOPOFF.align(g, ot, distance, iscompatible)
+                if aln.dist <= distance
+                    if adb.mpt.dbi.motif.extends5
+                        aln_guide = reverse(aln.guide)
+                        aln_ref = reverse(aln.ref)
+                    else
+                        aln_guide = aln.guide
+                        aln_ref = aln.ref
+                    end
+                    strand = adb.isplus[idx] ? "+" : "-"
+                    ot = guide_stranded * "," * aln_guide * "," * 
+                        aln_ref * "," * string(aln.dist) * "," *
+                        adb.mpt.dbi.gi.chrom[adb.chrom[idx]] * "," * 
+                            string(adb.pos[idx]) * "," * strand * "," *
+                            string(adb.annot[idx]) * "\n"
+                    write(detail_file, ot)
+                    es_acc[aln.dist + 1] += 1
+                    if es_acc[aln.dist + 1] >= early_stopping[aln.dist + 1]
+                        close(detail_file)
+                        return
+                    end
+                end
+            end
             close(detail_file)
             return
         end
-
-        asa = vcat(collect.(asa)...)
-        prefixes = adb.prefix[asa]
-         asa = adb.prefix_idx[asa] # actual indxes of suffixes
-            
-        dups = CHOPOFF.duplicated(asa) .& CHOPOFF.duplicated(prefixes)
-        asa = asa[.!dups]
-        prefixes = prefixes[.!dups]
-        suffixes = adb.suffix[asa]
-        ots = LongDNA{4}.((convert.(ot_type, prefixes) .<< (2 * s_len)) .| 
-                convert.(ot_type, suffixes), ot_len)
-
-        @inbounds for (i, ot) in enumerate(ots)
-            idx = asa[i] # actual index for chrom/pos/isplus/annot
-            bv_start = (idx - 1) * ot_len + 1
-            bv_end = idx * ot_len
-            bv = adb.is_ambig[bv_start:bv_end]
-            bv_start = sum(adb.is_ambig[1:bv_start]) + 1
-            bv_end = bv_start + sum(bv) - 1
-            ot[bv] = reinterpret.(DNA, adb.ambig[bv_start:bv_end])
-                
-            aln = CHOPOFF.align(g, ot, distance, iscompatible)
-            if aln.dist <= distance
-                if adb.mpt.dbi.motif.extends5
-                    aln_guide = reverse(aln.guide)
-                    aln_ref = reverse(aln.ref)
-                else
-                    aln_guide = aln.guide
-                    aln_ref = aln.ref
-                end
-                strand = adb.isplus[idx] ? "+" : "-"
-                ot = guide_stranded * "," * aln_guide * "," * 
-                    aln_ref * "," * string(aln.dist) * "," *
-                    adb.mpt.dbi.gi.chrom[adb.chrom[idx]] * "," * 
-                        string(adb.pos[idx]) * "," * strand * "," *
-                        string(adb.annot[idx]) * "\n"
-                write(detail_file, ot)
-                es_acc[aln.dist + 1] += 1
-                if es_acc[aln.dist + 1] >= early_stopping[aln.dist + 1]
-                    close(detail_file)
-                    return
-                end
-            end
-        end
-        close(detail_file)
-        return
     end
 
-    cleanup_detail(output_file; 
-        first_line = "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand,variants\n")
     return
 end

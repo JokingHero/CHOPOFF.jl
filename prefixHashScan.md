@@ -4,9 +4,9 @@
 
 `prefixHashScan` is an indexless CRISPR off-target search. Its public Julia API
 accepts registered motifs and custom `Motif` objects at edit distances 0 through
-4. Hand-written Cas9 and Cas12a kernels remain the canonical fast paths. Other
-eligible motifs use a motif-specialized generic kernel; configurations outside
-that kernel's envelope use the exact legacy engine. The search reuses the
+4. Every eligible motif, Cas9 and Cas12a included, runs on one
+motif-specialized generic kernel; configurations outside that kernel's envelope
+use the exact legacy engine. The search reuses the
 symbolic prefix paths from `prefixHashDB`, builds a guide-specific query
 structure in memory, and scans the reference genome directly.
 
@@ -22,7 +22,8 @@ The current optimized envelope is:
 - `guide length - distance >= 16`;
 - 64 guides per optimized query batch; larger lists are batched automatically
 - FASTA with a standard `.fai`, or a `.2bit` reference
-- x86 CPU with AVX2 and BMI2; AVX-512F/BW is used on qualified CPUs
+- any CPU: the `:portable` backend uses plain Julia bit operations; x86 CPUs
+  with AVX2 and BMI2 use `:avx2`, and AVX-512F/BW is used on qualified CPUs
 
 Current production tuning for this path is:
 
@@ -52,17 +53,18 @@ The implementation is split by stable responsibility:
 
 - `src/db_prefix_hash_scan.jl`: shared types, orchestration, and public API;
 - `src/prefix_hash_scan/query.jl`: symbolic paths, hashes, directory, prefilter;
-- `src/prefix_hash_scan/kernel_common.jl`: geometry-neutral SIMD/lookup primitives;
-- `src/prefix_hash_scan/cas9.jl`: scalar and typed x86 SIMD Cas9 scan kernels;
-- `src/prefix_hash_scan/cas12a.jl`: scalar and typed x86 SIMD Cas12a scan kernels;
-- `src/prefix_hash_scan/generic.jl`: compiled motif-specialized generic kernel;
+- `src/prefix_hash_scan/isa.jl`: CPU feature detection, backend resolution, and
+  the backend-specific profile and packing primitives; all x86 intrinsics;
+- `src/prefix_hash_scan/kernel_common.jl`: geometry-neutral scalar and lookup helpers;
+- `src/prefix_hash_scan/generic.jl`: compiled motif-specialized scan kernel,
+  shared by raw FASTA bytes and converted `LongDNA{4}` sequences;
 - `src/prefix_hash_scan/verification.jl`: Myers, traceback, and result commit;
 - `src/prefix_hash_scan/streaming.jl`: FASTA/2bit streaming and global scheduler.
 
 `PrefixScanGeometry{Kind,Matcher}` supplies guide, PAM, prefix, distance,
-candidate-span, overlap, and optional compiled motif matching to validation and
-orchestration. Literal Cas9 and Cas12a constants stay inside separate SIMD hot
-loops.
+candidate-span, overlap, and compiled motif matching to validation and
+orchestration. `Kind` is a label (`:cas9`, `:cas12a`, `:generic`) used by the
+AVX-512 `:auto` policy and statistics; kernels dispatch on the `Matcher` only.
 
 ## Core idea
 
@@ -89,19 +91,14 @@ Myers and the final traceback establish the full edit distance.
 
 ## Optimized geometries
 
-Cas9 uses a 23-base window with an `NGG` PAM. Cas12a uses a separate 25-base
+Cas9 uses a 23-base window with an `NGG` PAM. Cas12a uses a 25-base
 window: forward `TTTV + 21N`, reverse `21N + BAAA`, with opposite extension
 and coordinate rules. Both use prefix 16 and shipped precomputed path assets.
-Dispatch occurs before the scalar or SIMD hot loop.
+Both resolve to the generic kernel through `resolve_prefix_scan_geometry`,
+labelled `:cas9` or `:cas12a`; the motif is compiled into the matcher type, so
+the hot loop contains no motif branch.
 
-### Cas12a specialization
-
-Cas12a is not implemented by substituting constants into the Cas9 SIMD loop.
-`resolve_prefix_scan_geometry` selects `PrefixScanGeometry{:cas12a}` for the
-canonical 21-base `TTTV` motif at distances 0 through 4 with a 16-base prefix.
-The named d3 geometry constant is the historical baseline; resolution constructs
-the requested distance-specific geometry before dispatch. Scalar or x86 SIMD
-functions in `cas12a.jl` execute without a motif-kind branch inside the hot loop.
+### Cas12a geometry
 
 The Cas12a kernel evaluates 25-base candidate windows. It recognizes forward
 `TTTV + 21N` sites and reverse-complement `21N + BAAA` sites, rejects a window
@@ -160,16 +157,45 @@ complete span no longer than 65 bases, distance 0 through 4, and
 - `hash_len == 16`;
 - the query uses the 64-bit guide mask representation;
 - there are no more than 64 guides;
-- the reference is FASTA;
-- AVX2/BMI2 or AVX-512F/BW/BMI2 are available.
+- the reference is FASTA.
 
 `simd_backend=:auto` selects AVX-512 only for benchmark-qualified CPU-family
-and specialized-geometry pairs; generic geometries retain AVX2. `:avx2` and
-`:avx512` explicitly force a supported ISA. The end-to-end AVX-512 gain is not
+and geometry-label pairs (`:cas9`, `:cas12a`); other geometries use AVX2, and
+CPUs without AVX2/BMI2 use `:portable`. `:avx2`, `:avx512`, and `:portable`
+force a backend; `:avx2` and `:avx512` error when the CPU lacks them. The end-to-end AVX-512 gain is not
 measurable on the current shared host; see
 [AVX-512 end-to-end qualification](#avx-512-end-to-end-qualification).
-If raw FASTA SIMD is unavailable, `scan_backend=:auto` selects the intermediate
-`:fused_directory` backend. Unsupported geometries select `:legacy`.
+Every CPU supports a raw streaming backend, so `scan_backend=:auto` selects the
+intermediate `:fused_directory` backend only when the query cannot use raw
+streaming (for example `hash_len` other than 16). Unsupported geometries select
+`:legacy`.
+
+### Portable backend
+
+`:portable` builds the same 64-bit `A`/`C`/`G`/`T` profiles from eight
+little-endian 64-bit loads. Each byte is case-folded with `0xdf` and compared
+with SWAR: the high bit of a byte is set exactly when the byte equals the
+pattern, and one multiplication gathers the eight high bits. Prefix packing
+spreads the low and high base bits with shifts and masks instead of `PDEP`. The
+compiled kernel contains no x86 intrinsics and no target features, which
+`test/src/prefix_hash_scan.jl` and `scripts/verify_simd_codegen.jl portable`
+check.
+
+October 5, 2026, on a Xeon Gold 6126 (Skylake-SP) shared host, forcing each
+backend on the same input:
+
+| Measurement | AVX2 | AVX-512 | Portable | `:fused_directory` |
+|---|---:|---:|---:|---:|
+| Cas9 scanner, 32 MB, 1 thread | 68.0 ms | 65.0 ms | 68.6 ms | - |
+| Cas12a scanner, 32 MB, 1 thread | 29.0 ms | 25.5 ms | 30.2 ms | - |
+| Cas9 GRCh38 d3 detail, 24 threads | 1.359 s | - | 1.365 s | 11.481 s |
+| Cas12a GRCh38 d3 detail, 24 threads | 3.557 s | - | 3.959 s | 14.647 s |
+
+End-to-end values are medians of 5 alternating runs; outputs were identical.
+On x86 the portable profile costs little because LLVM vectorizes the SWAR loop
+and the scan is a small share of the search. ARM performance is not yet
+measured; the portable kernel is verified there only by its target-independent
+IR.
 
 `:streaming_fasta_simd_fused` was an experimental backend. It verified
 nonzero guide masks immediately in the SIMD scan loop and avoided
@@ -521,25 +547,47 @@ Interpretation:
 Decision: `simd_backend=:auto` is unchanged. Repeat the qualification on an
 idle host before changing the `:auto` policy or relying on the end-to-end gate.
 
-### Generic-kernel cost relative to specialized Cas9
+### Generic kernel replacing the hand-written Cas9/Cas12a kernels
 
-An August 2, 2026 scanner microbenchmark forced the canonical Cas9 motif through
-the generic geometry so both kernels processed identical windows. It used 32 MB
-of deterministic random A/C/G/T reference, distance 3, one thread, an empty
-`UInt32` hash query, and 11 alternating timed runs after warmup. This isolates
-motif scanning, prefix packing, and failed hash lookup; it excludes path/query
-construction, verification, I/O, and result writing.
+An August 2, 2026 scanner microbenchmark measured the typed generic kernel at
+1.178x the latency of the hand-written Cas9 kernel. Two generator changes closed
+the gap before the hand-written kernels were removed (October 4, 2026):
 
-| Cas9 scanner | Median | Throughput | Relative latency |
-|---|---:|---:|---:|
-| Hand-written Cas9 | 66.7 ms | 480 MB/s | 1.000x |
-| Forced typed generic | 78.6 ms | 407 MB/s | 1.178x |
+- strands whose 16 prefix offsets form one descending run no longer emit
+  `bitreverse` on both profiles followed by `reverse_codes`; the reversals
+  cancel, so the prefix packs directly (Cas9 plus, Cas12a minus);
+- reference offsets for Myers verification and materialization fold to
+  `base + step * ref_idx` when the guide and extension form one run, instead of
+  a tuple lookup per base.
 
-Both kernels found exactly 4,001,477 motif candidates. The generic kernel took
-17.8% longer and delivered 15.1% lower throughput, or about 85% of specialized
-Cas9 throughput. This is a hot-loop result, not an end-to-end guarantee. Shared
-query construction, verification, I/O, and output usually reduce the relative
-effect; different PAM frequencies change candidate work.
+Hot-loop latency of generic relative to hand-written code, one thread, 32 MB
+seeded random A/C/G/T, distance 3, 11 alternating runs after 2 warmups, on a
+shared host (load average about 11 of 48 cores):
+
+| Stage | Cas9 before | Cas9 after | Cas12a before | Cas12a after |
+|---|---:|---:|---:|---:|
+| Raw scan, AVX2 | 1.164x | 0.995x | 1.114x | 0.995x |
+| Raw scan, AVX-512 | 1.295x | 0.961x | 1.126x | 0.919x |
+| Raw Myers verification | 1.042x | 1.005x | 1.103x | 0.986x |
+| Raw materialization | 1.6x | 0.81x | 1.5x | 0.96x |
+| LongDNA scan (fused/legacy) | 2.6x | 0.08x | 2.0x | 0.05x |
+| LongDNA materialization | 6.6x | 0.71x | 8.6x | 0.79x |
+
+The LongDNA scan now builds A/C/G/T block profiles from the packed 4-bit words
+with portable bit operations and runs the same block kernel as the raw path.
+Hits, hashes, guide masks, Myers distances, and materialized candidates were
+identical, including lowercase input, `N` runs, and chromosome edges.
+
+End-to-end GRCh38 search, 61 guides, distance 3, detail output, 24 threads,
+two alternating rounds of 5 timed runs after warmup (median seconds; the host
+load average rose from 10 to 19 during the runs):
+
+| Motif | Before, round 1 / 2 | After, round 1 / 2 | Output |
+|---|---:|---:|---|
+| Cas9 | 1.359 / 1.463 | 1.338 / 1.471 | identical (25,826 rows) |
+| Cas12a | 3.793 / 4.146 | 4.435 / 3.712 | identical (364,581 rows) |
+
+The differences are within the run-to-run noise of this host.
 
 ### Full distance 0-4 human sweep
 
@@ -784,8 +832,9 @@ this host.
    `PrefixScanGeometry{Kind}` without moving motif branches into SIMD loops.
 2. Each optimized query holds at most 64 guides. Larger public API and CLI
    searches rescan the reference once per sequential batch.
-3. AVX2/BMI2 and AVX-512F/BW/BMI2 SIMD backends are available. Unsupported CPUs
-   use the portable fused-directory or legacy path. There is no ARM kernel.
+3. AVX2/BMI2 and AVX-512F/BW/BMI2 backends serve x86; the `:portable` backend
+   serves every other CPU with the same streaming path. ARM performance is
+   unmeasured.
 4. FASTA requires `.fai`; `.2bit` is streamed directly without a sidecar index.
 5. Ambiguous query guides are rejected.
 6. `ambig_max` supports zero through three IUPAC-ambiguous reference positions
@@ -1161,14 +1210,12 @@ The main remaining gaps are:
    220 count comparisons passed. Add randomized property tests and qualify
    guide lengths above 28 with an oracle other than prefixHashDB, whose packed
    d4 representation cannot cover those candidates.
-3. **Portable performance.** Qualified AVX-512 and AVX2/BMI2 systems use the
-   fastest streaming path.
-   Correct fused-directory and legacy fallbacks exist, but must be qualified
-   against prefixHashDB on unsupported CPUs. ARM SIMD is the primary missing
-   optimized backend.
+3. **Portable performance.** Every CPU uses the streaming path; non-x86 CPUs
+   use `:portable`. Measure it on ARM (for example Graviton or Apple Silicon)
+   and on AMD Zen1/Zen2, where microcoded `PDEP` may make portable packing
+   faster than `:avx2`.
 
-The generic kernel's measured 17.8% Cas9 hot-loop latency penalty is not a
-replacement blocker. The decisive remaining product limitation is incomplete
+The decisive remaining product limitation is incomplete
 operational reporting. Sequential batching, atomic multi-batch output,
 computational early stopping, d4/p16, custom CLI motifs, and representative
 generic qualification are closed implementation items.
@@ -1188,8 +1235,7 @@ Make `prefixHashScan` the documented default for its qualified workload when:
    unclaimed work.
 4. Progress/memory reporting is clear enough for production use. Atomic
    multi-batch detail output and custom CLI motifs are already supported.
-5. Non-AVX2 fallbacks are qualified, with ARM SIMD tracked as the primary
-   portability extension.
+5. The `:portable` backend is qualified on ARM hardware.
 6. Cas9/d3 and Cas12a/d3 detail latency regresses by no more than 3% unless a
    measured feature-level benefit justifies it.
 

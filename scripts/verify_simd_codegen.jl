@@ -54,14 +54,39 @@ function verify_avx2_safe()
     println("AVX2-safe codegen verified: YMM core/encoders and no PEXT or ZMM")
 end
 
+function llvm_module(f, types)
+    io = IOBuffer()
+    code_llvm(io, f, types; debuginfo = :none, dump_module = true)
+    return String(take!(io))
+end
+
+# Portable primitives must compile to target-independent IR: no x86 intrinsics
+# and no per-function target features.
+function verify_portable()
+    for (f, types) in (
+            (CHOPOFF.prefix_hash_scan_raw_profile64,
+                Tuple{Vector{UInt8}, Int, Val{:portable}}),
+            (CHOPOFF.prefix_hash_scan_pack_codes,
+                Tuple{UInt64, UInt64, Val{:portable}}))
+        ir = llvm_module(f, types)
+        occursin("llvm.x86", ir) && error("$(nameof(f)) :portable uses x86 intrinsics")
+        occursin("target-features", ir) &&
+            error("$(nameof(f)) :portable sets target features")
+    end
+    println("Portable codegen verified: no x86 intrinsics or target features")
+end
+
 mode = isempty(ARGS) ? "auto" : ARGS[1]
 if mode == "auto"
+    verify_portable()
     verify_avx2_safe()
     CHOPOFF.Sassy.can_use_avx512() && verify_avx512()
 elseif mode == "avx512"
     verify_avx512()
 elseif mode == "avx2_safe"
     verify_avx2_safe()
+elseif mode == "portable"
+    verify_portable()
 else
-    error("Usage: verify_simd_codegen.jl [auto|avx512|avx2_safe]")
+    error("Usage: verify_simd_codegen.jl [auto|avx512|avx2_safe|portable]")
 end

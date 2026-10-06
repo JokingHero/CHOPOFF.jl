@@ -303,9 +303,9 @@ you would order from the lab e.g.:
 
 `guides` - a vector of gRNAs without PAM.
 
-`output_file` - File to which write detailed results. This search will create intermediate 
-files which will have same name as output_file, but with a sequence prefix. Final file
-will contain all those intermediate files, and other files with sequence prefix will be deleted.
+`output_file` - File to which write detailed results. 
+Partial results are written to a private hidden folder next to `output_file` and
+merged into it when the search finishes; no other file in that folder is read or deleted.
 
 `distance` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
 which off-targets are considered.  
@@ -347,10 +347,9 @@ function search_motifDB(
 
     prefix_len = length(first(sdb.prefixes))
     gskipmers = ThreadsX.map(x -> collect(Set(as_skipkmers(x[(prefix_len + 1):end], sdb.kmer_size))), guides_)
-    mkpath(dirname(output_file))
-    ThreadsX.map(p -> search_prefix(
-        p, distance, sdb.dbi, dirname(output_file), guides_, gskipmers, sdb.kmers, adjust, storage_dir), sdb.prefixes)
-    
-    cleanup_detail(output_file)
+    with_detail_parts(output_file) do parts_dir
+        ThreadsX.map(p -> search_prefix(
+            p, distance, sdb.dbi, parts_dir, guides_, gskipmers, sdb.kmers, adjust, storage_dir), sdb.prefixes)
+    end
     return
 end

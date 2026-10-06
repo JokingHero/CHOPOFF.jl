@@ -66,6 +66,9 @@ end
         parsed_forced_simd = CHOPOFF.parse_commandline(forced_simd_args)
         @test parsed_forced_simd["search"]["prefixHashScan"]["simd_backend"] ==
             "avx2"
+        portable_args = vcat(args, ["--simd_backend", "portable"])
+        @test CHOPOFF.parse_commandline(portable_args)[
+            "search"]["prefixHashScan"]["simd_backend"] == "portable"
         @test_logs (:info, r"prefixHashScan execution") CHOPOFF.main(args)
         @test read(actual) == read(expected)
 

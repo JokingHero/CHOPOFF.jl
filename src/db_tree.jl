@@ -285,9 +285,9 @@ you would order from the lab e.g.:
 `dist` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
 which off-targets are considered.  
 
-`detail` - Path and name for the output file. This search will create intermediate 
-files which will have same name as detail, but with a sequence prefix. Final file
-will contain all those intermediate files. Leave `detail` empty if you are only 
+`detail` - Path and name for the output file. 
+Partial results are written to a private hidden folder next to `output_file` and
+merged into it when the search finishes; no other file in that folder is read or deleted. Leave `detail` empty if you are only 
 interested in off-target counts returned by the treeDB. 
 
 
@@ -318,10 +318,9 @@ function search_treeDB(
         guides_ = reverse.(guides_)
     end
 
-    mkpath(dirname(output_file))
-    ThreadsX.map(p -> search_prefixtree(p, distance, ldb.dbi, dirname(output_file), guides_, storage_dir), prefixes)
-    
-    cleanup_detail(output_file)
+    with_detail_parts(output_file) do parts_dir
+        ThreadsX.map(p -> search_prefixtree(p, distance, ldb.dbi, parts_dir, guides_, storage_dir), prefixes)
+    end
     return
 end
 

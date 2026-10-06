@@ -311,8 +311,8 @@ you would order for the lab e.g.:
 # Arguments
 
 `output_file` - Path and name for the output file, this will be comma separated table, therefore `.csv` extension is preferred. 
-This search will create intermediate files which will have same name as `output_file`, but with a sequence prefix. Final file
-will contain all those intermediate files.
+Partial results are written to a private hidden folder next to `output_file` and
+merged into it when the search finishes; no other file in that folder is read or deleted. Repeated guides are searched once.
 
 `distance` - Defines maximum levenshtein distance (insertions, deletions, mismatches) for 
 which off-targets are considered.
@@ -356,95 +356,50 @@ function search_prefixHashDB(
         adb = nothing
     end
 
-    guides_ = copy(guides)
+    # Each guide writes its own `detail_<guide>.csv` part, so a repeated guide
+    # would write the same file twice; search every distinct guide once.
+    guides_ = unique(guides)
     # reverse guides so that PAM is always on the left
     if db.mpt.dbi.motif.extends5
         guides_ = reverse.(guides_)
     end
 
     paths = db.mpt.paths[db.mpt.paths_distances .<= distance, :]
-    mkpath(dirname(output_file))
-
-    ThreadsX.map(guides_) do g
-        guides_formated = CHOPOFF.guide_to_template_format(g; alphabet = CHOPOFF.ALPHABET_TWOBIT)
-        sa = guides_formated[paths]
-        sa = Base.map(x -> CHOPOFF.asUInt(eltype(db.prefix), x), eachrow(sa))
-        sa = unique(sa)
-        if !isnothing(adb)
-            asa = CHOPOFF.potential_ots_idx(sa, adb.prefix)
-        else
-            asa = []
-        end
-        sa = CHOPOFF.potential_ots_idx(sa, db.prefix)
+    with_detail_parts(output_file) do parts_dir
+        ThreadsX.map(guides_) do g
+            guides_formated = CHOPOFF.guide_to_template_format(g; alphabet = CHOPOFF.ALPHABET_TWOBIT)
+            sa = guides_formated[paths]
+            sa = Base.map(x -> CHOPOFF.asUInt(eltype(db.prefix), x), eachrow(sa))
+            sa = unique(sa)
+            if !isnothing(adb)
+                asa = CHOPOFF.potential_ots_idx(sa, adb.prefix)
+            else
+                asa = []
+            end
+            sa = CHOPOFF.potential_ots_idx(sa, db.prefix)
         
-        es_acc = zeros(Int64, length(early_stopping))   
-        detail_path = joinpath(dirname(output_file), "detail_" * string(g) * ".csv")
-        detail_file = open(detail_path, "w")
-        guide_stranded = db.mpt.dbi.motif.extends5 ? reverse(g) : g
-        guide_stranded = string(guide_stranded)
-        if length(sa) == 0 && length(asa) == 0
-            close(detail_file)
-            return
-        end
-
-        if length(sa) != 0
-            sa = Base.mapreduce(vcat, sa) do x # split sa based on suffixes
-                finds = findall(diff(db.suffix[x]) .!= 0)
-                stops = vcat(finds, length(x)) .+ x.start .- 1
-                starts = vcat(0, finds) .+ x.start
-                Base.map(x -> UnitRange(x[1], x[2]), zip(starts, stops))
+            es_acc = zeros(Int64, length(early_stopping))   
+            detail_path = joinpath(parts_dir, "detail_" * string(g) * ".csv")
+            detail_file = open(detail_path, "w")
+            guide_stranded = db.mpt.dbi.motif.extends5 ? reverse(g) : g
+            guide_stranded = string(guide_stranded)
+            if length(sa) == 0 && length(asa) == 0
+                close(detail_file)
+                return
             end
-        end
 
-        @inbounds for i in sa # each sa is range of indices of prefixes where all prefixes are the same
-            ot = LongDNA{4}((convert(ot_type, db.prefix[i.start]) << (2 * s_len)) | 
-                convert(ot_type, db.suffix[i.start]), ot_len)
-            aln = CHOPOFF.align(g, ot, distance, iscompatible)
-            if aln.dist <= distance
-                if db.mpt.dbi.motif.extends5
-                    aln_guide = reverse(aln.guide)
-                    aln_ref = reverse(aln.ref)
-                else
-                    aln_guide = aln.guide
-                    aln_ref = aln.ref
-                end
-                @inbounds for idx in i
-                    strand = db.isplus[idx] ? "+" : "-"
-                    ot = guide_stranded * "," * aln_guide * "," * 
-                        aln_ref * "," * string(aln.dist) * "," *
-                        db.mpt.dbi.gi.chrom[db.chrom[idx]] * "," * 
-                        string(db.pos[idx]) * "," * strand * "\n"
-                    write(detail_file, ot)
-                    es_acc[aln.dist + 1] += 1
-                    if es_acc[aln.dist + 1] >= early_stopping[aln.dist + 1]
-                        close(detail_file)
-                        return
-                    end
+            if length(sa) != 0
+                sa = Base.mapreduce(vcat, sa) do x # split sa based on suffixes
+                    finds = findall(diff(db.suffix[x]) .!= 0)
+                    stops = vcat(finds, length(x)) .+ x.start .- 1
+                    starts = vcat(0, finds) .+ x.start
+                    Base.map(x -> UnitRange(x[1], x[2]), zip(starts, stops))
                 end
             end
-        end
 
-        if length(asa) > 0
-            asa = vcat(collect.(asa)...)
-            prefixes = adb.prefix[asa]
-            asa = adb.prefix_idx[asa] # actual indxes of suffixes
-            
-            dups = CHOPOFF.duplicated(asa) .& CHOPOFF.duplicated(prefixes)
-            asa = asa[.!dups]
-            prefixes = prefixes[.!dups]
-            suffixes = adb.suffix[asa]
-            ots = LongDNA{4}.((convert.(ot_type, prefixes) .<< (2 * s_len)) .| 
-                    convert.(ot_type, suffixes), ot_len)
-
-            @inbounds for (i, ot) in enumerate(ots)
-                idx = asa[i] # actual index for chrom/pos/isplus/annot
-                bv_start = (idx - 1) * ot_len + 1
-                bv_end = idx * ot_len
-                bv = adb.is_ambig[bv_start:bv_end]
-                bv_start = sum(adb.is_ambig[1:bv_start]) + 1
-                bv_end = bv_start + sum(bv) - 1
-                ot[bv] = reinterpret.(DNA, adb.ambig[bv_start:bv_end])
-                
+            @inbounds for i in sa # each sa is range of indices of prefixes where all prefixes are the same
+                ot = LongDNA{4}((convert(ot_type, db.prefix[i.start]) << (2 * s_len)) | 
+                    convert(ot_type, db.suffix[i.start]), ot_len)
                 aln = CHOPOFF.align(g, ot, distance, iscompatible)
                 if aln.dist <= distance
                     if db.mpt.dbi.motif.extends5
@@ -454,25 +409,71 @@ function search_prefixHashDB(
                         aln_guide = aln.guide
                         aln_ref = aln.ref
                     end
-                    strand = adb.isplus[idx] ? "+" : "-"
-                    ot = guide_stranded * "," * aln_guide * "," * 
-                        aln_ref * "," * string(aln.dist) * "," *
-                        db.mpt.dbi.gi.chrom[adb.chrom[idx]] * "," * 
-                        string(adb.pos[idx]) * "," * strand * "\n"
-                    write(detail_file, ot)
-                    es_acc[aln.dist + 1] += 1
-                    if es_acc[aln.dist + 1] >= early_stopping[aln.dist + 1]
-                        close(detail_file)
-                        return
+                    @inbounds for idx in i
+                        strand = db.isplus[idx] ? "+" : "-"
+                        ot = guide_stranded * "," * aln_guide * "," * 
+                            aln_ref * "," * string(aln.dist) * "," *
+                            db.mpt.dbi.gi.chrom[db.chrom[idx]] * "," * 
+                            string(db.pos[idx]) * "," * strand * "\n"
+                        write(detail_file, ot)
+                        es_acc[aln.dist + 1] += 1
+                        if es_acc[aln.dist + 1] >= early_stopping[aln.dist + 1]
+                            close(detail_file)
+                            return
+                        end
                     end
                 end
             end
-        end
 
-        close(detail_file)
-        return
+            if length(asa) > 0
+                asa = vcat(collect.(asa)...)
+                prefixes = adb.prefix[asa]
+                asa = adb.prefix_idx[asa] # actual indxes of suffixes
+            
+                dups = CHOPOFF.duplicated(asa) .& CHOPOFF.duplicated(prefixes)
+                asa = asa[.!dups]
+                prefixes = prefixes[.!dups]
+                suffixes = adb.suffix[asa]
+                ots = LongDNA{4}.((convert.(ot_type, prefixes) .<< (2 * s_len)) .| 
+                        convert.(ot_type, suffixes), ot_len)
+
+                @inbounds for (i, ot) in enumerate(ots)
+                    idx = asa[i] # actual index for chrom/pos/isplus/annot
+                    bv_start = (idx - 1) * ot_len + 1
+                    bv_end = idx * ot_len
+                    bv = adb.is_ambig[bv_start:bv_end]
+                    bv_start = sum(adb.is_ambig[1:bv_start]) + 1
+                    bv_end = bv_start + sum(bv) - 1
+                    ot[bv] = reinterpret.(DNA, adb.ambig[bv_start:bv_end])
+                
+                    aln = CHOPOFF.align(g, ot, distance, iscompatible)
+                    if aln.dist <= distance
+                        if db.mpt.dbi.motif.extends5
+                            aln_guide = reverse(aln.guide)
+                            aln_ref = reverse(aln.ref)
+                        else
+                            aln_guide = aln.guide
+                            aln_ref = aln.ref
+                        end
+                        strand = adb.isplus[idx] ? "+" : "-"
+                        ot = guide_stranded * "," * aln_guide * "," * 
+                            aln_ref * "," * string(aln.dist) * "," *
+                            db.mpt.dbi.gi.chrom[adb.chrom[idx]] * "," * 
+                            string(adb.pos[idx]) * "," * strand * "\n"
+                        write(detail_file, ot)
+                        es_acc[aln.dist + 1] += 1
+                        if es_acc[aln.dist + 1] >= early_stopping[aln.dist + 1]
+                            close(detail_file)
+                            return
+                        end
+                    end
+                end
+            end
+
+            close(detail_file)
+            return
+        end
     end
 
-    cleanup_detail(output_file)
     return
 end

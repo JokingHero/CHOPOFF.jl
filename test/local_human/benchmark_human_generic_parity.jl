@@ -470,7 +470,6 @@ function expected_scan_backend(motif::Motif, reference::String, distance::Int)
     geometry === nothing && return :legacy
     CHOPOFF.prefix_scan_kind(geometry) == :generic ||
         error("Expected generic geometry for $(motif.alias) at distance $distance")
-    CHOPOFF.can_use_prefix_hash_scan_simd() || return :fused_directory
     return endswith(lowercase(reference), ".2bit") ?
         :streaming_2bit_simd : :streaming_fasta_simd
 end

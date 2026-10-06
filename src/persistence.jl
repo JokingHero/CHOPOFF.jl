@@ -35,30 +35,59 @@ end
 
 
 """
-`cleanup_detail(
-    detail::String; 
-    first_line::String = "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")`
+`with_atomic_output(f::Function, output_file::String)`
 
-Merge multiple detail files into one final file. 
-This assumes there are no other files in the folder that start with "detail_".
-After the merge files that start with "detail_" will be deleted!
+Calls `f(temporary)` with a fresh file next to `output_file`, then renames it
+over `output_file`. Readers see either the old file or the complete new one;
+if `f` throws, `output_file` is left unchanged.
 """
-function cleanup_detail(
-    detail::String; 
-    first_line::String = "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
-    detail_files = filter(x -> occursin("detail_", x), readdir(dirname(detail)))
-    detail_files = filter(x -> joinpath(dirname(detail), x) != detail, detail_files)
-    open(detail, "w") do io
-        write(io, first_line)
-        for ch in detail_files
-            ch = joinpath(dirname(detail), ch)
-            open(ch, "r") do ch_file
-                for ln in eachline(ch_file)
-                    write(io, ln * "\n")
+function with_atomic_output(f::Function, output_file::String)
+    output_dir = dirname(abspath(output_file))
+    mkpath(output_dir)
+    temporary, temporary_io = mktemp(output_dir; cleanup = false)
+    close(temporary_io)
+    try
+        f(temporary)
+        Base.Filesystem.rename(temporary, output_file; force = true)
+    finally
+        ispath(temporary) && rm(temporary; force = true)
+    end
+    return nothing
+end
+
+
+const DETAIL_FIRST_LINE =
+    "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n"
+
+"""
+`with_detail_parts(f::Function, output_file::String; first_line::String = DETAIL_FIRST_LINE)`
+
+Calls `f(parts_dir)` with a new private directory next to `output_file`, where
+search workers write their partial detail files. The parts are then
+concatenated in file-name order under `first_line` and published atomically as
+`output_file`. The parts directory is removed even when `f` throws, and no
+other file in the output directory is read or deleted.
+"""
+function with_detail_parts(
+    f::Function, output_file::String; first_line::String = DETAIL_FIRST_LINE)
+
+    output_dir = dirname(abspath(output_file))
+    mkpath(output_dir)
+    parts_dir = mktempdir(output_dir; prefix = ".chopoff_parts_", cleanup = false)
+    try
+        f(parts_dir)
+        with_atomic_output(output_file) do temporary
+            open(temporary, "w") do io
+                write(io, first_line)
+                for part in readdir(parts_dir; join = true)
+                    for ln in eachline(part)
+                        write(io, ln, "\n")
+                    end
                 end
             end
-            rm(ch)
         end
+    finally
+        rm(parts_dir; recursive = true, force = true)
     end
-    return 
+    return nothing
 end

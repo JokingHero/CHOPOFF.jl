@@ -7,6 +7,7 @@ using CSV
 using DataFrames
 using Logging
 using Random
+using InteractiveUtils
 
 const PHS_CORE_COLS = [:guide, :distance, :chromosome, :start, :strand]
 
@@ -148,7 +149,8 @@ function phs_scan_cas9_raw(raw, dbi, query)
     bounds = CHOPOFF.prefix_scan_bounds(
         CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, raw, dbi)
     bounds === nothing ||
-        CHOPOFF.scan_cas9_prefix_hits_raw_range!(plus, minus, raw, query, bounds)
+        CHOPOFF.scan_prefix_hits_raw_range!(
+            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, plus, minus, raw, query, bounds)
     return plus, minus
 end
 
@@ -235,7 +237,9 @@ end
         @test resolve(:auto; cpu_name = "unknown",
             avx2 = true, avx512 = false) == :avx2
         @test resolve(:auto; cpu_name = "unknown",
-            avx2 = false, avx512 = false) == :none
+            avx2 = false, avx512 = false) == :portable
+        @test resolve(:portable; avx2 = false, avx512 = false) == :portable
+        @test resolve(:portable; avx2 = true, avx512 = true) == :portable
         @test resolve(:avx512; avx2 = true, avx512 = true) == :avx512
         @test_throws ErrorException resolve(
             :avx512; avx2 = true, avx512 = false)
@@ -246,20 +250,64 @@ end
         @test CHOPOFF.can_use_prefix_hash_scan_avx2() isa Bool
         @test CHOPOFF.can_use_prefix_hash_scan_avx512() isa Bool
 
-        if CHOPOFF.can_use_prefix_hash_scan_avx512()
-            alphabet = Vector{UInt8}(codeunits(
-                "ACGTacgtNRYSWKMDHBVacgtnryswkmdhbv"))
-            raw = [alphabet[mod1(i * 17, length(alphabet))] for i in 1:256]
-            for start_pos in 1:33
-                @test CHOPOFF.prefix_hash_scan_raw_profile64(
-                    raw, start_pos, Val(:avx512)) ==
-                    CHOPOFF.prefix_hash_scan_raw_profile64(
-                    raw, start_pos, Val(:avx2))
-                @test CHOPOFF.prefix_hash_scan_exact_block(
-                    raw, start_pos, 128, Val(:avx512)) ==
-                    CHOPOFF.prefix_hash_scan_exact_block(
-                    raw, start_pos, 128, Val(:avx2))
+        alphabet = Vector{UInt8}(codeunits(
+            "ACGTacgtNRYSWKMDHBVacgtnryswkmdhbv-*\0\xff"))
+        raw = [alphabet[mod1(i * 17, length(alphabet))] for i in 1:256]
+        # Byte-by-byte reference for the portable masks.
+        scalar_profile(start_pos) = ntuple(4) do code
+            mask = UInt64(0)
+            for offset in 0:63
+                CHOPOFF.prefix_hash_scan_raw_code(raw[start_pos + offset]) ==
+                    code - 1 && (mask |= UInt64(1) << offset)
             end
+            mask
+        end
+        backends = [:portable]
+        CHOPOFF.can_use_prefix_hash_scan_avx2() && push!(backends, :avx2)
+        CHOPOFF.can_use_prefix_hash_scan_avx512() && push!(backends, :avx512)
+        for start_pos in 1:33
+            expected = scalar_profile(start_pos)
+            expected_exact = CHOPOFF.prefix_hash_scan_exact_block(
+                raw, start_pos, 128, Val(:portable))
+            for backend in backends
+                @test CHOPOFF.prefix_hash_scan_raw_profile64(
+                    raw, start_pos, Val(backend)) == expected
+                @test CHOPOFF.prefix_hash_scan_exact_block(
+                    raw, start_pos, 128, Val(backend)) == expected_exact
+            end
+        end
+
+        rng = MersenneTwister(11)
+        for _ in 1:1000
+            low, high = rand(rng, UInt64) & 0xffff, rand(rng, UInt64) & 0xffff
+            expected = UInt32(0)
+            for bit in 0:15
+                expected |= UInt32((low >> bit) & 1) << (2 * bit)
+                expected |= UInt32((high >> bit) & 1) << (2 * bit + 1)
+            end
+            for backend in backends
+                @test CHOPOFF.prefix_hash_scan_pack_codes(
+                    low, high, Val(backend)) == expected
+            end
+        end
+
+        # The portable kernel must not contain x86 intrinsics.
+        geometry = CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY
+        kernel_ir(backend) = sprint() do io
+            code_llvm(io, CHOPOFF.scan_generic_prefix_hits_raw_range_impl!,
+                Tuple{Vector{CHOPOFF.PrefixHashScanHit},
+                    Vector{CHOPOFF.PrefixHashScanHit},
+                    Nothing, Nothing, Nothing, Nothing, Nothing,
+                    Vector{UInt8}, CHOPOFF.PrefixHashScanBitmaskQuery{UInt32},
+                    typeof(geometry), CHOPOFF.PrefixScanBounds,
+                    Val{backend}, Val{false}};
+                debuginfo = :none, dump_module = true)
+        end
+        portable_ir = kernel_ir(:portable)
+        @test !occursin("llvm.x86", portable_ir)
+        @test !occursin("target-features", portable_ir)
+        if CHOPOFF.can_use_prefix_hash_scan_avx2()
+            @test occursin("llvm.x86", kernel_ir(:avx2))
         end
     end
 
@@ -268,7 +316,7 @@ end
         write(output, "old\n")
         staged_path = Ref("")
         before = Set(readdir(tdir))
-        CHOPOFF.with_atomic_prefix_hash_scan_output(output) do staged
+        CHOPOFF.with_atomic_output(output) do staged
             staged_path[] = staged
             write(staged, "new\n")
             @test read(output, String) == "old\n"
@@ -279,7 +327,7 @@ end
 
         write(output, "preserve\n")
         before = Set(readdir(tdir))
-        @test_throws ErrorException CHOPOFF.with_atomic_prefix_hash_scan_output(
+        @test_throws ErrorException CHOPOFF.with_atomic_output(
             output) do staged
             staged_path[] = staged
             write(staged, "partial\n")
@@ -290,7 +338,7 @@ end
         @test Set(readdir(tdir)) == before
 
         absent = joinpath(tdir, "atomic_absent.csv")
-        @test_throws ErrorException CHOPOFF.with_atomic_prefix_hash_scan_output(
+        @test_throws ErrorException CHOPOFF.with_atomic_output(
             absent) do staged
             write(staged, "partial\n")
             error("injected output failure")
@@ -612,6 +660,78 @@ end
         @test CHOPOFF.resolve_prefix_scan_geometry(short_motif, 2, 1) === nothing
     end
 
+    @testset "SIMD backend output parity" begin
+        # Own directory: prefixHashDB merges every `detail*` file it finds
+        # next to its output.
+        parity_dir = joinpath(tdir, "simd_parity")
+        mkpath(parity_dir)
+        rng = MersenneTwister(23)
+        backends = [:portable]
+        CHOPOFF.can_use_prefix_hash_scan_avx2() && push!(backends, :avx2)
+        CHOPOFF.can_use_prefix_hash_scan_avx512() && push!(backends, :avx512)
+        randseq(n) = randstring(rng, "ACGT", n)
+        function variants(site)
+            subst(s, k) = begin
+                chars = collect(s)
+                for idx in randperm(rng, length(chars))[1:k]
+                    chars[idx] = rand(rng, setdiff(['A', 'C', 'G', 'T'], [chars[idx]]))
+                end
+                String(chars)
+            end
+            deletion = site[1:5] * site[7:end]
+            return [site, subst(site, 1), subst(site, 2), deletion, subst(site, 4)]
+        end
+        internal = Motif(
+            "internal", "NNNNNNNNNNXXXNNNNNNNNNN",
+            "XXXXXXXXXXAGGXXXXXXXXXX", true, true, 2, false, 0)
+        nnt = Motif(
+            "25N_NNT", repeat("N", 25) * "NNT", repeat("X", 25) * "NNT",
+            true, true, 2, true, 0)
+        g20, g21, g25 = randseq(20), randseq(21), randseq(25)
+        cases = [
+            ("Cas9", d -> Motif("Cas9"; distance = d), g20,
+                g -> g * "AGG", 0:4),
+            ("Cas12a", d -> Motif("Cas12a"; distance = d), g21,
+                g -> "TTTA" * g, 0:4),
+            ("25N_NNT", d -> setdist(nnt, d), g25, g -> g * "CAT", 1:2),
+            ("internal", d -> setdist(internal, d), g20,
+                g -> g[1:10] * "AGG" * g[11:20], 1:2),
+        ]
+        for (label, motif_at, guide_string, site_of, distances) in cases
+            # Planted sites on both strands, an N run, lowercase, and IUPAC
+            # bases spread over many 64-base blocks and stream chunks.
+            parts = String[]
+            for site in variants(site_of(guide_string))
+                push!(parts, randseq(rand(rng, 30:90)), site,
+                    randseq(rand(rng, 30:90)),
+                    string(reverse_complement(LongDNA{4}(site))))
+            end
+            push!(parts, repeat("N", 70), lowercase(randseq(50)),
+                lowercase(site_of(guide_string)), "ACRT", randseq(200))
+            genome = joinpath(parity_dir, "$label.fa")
+            write_phs_fasta(genome, "chr1", join(parts))
+            guides = [LongDNA{4}(guide_string), LongDNA{4}(randseq(length(guide_string)))]
+            for distance in distances, output in (:detail, :counts)
+                motif = motif_at(distance)
+                outputs = map(backends) do backend
+                    path = joinpath(
+                        parity_dir, "$(label)_$(distance)_$(output)_$(backend).csv")
+                    stats = CHOPOFF.PrefixHashScanStats()
+                    CHOPOFF.search_prefixHashScan(
+                        guides, genome, motif, path; distance, hash_len = 16,
+                        early_stopping = fill(1000, distance + 1),
+                        scan_backend = :streaming_fasta_simd,
+                        simd_backend = backend, stream_chunk_bases = 64,
+                        output, stats)
+                    @test stats.simd_backend == backend
+                    read(path, String)
+                end
+                @test all(==(first(outputs)), outputs)
+                output == :detail && @test countlines(IOBuffer(first(outputs))) > 1
+            end
+        end
+    end
+
     @testset "supported Cas9 API" begin
         guide = LongDNA{4}("ACGTACGTACGTACGTACGT")
         pad = repeat("A", 40)
@@ -641,13 +761,9 @@ end
             [guide], twobit_genome, motif, twobit_out;
             distance = 3, early_stopping = fill(100, 4), stats = twobit_stats)
         @test read(public_out) == read(verbose_out) == read(engine_out) == read(twobit_out)
-        expected_twobit_backend = CHOPOFF.can_use_prefix_hash_scan_simd() ?
-            :streaming_2bit_simd : :fused_directory
-        @test twobit_stats.scan_backend == expected_twobit_backend
-        expected_twobit_simd = expected_twobit_backend == :streaming_2bit_simd ?
-            CHOPOFF.resolve_prefix_hash_scan_simd_backend(
-                :auto; scan_kind = :cas9) : :none
-        @test twobit_stats.simd_backend == expected_twobit_simd
+        @test twobit_stats.scan_backend == :streaming_2bit_simd
+        @test twobit_stats.simd_backend ==
+            CHOPOFF.resolve_prefix_hash_scan_simd_backend(:auto; scan_kind = :cas9)
 
         if CHOPOFF.can_use_prefix_hash_scan_avx512()
             avx2_out = joinpath(tdir, "supported_api_avx2.csv")
@@ -978,15 +1094,15 @@ end
                     chrom_seq, candidate_range, dbi, is_antisense, 16)
                 expected_hash = CHOPOFF.candidate_prefix_hashes(
                     prefix, UInt32, nothing)
-                direct_hash = CHOPOFF.candidate_prefix_hashes_direct_cas12a(
+                direct_hash = CHOPOFF.candidate_prefix_hashes_direct(CHOPOFF.CAS12A_D3_PREFIX_SCAN_GEOMETRY, 
                     chrom_seq, candidate_range, is_antisense, 16, UInt32)
                 @test direct_hash == expected_hash
 
                 expected_materialized = CHOPOFF.materialize_normalized_candidate(
                     chrom_seq, candidate_range, dbi, is_antisense)
-                observed = CHOPOFF.materialize_normalized_candidate_cas12a(
+                observed = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS12A_D3_PREFIX_SCAN_GEOMETRY, 
                     chrom_seq, first(candidate_range), dbi, is_antisense)
-                raw_observed = CHOPOFF.materialize_normalized_candidate_cas12a(
+                raw_observed = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS12A_D3_PREFIX_SCAN_GEOMETRY, 
                     collect(codeunits(seq)), first(candidate_range), dbi, is_antisense)
                 @test observed == expected_materialized
                 @test raw_observed == expected_materialized
@@ -1011,13 +1127,9 @@ end
             @test backend_stats[backend].path_source == :precomputed
         end
         @test all(==(outputs[:legacy]), values(outputs))
-        expected_auto = CHOPOFF.can_use_prefix_hash_scan_simd() ?
-            :streaming_fasta_simd : :fused_directory
-        @test backend_stats[:auto].scan_backend == expected_auto
-        expected_auto_simd = expected_auto == :streaming_fasta_simd ?
-            CHOPOFF.resolve_prefix_hash_scan_simd_backend(
-                :auto; scan_kind = :cas12a) : :none
-        @test backend_stats[:auto].simd_backend == expected_auto_simd
+        @test backend_stats[:auto].scan_backend == :streaming_fasta_simd
+        @test backend_stats[:auto].simd_backend ==
+            CHOPOFF.resolve_prefix_hash_scan_simd_backend(:auto; scan_kind = :cas12a)
 
         public_output = joinpath(tdir, "cas12a_public.csv")
         search_prefixHashScan(
@@ -1403,7 +1515,8 @@ end
         write_phs_fasta(genome, "chr1", seq)
         chrom_seq = LongDNA{4}(seq)
         dbi = DBInfo(genome, "prefix_hash_scan_direct_hash", motif)
-        @test CHOPOFF.is_cas9_prefix_hash_candidate(dbi, hash_len)
+        @test CHOPOFF.prefix_scan_kind(
+            CHOPOFF.resolve_prefix_scan_geometry(motif, 2, hash_len)) == :cas9
         # Both strands must actually yield candidates, otherwise the loop below
         # runs zero times and the testset passes without asserting anything.
         @test !isempty(CHOPOFF.findguides(dbi, chrom_seq, false))
@@ -1414,7 +1527,7 @@ end
             candidate_range = first(positions)
             prefix = CHOPOFF.normalized_candidate_prefix(chrom_seq, candidate_range, dbi, is_antisense, hash_len)
             old_hashes = CHOPOFF.candidate_prefix_hashes(prefix, hash_type, nothing)
-            direct_hashes = CHOPOFF.candidate_prefix_hashes_direct_cas9(chrom_seq, candidate_range, is_antisense, hash_len, hash_type)
+            direct_hashes = CHOPOFF.candidate_prefix_hashes_direct(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, chrom_seq, candidate_range, is_antisense, hash_len, hash_type)
             @test direct_hashes == old_hashes
         end
     end
@@ -1444,9 +1557,9 @@ end
                 for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
                     expected = CHOPOFF.materialize_normalized_candidate(
                         chrom_seq, candidate_range, dbi, is_antisense)
-                    observed = CHOPOFF.materialize_normalized_candidate_cas9(
+                    observed = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
                         chrom_seq, first(candidate_range), dbi, is_antisense)
-                    raw_observed = CHOPOFF.materialize_normalized_candidate_cas9(
+                    raw_observed = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
                         collect(codeunits(seq)), first(candidate_range), dbi, is_antisense)
                     @test observed == expected
                     @test raw_observed == expected
@@ -1476,7 +1589,7 @@ end
         masks = Dict{UInt32, UInt64}()
         for is_antisense in (false, true)
             for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
-                hash = only(CHOPOFF.candidate_prefix_hashes_direct_cas9(
+                hash = only(CHOPOFF.candidate_prefix_hashes_direct(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
                     chrom_seq, candidate_range, is_antisense, hash_len, UInt32))
                 masks[hash] = get(masks, hash, UInt64(0)) | UInt64(1)
             end
@@ -1502,7 +1615,7 @@ end
 
         plus_raw = collect(codeunits(String(guide) * "AGG" * "RYN"))
         plus_dbi = DBInfo(fixture_genome, "raw_myers_plus", motif3)
-        plus_ot, _ = CHOPOFF.materialize_normalized_candidate_cas9(
+        plus_ot, _ = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
             plus_raw, 1, plus_dbi, false)
         @test CHOPOFF.prefix_hash_scan_raw_myers_distance(
             profile, plus_raw, 1, false, 3) ==
@@ -1512,7 +1625,7 @@ end
         minus_raw = collect(codeunits("RYNCCN" * minus_guide))
         minus_start = 4
         minus_dbi = DBInfo(fixture_genome, "raw_myers_minus", motif3)
-        minus_ot, _ = CHOPOFF.materialize_normalized_candidate_cas9(
+        minus_ot, _ = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
             minus_raw, minus_start, minus_dbi, true)
         @test CHOPOFF.prefix_hash_scan_raw_myers_distance(
             profile, minus_raw, minus_start, true, 3) ==
@@ -1581,7 +1694,7 @@ end
         expected = [Tuple{Int, UInt64}[] for _ in 1:2]
         for (strand_idx, is_antisense) in enumerate((false, true))
             for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
-                hash = only(CHOPOFF.candidate_prefix_hashes_direct_cas9(
+                hash = only(CHOPOFF.candidate_prefix_hashes_direct(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
                     chrom_seq, candidate_range, is_antisense, hash_len, hash_type))
                 mask = xor(UInt64(hash) * 0x9e3779b97f4a7c15, 0xd1b54a32d192ed03)
                 mask == 0 && (mask = 1)
@@ -1608,7 +1721,8 @@ end
         scratch_minus_id = objectid(scratch_minus)
         bounds = CHOPOFF.prefix_scan_bounds(
             CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, raw, dbi)
-        motif_candidates = CHOPOFF.scan_cas9_prefix_hits_raw_range!(
+        motif_candidates = CHOPOFF.scan_prefix_hits_raw_range!(
+            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
             scratch_plus, scratch_minus, raw, directory, bounds)
         @test scratch_plus == raw_plus
         @test scratch_minus == raw_minus
@@ -1616,7 +1730,8 @@ end
         @test objectid(scratch_plus) == scratch_plus_id
         @test objectid(scratch_minus) == scratch_minus_id
 
-        CHOPOFF.scan_cas9_prefix_hits_raw_range!(
+        CHOPOFF.scan_prefix_hits_raw_range!(
+            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
             scratch_plus, scratch_minus, raw, directory,
             CHOPOFF.PrefixScanBounds(2:1, 2:1, 2:1))
         @test isempty(scratch_plus)
@@ -1632,8 +1747,8 @@ end
         bucket_minus = CHOPOFF.PrefixHashScanHit[]
         lookup_scratch = CHOPOFF.PrefixHashScanLookupScratch()
         bucket_motif_candidates =
-            CHOPOFF.scan_cas9_prefix_hits_raw_range_bucketed!(
-                bucket_plus, bucket_minus, lookup_scratch.plus_candidates,
+            CHOPOFF.scan_prefix_hits_raw_range_bucketed!(
+                CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, bucket_plus, bucket_minus, lookup_scratch.plus_candidates,
                 lookup_scratch.minus_candidates, lookup_scratch.plus_radix,
                 lookup_scratch.minus_radix, lookup_scratch.radix_counts, raw,
                 bucket_query, bounds)
@@ -1662,7 +1777,7 @@ end
         myers_profile = CHOPOFF.build_prefix_hash_scan_myers_profile(guide_oriented)
         for is_antisense in (false, true)
             for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
-                ot, _ = CHOPOFF.materialize_normalized_candidate_cas9(
+                ot, _ = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
                     raw, first(candidate_range), dbi, is_antisense)
                 expected_distance = CHOPOFF.levenshtein(
                     guide_oriented, ot, 3, iscompatible)
@@ -1978,7 +2093,10 @@ end
     scan_out = joinpath(tdir, "scan.csv")
     brute_out = joinpath(tdir, "bruteforce.csv")
     count_out = joinpath(tdir, "counts.csv")
+    decoy = joinpath(tdir, "detail_decoy.csv")
+    write(decoy, "not a search result\n")
     search_prefixHashDB(db_path, [guide], prefix_out; distance = 2, early_stopping = fill(100, 3))
+    @test read(decoy, String) == "not a search result\n"
     CHOPOFF.search_prefixHashScan([guide], genome, motif, scan_out; distance = 2, early_stopping = fill(100, 3), query_variant = :bitmask64)
     CHOPOFF.search_prefixHashScan([guide], genome, motif, brute_out; distance = 2, early_stopping = fill(100, 3), query_variant = :bruteforce)
     search_prefixHashScan(
