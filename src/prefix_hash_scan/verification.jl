@@ -126,18 +126,15 @@ end
 
 @inline prefix_scan_reference_slice(raw::AbstractVector{UInt8}, range) =
     LongDNA{4}(@view raw[range])
-@inline prefix_scan_reference_slice(chrom_seq::LongDNA{4}, range) = chrom_seq[range]
 
 @inline prefix_scan_reference_base(raw::AbstractVector{UInt8}, pos::Int) =
     1 <= pos <= length(raw) ? convert(DNA, Char(raw[pos])) : DNA_Gap
-@inline prefix_scan_reference_base(chrom_seq::LongDNA{4}, pos::Int) =
-    1 <= pos <= length(chrom_seq) ? chrom_seq[pos] : DNA_Gap
 
 # Guide plus `motif.distance` extension bases, oriented like the guide; bases
 # beyond the reference ends are gaps.
 function materialize_normalized_candidate_specialized(
     geometry::PrefixScanGeometry,
-    source::Union{AbstractVector{UInt8}, LongDNA{4}}, candidate_start::Int,
+    source::AbstractVector{UInt8}, candidate_start::Int,
     dbi::DBInfo, is_antisense::Bool)
 
     matcher = geometry.matcher
@@ -160,112 +157,6 @@ function materialize_normalized_candidate_specialized(
     spec = prefix_scan_matcher_spec(matcher)
     pos_offset = is_antisense ? spec.rev_pos_offset : spec.fwd_pos_offset
     return ot, candidate_start + pos_offset
-end
-
-function verify_prefix_hash_scan_bitmask_candidate!(
-    out,
-    chrom_seq,
-    candidate_range::UnitRange{Int},
-    geometry::PrefixScanGeometry,
-    dbi::DBInfo,
-    is_antisense::Bool,
-    candidate_mask::UInt64,
-    guides::Vector{LongDNA{4}},
-    guides_::Vector{LongDNA{4}},
-    chrom_name::String,
-    distance::Int,
-    early_stopping::Vector{Int},
-    es_acc,
-    is_es,
-    seen,
-    stats::Union{Nothing, PrefixHashScanStats};
-    distance_first::Bool = false)
-
-    strand = is_antisense ? "-" : "+"
-    ot = LongDNA{4}()
-    pos = 0
-    verify_start = time_ns()
-    mask = candidate_mask
-    while mask != 0
-        guide_idx = trailing_zeros(mask) + 1
-        mask &= mask - 1
-        is_es[guide_idx] && continue
-
-        if stats !== nothing
-            stats.alignment_calls += 1
-        end
-        align_start = time_ns()
-        if distance_first
-            if isempty(ot)
-                materialize_start = time_ns()
-                ot, pos = materialize_normalized_candidate_specialized(
-                    geometry, chrom_seq, first(candidate_range), dbi, is_antisense)
-                if stats !== nothing
-                    stats.candidate_materialize_ns += time_ns() - materialize_start
-                end
-            end
-            if stats !== nothing
-                stats.distance_calls += 1
-            end
-            dist = levenshtein(guides_[guide_idx], ot, distance, iscompatible)
-            if dist > distance
-                if stats !== nothing
-                    stats.align_ns += time_ns() - align_start
-                end
-                continue
-            end
-        end
-        if isempty(ot)
-            materialize_start = time_ns()
-            ot, pos = materialize_normalized_candidate_specialized(
-                geometry, chrom_seq, first(candidate_range), dbi, is_antisense)
-            if stats !== nothing
-                stats.candidate_materialize_ns += time_ns() - materialize_start
-            end
-        end
-        if stats !== nothing
-            stats.traceback_calls += 1
-        end
-        aln = align(guides_[guide_idx], ot, distance, iscompatible)
-        if stats !== nothing
-            stats.align_ns += time_ns() - align_start
-        end
-        aln.dist > distance && continue
-
-        if dbi.motif.extends5
-            aln_guide = reverse(aln.guide)
-            aln_ref = reverse(aln.ref)
-        else
-            aln_guide = aln.guide
-            aln_ref = aln.ref
-        end
-
-        key = (
-            string(guides[guide_idx]),
-            aln.dist,
-            chrom_name,
-            Int(pos),
-            strand,
-            aln_guide,
-            aln_ref,
-        )
-        key in seen[guide_idx] && continue
-        push!(seen[guide_idx], key)
-        reserve_prefix_hash_scan_detail_hit!(
-            es_acc, is_es, guide_idx, aln.dist, early_stopping) || continue
-
-        emit_start = time_ns()
-        print(out, guides[guide_idx], ",", aln_guide, ",", aln_ref, ",",
-            aln.dist, ",", chrom_name, ",", pos, ",", strand, "\n")
-        if stats !== nothing
-            stats.emit_ns += time_ns() - emit_start
-            stats.emitted_rows += 1
-        end
-    end
-    if stats !== nothing
-        stats.verify_ns += time_ns() - verify_start
-    end
-    return nothing
 end
 
 function evaluate_prefix_hash_scan_candidate!(

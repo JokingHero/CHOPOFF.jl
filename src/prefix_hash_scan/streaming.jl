@@ -251,8 +251,7 @@ function scan_prefix_hash_scan_chunk!(
     work::PrefixHashScanChunkWork,
     chromosome_length::Int,
     known_bounds::Union{Nothing, Tuple{Int, Int}},
-    ::Val{M},
-    stats) where M
+    stats)
 
     geometry = ctx.geometry
     dbi = ctx.dbi
@@ -273,20 +272,12 @@ function scan_prefix_hash_scan_chunk!(
         geometry, dbi, known_bounds, read_first, length(raw),
         work.core_first - read_first + 1, work.core_last - read_first + 1)
     bounds === nothing && return nothing
-    if M === :buffered_reuse
-        motif_candidates = scan_prefix_hits_raw_range!(
-            geometry, worker.plus_hits, worker.minus_hits, raw, ctx.query,
-            bounds, ctx.simd_backend)
-    elseif M === :bucketed_reuse
-        lookup = worker.lookup
-        motif_candidates = scan_prefix_hits_raw_range_bucketed!(
-            geometry, worker.plus_hits, worker.minus_hits,
-            lookup.plus_candidates, lookup.minus_candidates,
-            lookup.plus_radix, lookup.minus_radix, lookup.radix_counts,
-            raw, ctx.query, bounds, ctx.simd_backend)
-    else
-        error("Unknown prefixHashScan stream mode: $M")
-    end
+    lookup = worker.lookup
+    motif_candidates = scan_generic_prefix_hits_raw_range_bucketed!(
+        worker.plus_hits, worker.minus_hits,
+        lookup.plus_candidates, lookup.minus_candidates,
+        lookup.plus_radix, lookup.minus_radix, lookup.radix_counts,
+        raw, ctx.query, geometry, bounds, ctx.simd_backend)
     if dbi.motif.ambig_max > 0
         scan_ambiguous_prefix_hits_range!(
             worker.plus_hits, worker.minus_hits, raw, geometry, dbi, ctx.query,
@@ -303,14 +294,13 @@ function stream_prefix_hash_scan_chunk(
     work::PrefixHashScanChunkWork,
     chromosome_length::Int,
     known_bounds::Union{Nothing, Tuple{Int, Int}},
-    mode::Val,
     stats,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState})
 
     plus = PrefixHashScanVerifiedHit[]
     minus = PrefixHashScanVerifiedHit[]
     scanned = scan_prefix_hash_scan_chunk!(
-        ctx, worker, work, chromosome_length, known_bounds, mode, stats)
+        ctx, worker, work, chromosome_length, known_bounds, stats)
     scanned === nothing && return PrefixHashScanChromResult(plus, minus, stats)
     raw, global_offset = scanned
     chunk_counts = early_stop_state === nothing ? nothing :
@@ -334,13 +324,12 @@ function stream_prefix_hash_scan_count_chunk(
     work::PrefixHashScanChunkWork,
     chromosome_length::Int,
     known_bounds::Union{Nothing, Tuple{Int, Int}},
-    mode::Val,
     stats,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState})
 
     counts = zeros(Int, length(ctx.guides_), ctx.distance + 1)
     scanned = scan_prefix_hash_scan_chunk!(
-        ctx, worker, work, chromosome_length, known_bounds, mode, stats)
+        ctx, worker, work, chromosome_length, known_bounds, stats)
     scanned === nothing && return PrefixHashScanCountResult(counts, stats)
     raw, _ = scanned
     evaluate_prefix_hash_scan_count_hits!(
@@ -391,7 +380,6 @@ function run_prefix_hash_scan_chunks(
     distance::Int,
     chunk_bases::Int,
     scan_threads::Int,
-    mode::Val,
     stats,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState},
     simd_backend::Val) where R
@@ -425,7 +413,7 @@ function run_prefix_hash_scan_chunks(
                     item = work[work_idx]
                     results[work_idx] = process_chunk(
                         ctx, worker, item, reference_lengths[item.chrom_idx],
-                        known_bounds[item.chrom_idx], mode,
+                        known_bounds[item.chrom_idx],
                         prefix_hash_scan_worker_stats(stats), early_stop_state)
                 end
             finally
@@ -448,7 +436,6 @@ function stream_prefix_hash_scan(
     distance::Int,
     chunk_bases::Int,
     scan_threads::Int,
-    mode::Val,
     stats,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
     ; simd_backend::Val = default_prefix_hash_scan_simd_backend())
@@ -456,7 +443,7 @@ function stream_prefix_hash_scan(
     return run_prefix_hash_scan_chunks(
         stream_prefix_hash_scan_chunk, PrefixHashScanChromResult,
         geometry, genome_path, reference_lengths, query, dbi, guides_,
-        myers_profiles, distance, chunk_bases, scan_threads, mode, stats,
+        myers_profiles, distance, chunk_bases, scan_threads, stats,
         early_stop_state, simd_backend)
 end
 
@@ -471,7 +458,6 @@ function stream_prefix_hash_scan_counts(
     distance::Int,
     chunk_bases::Int,
     scan_threads::Int,
-    mode::Val,
     stats,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
     ; simd_backend::Val = default_prefix_hash_scan_simd_backend())
@@ -479,7 +465,7 @@ function stream_prefix_hash_scan_counts(
     results, _ = run_prefix_hash_scan_chunks(
         stream_prefix_hash_scan_count_chunk, PrefixHashScanCountResult,
         geometry, genome_path, reference_lengths, query, dbi, guides_,
-        myers_profiles, distance, chunk_bases, scan_threads, mode, stats,
+        myers_profiles, distance, chunk_bases, scan_threads, stats,
         early_stop_state, simd_backend)
     return results
 end

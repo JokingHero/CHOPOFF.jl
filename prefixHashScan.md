@@ -5,66 +5,60 @@
 `prefixHashScan` is an indexless CRISPR off-target search. Its public Julia API
 accepts registered motifs and custom `Motif` objects at edit distances 0 through
 4. Every eligible motif, Cas9 and Cas12a included, runs on one
-motif-specialized generic kernel; configurations outside that kernel's envelope
-use the exact legacy engine. The search reuses the
-symbolic prefix paths from `prefixHashDB`, builds a guide-specific query
-structure in memory, and scans the reference genome directly.
+motif-specialized generic kernel. Configurations outside that kernel's envelope
+use the exact legacy engine. The search reuses the symbolic prefix paths from
+`prefixHashDB`, builds a guide-specific query structure in memory, and scans the
+reference genome directly.
 
-The current optimized envelope is:
+"Indexless" means that no CHOPOFF genome database must be built. The FASTA
+reader still requires the small, standard `.fai` random-access index. `.2bit`
+references need no sidecar index.
 
-- Cas9: 20-base guide with an `NGG` PAM;
-- Cas12a: 21-base guide with a `TTTV` PAM;
-- generic: 16 through 64 guide bases, complete motif span at most 65 bases;
-- one contiguous PAM block at any position, or no PAM;
+The optimized envelope is:
+
+- any motif with one contiguous PAM block at any position, or no PAM;
+- 16 through 64 guide bases, complete motif span at most 65 bases;
 - forward, reverse, or both strands;
-- edit distance 0 through 4
-- 16-base prefix
-- `guide length - distance >= 16`;
-- 64 guides per optimized query batch; larger lists are batched automatically
-- FASTA with a standard `.fai`, or a `.2bit` reference
-- any CPU: the `:portable` backend uses plain Julia bit operations; x86 CPUs
-  with AVX2 and BMI2 use `:avx2`, and AVX-512F/BW is used on qualified CPUs
+- edit distance 0 through 4;
+- a fixed 16-base prefix, with `guide length - distance >= 16`;
+- 64 guides per query batch; larger lists are batched automatically;
+- FASTA with a standard `.fai`, or a `.2bit` reference;
+- reference windows with zero through three IUPAC-ambiguous positions
+  (`motif.ambig_max`); query guides must be unambiguous;
+- any CPU: x86 CPUs with AVX2 and BMI2 use `:avx2`, qualified CPUs use
+  AVX-512F/BW, and every other CPU uses the `:portable` backend.
 
-Current production tuning for this path is:
+Production defaults:
 
 - 2 MiB globally scheduled chunks;
-- a 26-bit presence prefilter and 11-base directory bucket;
-- parallel per-guide hash construction for multi-guide queries, bounded by
-  `scan_threads`;
-- the deterministic serial heap merge and buffered scan/verify backend;
-- radix-ordered compact-directory lookup for 26-bit prefilter survivors.
+- a 26-bit presence prefilter and 11-base directory bucket, fixed as
+  `PREFIX_HASH_SCAN_PREFILTER_BITS` and `PREFIX_HASH_SCAN_BUCKET_BASES`;
+- radix-ordered compact-directory lookup for prefilter survivors;
+- per-guide hash construction on at most `scan_threads` tasks, followed by a
+  deterministic serial heap merge;
+- buffered scan, then verify, per chunk.
 
-`query_build_backend=:serial` remains the query-construction reference.
-`lookup_variant=:inline` remains the genome-order lookup reference. One-guide
-query construction stays serial. Compatible production searches use bucketed
-lookup automatically; multi-guide searches also use parallel query construction.
+Two output modes exist. `detail` writes one aligned row per off-target.
+`counts` writes `guide,D0,...,Dk,complete` per unique guide and skips traceback.
+Guide lists larger than 64 run as sequential 64-guide batches. Detail mode
+appends batches to a sibling staging file and atomically renames it after every
+batch succeeds. Count mode merges batch matrices and writes one row per unique
+guide after applying deterministic per-distance caps.
 
-The public API and CLI accept larger guide lists and search them as sequential
-64-guide batches. Detail mode appends batches to a sibling staging file and
-atomically publishes it after every batch succeeds. Count mode merges batch
-matrices and writes one row per unique guide after applying deterministic
-per-distance caps. This is intentional: a GRCh38 benchmark found batching
-about three times faster than the tested one-pass large-guide representations.
+### Source layout
 
-"Indexless" means that no CHOPOFF genome database must be built. The optimized
-FASTA reader still requires the small, standard `.fai` random-access index.
-
-The implementation is split by stable responsibility:
-
-- `src/db_prefix_hash_scan.jl`: shared types, orchestration, and public API;
+- `src/db_prefix_hash_scan.jl`: shared types, plan resolution, orchestration,
+  legacy engine, and public API;
 - `src/prefix_hash_scan/query.jl`: symbolic paths, hashes, directory, prefilter;
 - `src/prefix_hash_scan/isa.jl`: CPU feature detection, backend resolution, and
   the backend-specific profile and packing primitives; all x86 intrinsics;
-- `src/prefix_hash_scan/kernel_common.jl`: geometry-neutral scalar and lookup helpers;
+- `src/prefix_hash_scan/kernel_common.jl`: geometry-neutral scalar and lookup
+  helpers;
 - `src/prefix_hash_scan/generic.jl`: compiled motif-specialized scan kernel,
-  shared by raw FASTA bytes and converted `LongDNA{4}` sequences;
+  shared by raw FASTA bytes and decoded 2bit ranges;
 - `src/prefix_hash_scan/verification.jl`: Myers, traceback, and result commit;
-- `src/prefix_hash_scan/streaming.jl`: FASTA/2bit streaming and global scheduler.
-
-`PrefixScanGeometry{Kind,Matcher}` supplies guide, PAM, prefix, distance,
-candidate-span, overlap, and compiled motif matching to validation and
-orchestration. `Kind` is a label (`:cas9`, `:cas12a`, `:generic`) used by the
-AVX-512 `:auto` policy and statistics; kernels dispatch on the `Matcher` only.
+- `src/prefix_hash_scan/streaming.jl`: chunk streaming and global scheduler;
+- `src/prefix_hash_scan/twobit.jl`: 2bit metadata and range decoding.
 
 ## Core idea
 
@@ -74,8 +68,8 @@ The algorithm moves part of the alignment work to the query side:
    produced from a guide while spending at most the requested edits.
 2. Apply those symbolic paths to each concrete guide and encode the resulting
    16-mers as 32-bit integers.
-3. Scan only geometry-compatible genome windows and test whether their 16-mer is in
-   the guide-derived set.
+3. Scan only geometry-compatible genome windows and test whether their 16-mer is
+   in the guide-derived set.
 4. Run exact edit-distance verification only for guide/window pairs that pass
    the prefix test.
 5. Compute a traceback only for verified off-targets.
@@ -89,46 +83,29 @@ not only Hamming-distance candidates.
 The prefix test is necessary but not sufficient. A hash hit is a candidate;
 Myers and the final traceback establish the full edit distance.
 
-## Optimized geometries
+## Geometry and kernel
 
-Cas9 uses a 23-base window with an `NGG` PAM. Cas12a uses a 25-base
-window: forward `TTTV + 21N`, reverse `21N + BAAA`, with opposite extension
-and coordinate rules. Both use prefix 16 and shipped precomputed path assets.
-Both resolve to the generic kernel through `resolve_prefix_scan_geometry`,
-labelled `:cas9` or `:cas12a`; the motif is compiled into the matcher type, so
-the hot loop contains no motif branch.
+`resolve_prefix_scan_geometry` returns a `PrefixScanGeometry{Kind,M}` for every
+eligible motif, or `nothing`. It supplies guide, PAM, prefix, distance,
+candidate-span, overlap, and compiled motif matching to validation and
+orchestration. `Kind` is a label (`:cas9`, `:cas12a`, `:generic`) used only by
+the AVX-512 `:auto` policy and statistics. Kernels dispatch on the matcher type
+`M`.
 
-### Cas12a geometry
-
-The Cas12a kernel evaluates 25-base candidate windows. It recognizes forward
-`TTTV + 21N` sites and reverse-complement `21N + BAAA` sites, rejects a window
-containing non-ACGT reference bases, and packs the correctly oriented 16-base
-prefix with BMI2. Its PAM-left geometry extends and normalizes candidates in
-the opposite direction from Cas9. Shared orchestration obtains candidate span,
-chunk overlap, bounds, and verification orientation from the typed geometry
-rather than from Cas9 literals.
-
-Cas12a loads the exact precomputed symbolic paths for the requested distance
-(302,337 rows at d3), then uses the compact `UInt64` guide-mask query, 26-bit
-presence prefilter, radix/bucket directory, global FASTA chunk scheduler, raw
-Myers rejection, accepted-hit traceback, and deterministic commit pipeline
-described below. `scan_backend=:auto` selects `:streaming_fasta_simd` under the
-same FASTA, guide-count, and x86 SIMD requirements as Cas9. The public API
-selects it with `motif="Cas12a"`; the CLI uses `--motif Cas12a`.
-
-### Typed generic specialization
-
-`resolve_generic_prefix_scan_geometry` converts eligible motif properties into
-the `PrefixScanMatcher` type: enabled strands, constrained IUPAC positions,
-guide offsets after PAM removal, orientation, and coordinate offsets. Generated
+`resolve_generic_prefix_scan_geometry` converts motif properties into the
+`PrefixScanMatcher` type: enabled strands, constrained IUPAC positions, guide
+offsets after PAM removal, orientation, and coordinate offsets. Generated
 functions turn that type into straight-line validity, PAM-matching, and prefix
-packing operations. There are no runtime motif branches inside the 64-start
-SIMD block loop.
+packing operations. The 64-start SIMD block loop contains no runtime motif
+branches.
 
-Guide and motif lengths are not fixed to Cas9 or Cas12a. For example, a
-25-base guide followed by an `NNT` PAM resolves to
-`PrefixScanGeometry{:generic}` with a 28-base candidate span and a 16-base
-prefix at distances 0 through 4:
+Examples:
+
+- Cas9: 23-base window, `20N + NGG`, extends in the 5-prime direction;
+- Cas12a: 25-base window, forward `TTTV + 21N`, reverse `21N + BAAA`, with the
+  opposite extension and coordinate rules;
+- a 25-base guide followed by an `NNT` PAM resolves to
+  `PrefixScanGeometry{:generic}` with a 28-base candidate span:
 
 ```julia
 motif = Motif(
@@ -140,37 +117,32 @@ motif = Motif(
 ```
 
 An all-`X` PAM description produces an empty PAM range and therefore a PAMless
-search. The optimized generic envelope requires a 16-through-64-base guide, a
-complete span no longer than 65 bases, distance 0 through 4, and
-`guide length - distance >= 16`. Other valid motifs remain correct through
-`:legacy`.
+search.
 
-## Optimized streaming path
+## Backends
 
-### 1. Select the backend
+### Scan backend
 
-`search_prefixHashScan(...; scan_backend=:auto)` selects
-`:streaming_fasta_simd` when all of the following hold:
+`search_prefixHashScan(...; scan_backend=:auto)` is resolved by
+`resolve_prefix_hash_scan_plan`:
 
-- the motif has a canonical or eligible typed generic geometry;
-- the distance is between 0 and 4;
-- `hash_len == 16`;
-- the query uses the 64-bit guide mask representation;
-- there are no more than 64 guides;
-- the reference is FASTA.
+| Backend | Selected by `:auto` when | Reference access |
+|---|---|---|
+| `:streaming_fasta_simd` | eligible geometry, FASTA reference | raw FAI range reads |
+| `:streaming_2bit_simd` | eligible geometry, `.2bit` reference | decoded 2bit ranges |
+| `:legacy` | no eligible geometry, including `hash_len` other than 16, or `query_variant=:bruteforce` | `findguides` over converted `LongDNA` chromosomes |
 
-`simd_backend=:auto` selects AVX-512 only for benchmark-qualified CPU-family
-and geometry-label pairs (`:cas9`, `:cas12a`); other geometries use AVX2, and
-CPUs without AVX2/BMI2 use `:portable`. `:avx2`, `:avx512`, and `:portable`
-force a backend; `:avx2` and `:avx512` error when the CPU lacks them. The end-to-end AVX-512 gain is not
-measurable on the current shared host; see
-[AVX-512 end-to-end qualification](#avx-512-end-to-end-qualification).
-Every CPU supports a raw streaming backend, so `scan_backend=:auto` selects the
-intermediate `:fused_directory` backend only when the query cannot use raw
-streaming (for example `hash_len` other than 16). Unsupported geometries select
-`:legacy`.
+A pinned streaming backend that does not match the reference format is an
+error. Each query holds at most 64 guides in a `UInt64` mask; the public API
+splits larger lists into batches, and the low-level four-argument method
+rejects them.
 
-### Portable backend
+### SIMD backend
+
+`simd_backend=:auto` selects AVX-512 only for benchmark-qualified CPU-family and
+geometry-label pairs (`:cas9`, `:cas12a`). Other geometries use AVX2, and CPUs
+without AVX2/BMI2 use `:portable`. `:avx2`, `:avx512`, and `:portable` force a
+backend; `:avx2` and `:avx512` error when the CPU lacks them.
 
 `:portable` builds the same 64-bit `A`/`C`/`G`/`T` profiles from eight
 little-endian 64-bit loads. Each byte is case-folded with `0xdf` and compared
@@ -181,41 +153,22 @@ compiled kernel contains no x86 intrinsics and no target features, which
 `test/src/prefix_hash_scan.jl` and `scripts/verify_simd_codegen.jl portable`
 check.
 
-October 5, 2026, on a Xeon Gold 6126 (Skylake-SP) shared host, forcing each
-backend on the same input:
+### Reference variants
 
-| Measurement | AVX2 | AVX-512 | Portable | `:fused_directory` |
-|---|---:|---:|---:|---:|
-| Cas9 scanner, 32 MB, 1 thread | 68.0 ms | 65.0 ms | 68.6 ms | - |
-| Cas12a scanner, 32 MB, 1 thread | 29.0 ms | 25.5 ms | 30.2 ms | - |
-| Cas9 GRCh38 d3 detail, 24 threads | 1.359 s | - | 1.365 s | 11.481 s |
-| Cas12a GRCh38 d3 detail, 24 threads | 3.557 s | - | 3.959 s | 14.647 s |
+Tests compare the streaming backends against independent references:
 
-End-to-end values are medians of 5 alternating runs; outputs were identical.
-On x86 the portable profile costs little because LLVM vectorizes the SWAR loop
-and the scan is a small share of the search. ARM performance is not yet
-measured; the portable kernel is verified there only by its target-independent
-IR.
+- `scan_backend=:legacy` uses `findguides`, a `Dict` query, and `align`;
+- `query_variant=:bruteforce` skips the prefix filter and verifies every motif
+  candidate on the legacy engine, which checks the filter for false negatives;
+- the allocating `scan_generic_prefix_hits_raw_range` wrapper performs the
+  genome-order (non-bucketed) directory lookup.
 
-`:streaming_fasta_simd_fused` was an experimental backend. It verified
-nonzero guide masks immediately in the SIMD scan loop and avoided
-`PrefixHashScanHit` vectors. The buffered `:streaming_fasta_simd` backend remains
-the `:auto` choice because fusion showed no measurable GRCh38 latency advantage.
-The fused backend was removed after commit `846c0c17`; see
-[Removed experimental backends](#removed-experimental-backends).
-Buffered workers retain and clear one plus/minus hit-vector pair across chunks;
-the allocating scanner wrapper remains the parity reference.
+Equivalent optimization-era variants were removed; see
+[Appendix B](#appendix-b-removed-experimental-backends).
 
-Streaming work is scheduled globally as `(chromosome, 2 MiB core range)` items.
-Workers claim items atomically and keep independent FASTA handles, read buffers,
-and hit scratch vectors. Each read includes the existing left edit-distance and
-right candidate/extension overlap, while emission is restricted to the core
-range. Results are stored at stable work indices and committed in reference
-order: all plus-strand chunks for a chromosome, then all minus-strand chunks.
-The former whole-chromosome scheduler was removed after commit `846c0c17`.
-Tests now check that 64-base chunks match one chunk per chromosome.
+## Pipeline
 
-### 2. Load symbolic prefix paths
+### 1. Load symbolic prefix paths
 
 `load_prefix_hash_scan_paths` loads exact precomputed paths by guide length,
 distance, and prefix length. Existing 20-base and 21-base assets are reused
@@ -223,20 +176,18 @@ regardless of PAM sequence or position. If an asset is unavailable, as for a
 25-base guide, paths are generated once before guide batching with
 `build_PathTemplates`, restricted to the requested prefix and distance,
 deduplicated, and reused by every batch. Path generation does not select the
-scan kernel and does not force the generic engine to `:legacy`.
+scan kernel.
 
-At p16, each motif has 1, 129, 7,873, 302,337, and 8,196,801 distinct
-symbolic paths for d0 through d4 respectively. Paths are shared by every guide
-in the query.
+At p16, each motif has 1, 129, 7,873, 302,337, and 8,196,801 distinct symbolic
+paths for d0 through d4 respectively. Paths are shared by every guide in the
+query. The d4 matrices occupy about 125 MiB.
 
-### 3. Build concrete hashes for each guide
+### 2. Build concrete hashes for each guide
 
-Cas9 extends in the 5-prime direction, so guides are first oriented to match the
-prefixHashDB template convention. Each guide is converted to a compact two-bit
-alphabet.
-
-For every symbolic path, `fill_prefix_hashes_columnwise!` selects 16 positions
-from the formatted guide and folds them into a `UInt32`:
+Guides are oriented to match the prefixHashDB template convention for the
+motif's extension direction and converted to a two-bit alphabet. For every
+symbolic path, `fill_prefix_hashes_columnwise!` selects 16 positions from the
+formatted guide and folds them into a `UInt32`:
 
 ```text
 hash = 0
@@ -245,255 +196,188 @@ for symbolic_position in path
 end
 ```
 
-Hashes are sorted and deduplicated per guide. The 61-guide human experiment
-produced about 7.0 million guide/hash associations after per-guide
-deduplication.
+Hashes are sorted and deduplicated per guide. Formatting, folding, sorting, and
+deduplication run as bounded tasks, at most `scan_threads` workers, each writing
+a distinct guide-list slot. `:auto` uses serial construction for one guide or
+one worker.
 
-Per-guide formatting, folding, sorting, and deduplication run as bounded tasks,
-using at most `scan_threads` workers. Each task writes a distinct guide-list slot.
-The heap merge remains serial and deterministic. `query_build_backend=:serial`
-keeps the reference implementation; `:auto` uses it for one guide or one worker
-and otherwise selects parallel construction.
+### 3. Merge hashes into the compact query directory
 
-### 4. Merge hashes into the compact query directory
-
-For at most 64 guides, one bit in a `UInt64` identifies each guide. Equal hashes
-from different guides are merged:
+One bit in a `UInt64` identifies each of at most 64 guides. Equal hashes from
+different guides are merged by a serial, deterministic heap merge:
 
 ```text
 concrete 16-mer hash -> 64-bit mask of compatible guides
 ```
 
-The optimized lookup is not a Julia `Dict`. Sorted 32-bit hashes are split into:
+The lookup is not a Julia `Dict`. Sorted 32-bit hashes are split into:
 
 - a direct bucket-offset array selected by the high hash bits;
 - compact `UInt16` suffixes inside each bucket;
 - a parallel `UInt64` guide-mask array.
 
-A 26-bit presence bitmap is checked first. Most genome hashes fail this cheap
-test and never access the larger directory. The bitmap may create extra work,
-but cannot reject a hash that exists in the directory.
+A 26-bit presence bitmap is checked first. Most genome hashes fail this test and
+never access the larger directory. The bitmap may create extra work, but cannot
+reject a hash that exists in the directory.
 
-#### Large-guide batching and benchmark decision
+### 4. Stream reference chunks
 
-Guide lists larger than 64 are partitioned in input order. Every batch runs the
-normal `UInt64` query path, and its rows are appended without another CSV
-header. Early stopping remains independent per guide. Output order is
-deterministic and batch-major.
+Work is scheduled globally as `(chromosome, 2 MiB core range)` items claimed
+through an atomic counter. Each worker keeps its own reference handle, byte
+buffer, plus/minus `PrefixHashScanHit` pair, and candidate/radix scratch
+buffers. Each read includes a left edit-distance overlap and a right
+candidate-span/extension overlap from the geometry; emission is restricted to
+the core range.
 
-The selection was measured on GRCh38 with 1,024 Cas9/d3 guides, eight threads,
-seven rotated timed repetitions, and exact detail-row multiset comparison:
+FASTA chunks are read through the `.fai` offsets and line geometry, and
+newlines are removed in place. 2bit chunks are decoded from packed bases and
+N-block metadata into the same ASCII buffer. The entire chromosome is never
+converted to `LongDNA`.
 
-| workload | sequential 64-guide batches | best large directory | ratio |
-|---|---:|---:|---:|
-| dispersed guides | 608 s [556, 628] | 1,810 s [1,722, 1,977] | 2.98× |
-| related guides | 407 s [369, 420] | 1,130 s [933, 1,299] | 2.78× |
+### 5. Detect motif windows with SIMD
 
-Brackets are bootstrap 95% intervals for the median. Every comparison passed
-exact output parity. Wider presence filters, a 12-base directory bucket, and a
-reference-aware two-pass query reduced query memory in some cases but did not
-close the end-to-end gap. The large-directory prototype was therefore removed.
-It should only be reconsidered after a bounded-memory design beats batching by
-at least 10% on both workloads.
-
-### 5. Stream FASTA chunks
-
-The `.fai` file supplies chromosome lengths, byte offsets, and FASTA line
-geometry. Each worker opens its own read-only FASTA handle and reuses one byte
-buffer, one plus/minus `PrefixHashScanHit` pair, and compact candidate/radix scratch buffers.
-The default logical chunk size is 2 MiB.
-
-Each chunk includes a small overlap for the 23-base Cas9 window and the
-requested edit-distance extension. FASTA newlines are removed in place in the
-worker buffer. The entire chromosome is not converted to `LongDNA`.
-
-Global `(chromosome, chunk)` work items are claimed through an atomic counter.
-Stable result slots preserve chromosome, strand, and coordinate order even though
-chunks finish out of order.
-
-### 6. Detect Cas9 windows with SIMD
-
-`scan_cas9_prefix_hits_raw_range!` first clears the worker hit vectors, then
-profiles raw ASCII reference bytes in blocks. AVX2 uses two 32-byte loads;
-AVX-512BW uses one 64-byte load and mask comparisons. Both produce identical
+`scan_generic_prefix_hits_raw_range!` (and its `_bucketed!` variant) first
+clears the worker hit vectors, then profiles raw ASCII reference bytes in
+blocks. AVX2 uses two 32-byte loads, AVX-512BW one 64-byte load with mask
+comparisons, and `:portable` eight 64-bit SWAR loads. All produce identical
 64-bit `A`, `C`, `G`, and `T` profiles. Adjacent profiles form a 128-base view,
-sufficient to evaluate 64 candidate starts together. The allocating
-`scan_cas9_prefix_hits_raw_range` wrapper remains the parity reference.
+enough to evaluate 64 candidate starts together.
 
-Bit operations then calculate:
+The generated matcher computes, with bit operations:
 
-- starts whose complete 23-base window is unambiguous DNA;
-- forward-strand windows ending in `GG`;
-- reverse-strand windows beginning in `CC`, the reverse complement of `GG`.
+- starts whose complete window has at most `ambig_max` ambiguous bases;
+- forward-strand starts whose PAM matches;
+- reverse-strand starts whose reverse-complement PAM matches.
 
-Only set PAM bits are visited. BMI2 `PDEP` packs the corresponding 16 bases into
-a `UInt32`. Reverse-strand hashes are reversed and complemented with bit
-operations. This avoids allocating sequences and avoids calculating an
-alignment at every genome position.
+Only set bits are visited. The oriented 16-base prefix is packed into a
+`UInt32` with BMI2 `PDEP` on x86 backends, or shifts and masks on `:portable`.
+Reverse-strand hashes are reversed and complemented with bit operations. When a
+strand's 16 prefix offsets form one descending run, the two reversals cancel and
+the prefix packs directly.
 
-### 7. Apply the symbolic-prefix filter
+### 6. Apply the symbolic-prefix filter
 
-Presence-bitmap checks remain in genome order. Survivors are packed as a
-`UInt64` containing the 32-bit hash and local candidate start. Three stable,
-worker-scratch radix passes order the full hash by its 10-bit suffix and two
-11-bit bucket digits. Directory lookup then walks hashes in bucket order and
-reuses the mask for repeated hashes.
+Presence-bitmap checks run in genome order. Survivors are packed as a `UInt64`
+of the 32-bit hash and the local candidate start. Three stable worker-scratch
+radix passes order the hash by its 10-bit suffix and two 11-bit bucket digits.
+Directory lookup then walks hashes in bucket order and reuses the mask for
+repeated hashes.
 
 Accepted hits are sorted back by candidate start before verification, preserving
-the reference chromosome/strand/coordinate order. A hit produces:
+chromosome, strand, and coordinate order. A hit produces:
 
 ```text
 (candidate start, mask of potentially matching guides)
 ```
 
-On the 61-guide human data, 1,547,796 genome windows passed the exact directory
-filter and expanded to 1,583,279 guide/window pairs. The ratio is only 1.023
-guide pairs per hit, so most hits concern one guide. `lookup_variant=:inline`
-retains the former genome-order directory lookup for parity and benchmarking.
-Both paths finish scanning each chunk before Myers verification and reuse all
-worker buffer capacity.
+### 7. Verify full edit distance with Myers
 
-### 8. Verify full edit distance with Myers
-
-Every candidate bit is verified with
-`prefix_hash_scan_raw_myers_distance`. Each guide has a precomputed Myers
-equality profile. The verifier reads directly from the reusable raw FASTA
-buffer, handles both strands, evaluates the 20-base guide against the extended
+Every candidate bit is verified with `prefix_hash_scan_raw_myers_distance`
+against a per-guide equality profile from
+`build_prefix_hash_scan_myers_profiles`. The verifier reads the reusable raw
+buffer directly, handles both strands, evaluates the guide against the extended
 reference, and returns a value above the requested distance for rejected
-candidates.
+candidates. It is allocation-free and a full Levenshtein filter, including
+indels. Ambiguous reference bases outside the prefix use IUPAC-aware masks.
 
-This verifier is allocation-free and does not construct an alignment. It is a
-full Levenshtein/edit-distance filter, including indels.
+### 8. Trace back accepted candidates
 
-### 9. Trace back accepted candidates
+Only candidates within the threshold are materialized as `LongDNA`. `align`
+then computes the alignment strings and distance used in the output, preserving
+prefixHashDB-compatible reporting. Count mode skips this step and uses the raw
+Myers distance.
 
-Only candidates whose Myers distance is at most the requested threshold are
-materialized as a
-`LongDNA` sequence. `align` then computes the exact alignment strings and
-distance used in the output. This preserves prefixHashDB-compatible reporting
-without paying traceback cost for rejected hash hits.
+### 9. Commit results deterministically
 
-### 10. Commit results deterministically
+Results are stored at stable work indices and committed in reference order: for
+each chromosome, all plus-strand chunks, then all minus-strand chunks. The main
+task deduplicates complete output records, applies early-stopping counters, and
+writes CSV rows.
 
-Workers retain accepted hits by chromosome and strand. The main task commits
-them in chromosome, strand, and position order, deduplicates complete output
-records, applies early-stopping counters, and writes CSV rows.
+### 10. Early stopping
 
-Finite early-stopping limits activate chunk-local guide counters. Workers mask
-inactive guide bits before Myers verification and stop claiming chunks when all
-guides are inactive. A guide retires only when a `(limit + 1)`th accepted hit
-proves one exact-distance bucket incomplete. Detail output retains any valid
-capped subset; its seven-column schema is unchanged.
+Finite limits activate chunk-local guide counters. A guide retires only when a
+`(limit + 1)`th accepted hit proves one exact-distance bucket incomplete.
+Workers mask retired guide bits before Myers verification and stop claiming
+chunks when all guides are retired. Count output caps each bucket and reports
+`complete=false`; non-triggering buckets may then be partial lower bounds.
+Detail output keeps any valid capped subset, which may vary with scheduling.
 
-#### Early-stopping benchmark result
-
-GRCh38 benchmarks selected chunk-local reduction as the production design. For
-61 Cas9 guides at distance 3 and 24 threads, prefixHash-style caps reduced
-guide/window verification pairs from 1,583,279 to 122,692 and retired 51 guides;
-detail median improved from 1.418 s to 1.359 s. An 11-run, single-thread Cas9
-distance-4 count test measured a 2.27x paired speedup (84.94 s versus 36.80 s
-median). Unlimited and default one-million caps remained near baseline. All
-completed correctness comparisons passed.
-
-### Removed experimental backends
-
-These paths were measured, lost to the current defaults, and were removed from
-the code after commit `846c0c17`. Check out that commit to rerun them. The
-measurements in this document are unchanged.
-
-| Removed path | What it did | Why it was removed |
-|---|---|---|
-| `scan_backend=:fused_fasta_simd` | Loaded a whole chromosome as raw bytes and split it across threads with the SIMD kernel | Replaced by global 2 MiB chunk streaming: 13.2% faster at 12 cores, 46.5% lower latency at 24 cores, lower peak RSS |
-| `scan_backend=:streaming_fasta_simd_fused` | Ran Myers verification inside the SIMD scan loop, with no hit vectors | 0.37% latency difference (inside run variance); 5.78% fewer allocated bytes; needed a second copy of each kernel loop and did not support early stopping |
-| `scan_backend=:fused_dict` | Whole-chromosome fused scan with a Julia `Dict` query | Replaced by the compact bitmap and directory query |
-| Streaming `Val(:chromosome)` scheduler | One whole chromosome per worker | Tail imbalance; replaced by global chunk scheduling (same measurements as `:fused_fasta_simd`) |
-| `query_variant=:baseline` | Built each guide's hash set one path row at a time | Replaced by `:columnwise`, which produces identical hashes |
-
-## Simplified pseudocode
+## Pseudocode
 
 ```text
 geometry = resolve_geometry(motif, distance=k, prefix=16)
-paths = load_precomputed_symbolic_paths(geometry, distance=k, prefix=16)
+paths = load_or_generate_symbolic_paths(geometry, distance=k, prefix=16)
 
-for guide in guides:
-    hashes[guide] = unique(sort(apply_each_path(paths, orient(guide))))
+for batch in partition(guides, 64):
+    for guide in batch (parallel):
+        hashes[guide] = unique(sort(apply_each_path(paths, orient(guide))))
+    query = compact_directory(heap_merge_into_guide_masks(hashes))
+    query = add_presence_bitmap(query, bits=26)
+    myers_profiles = build_myers_profiles(batch)
 
-query = compact_directory(merge_hashes_into_guide_masks(hashes))
-query = add_presence_bitmap(query, bits=26)
-myers_profiles = build_myers_profiles(guides)
+    parallel workers claim (chromosome, 2 MiB chunk) items:
+        bases = read_chunk_with_overlap(chunk)        # FASTA or 2bit
+        pam_masks = generated_simd_match(matcher_type, bases)
 
-parallel workers claim globally scheduled overlapped FASTA chunks:
-    plus_hits, minus_hits = reusable_vectors()
-    plus_candidates, minus_candidates, radix_scratch = reusable_vectors()
+        for candidate_start in set_bits(pam_masks):
+            hash = pack_oriented_16mer(bases, candidate_start)
+            if presence_bitmap_contains(query, hash):
+                append_packed_candidate_by_strand(hash, candidate_start)
 
-    bases = read_and_remove_newlines(chunk)
-    pam_masks = if geometry == Cas9:
-        simd_find_unambiguous_NGG_and_CCN_windows(bases)
-    elseif geometry == Cas12a:
-        simd_find_unambiguous_TTTV_and_BAAA_windows(bases)
-    else:
-        generated_simd_match(matcher_type, bases)
-    clear(hits, candidates)
+        for strand_candidates in plus then minus:
+            for hash, candidate_start in radix_order(strand_candidates):
+                guide_mask = directory_lookup_or_reuse(query, hash)
+                if guide_mask != 0:
+                    append_hit(strand_hits, candidate_start, guide_mask)
+            sort_hits_by_candidate_start(strand_hits)
 
-    for candidate_start in set_bits(pam_masks):
-        hash = bmi2_pack_oriented_16mer(bases, candidate_start)
-        if presence_bitmap_contains(query, hash):
-            append_packed_candidate_by_strand(
-                plus_candidates, minus_candidates, hash, candidate_start)
+            for hit in strand_hits:
+                for guide in set_bits(hit.guide_mask & active_guides):
+                    d = raw_myers_distance(guide, bases, hit.candidate_start)
+                    if d <= k:
+                        detail: retain(traceback(guide, materialize(hit)))
+                        counts: increment(guide, d)
 
-    for strand_candidates in plus_candidates then minus_candidates:
-        for hash, candidate_start in radix_order(strand_candidates):
-            guide_mask = directory_lookup_or_reuse(query, hash)
-            if guide_mask != 0:
-                append_hit(strand_hits, candidate_start, guide_mask)
-        sort_hits_by_candidate_start(strand_hits)
-
-        for hit in strand_hits:
-            for guide in set_bits(hit.guide_mask):
-                if raw_myers_distance(guide, bases, hit.candidate_start) <= k:
-                    alignment = traceback(
-                        guide, materialize_candidate(bases, hit.candidate_start))
-                    retain(alignment)
-
-commit_retained_hits_in_reference_order()
+    commit_in_reference_order()
 ```
 
-## Comparison with the general path
+## Comparisons
 
-| Stage | Optimized canonical/generic d0-d4 paths | General `:legacy` path |
+### Versus the general paths
+
+| Stage | Streaming backends | `:legacy` |
 |---|---|---|
-| Supported query | Eligible motifs, d0-d4, 16-base hash, <=64 guides per batch | Other motif sizes and hash lengths |
-| Query structure | Presence bitmap + compact sorted directory + `UInt64` guide masks | `Dict` from hash to guide mask or guide-index vectors |
-| Reference access | FAI range reads into reusable raw buffers | FASTA/2bit records loaded and converted to `LongDNA` |
-| PAM search | Canonical or compile-time generic x86 SIMD masks evaluate 64 starts | `findguides` over materialized chromosome sequences |
-| Prefix extraction | Geometry-specific BMI2 packing from raw bytes | Sequence slicing/orientation or direct scalar hashing |
-| Temporary objects | Reused raw/hit buffers and compact verified hits | More sequence objects and generic candidate ranges |
-| Distance rejection | Allocation-free raw Myers before materialization | Usually `align`; some fused modes can use distance-first verification |
-| Traceback | Accepted candidates only | Historically performed for many more candidate pairs |
-| Parallelism | Dynamic chromosome workers | Record iteration plus backend-specific range tasks |
-| Main advantage | Specialized sequential scan with cheap SIMD filtering | Generality and compatibility |
+| Query structure | Presence bitmap + compact directory + `UInt64` guide masks | `Dict` from hash to `UInt64` guide mask |
+| Reference access | Raw FASTA/2bit chunk reads into reusable buffers | Converted `LongDNA` chromosomes |
+| Motif search | Generated matcher on 64-start SIMD blocks | `findguides` |
+| Distance rejection | Allocation-free raw Myers before materialization | `align` |
+| Parallelism | Global chunk scheduler | One record at a time |
+| Purpose | Production | Configurations outside the envelope; correctness reference |
 
-There is also an intermediate `:fused_directory` path. It uses the
-compact query directory and geometry-specific direct prefix hashing, but
-operates on converted chromosome sequences rather than streamed raw FASTA SIMD
-blocks. It is useful as a portable fallback and correctness reference for the
-fastest backend.
+### Why it can beat prefixHashDB
 
-## Why it can beat prefixHashDB
-
-`prefixHashDB` spends no time scanning the full genome at search time, but it
-must load and traverse a large genome-derived index with many partitions and
-locations. `prefixHashScan` instead performs a predictable sequential reference
-pass and keeps the smaller guide-derived query structure in memory. On this
-machine and workload, sequential scanning plus SIMD filtering is cheaper than
-the prefixHashDB search-time index access.
+`prefixHashDB` does not scan the genome at search time, but it must load and
+traverse a large genome-derived index with many partitions and locations.
+`prefixHashScan` instead performs a predictable sequential reference pass and
+keeps the smaller guide-derived query structure in memory. On this machine and
+workload, sequential scanning plus SIMD filtering is cheaper than the
+prefixHashDB search-time index access.
 
 This does not mean an index is intrinsically slower. Results depend on storage,
 cache state, guide count, index layout, and whether index construction and
-storage are included. A repeated-query workload may still favor a well-designed
-genome index.
+storage are included. The architectural cost model is:
 
-## Why it differs from Sassy
+```text
+prefixHashDB total = database build + searches * indexed search
+prefixHashScan total = searches * ceil(guides / 64) * reference scan
+```
+
+Thus 61, 1,024, and 4,096 guides require 1, 16, and 64 reference scans. A
+persistent index can win for repeated searches even when one scan is faster than
+one indexed search.
+
+### Why it differs from Sassy
 
 Sassy performs SIMD Myers-style approximate matching while scanning the text.
 `prefixHashScan` uses SIMD mainly to classify bases, identify PAM windows, and
@@ -508,95 +392,17 @@ The tradeoff is memory:
   performs random presence checks followed by bucket-ordered directory lookups.
 
 Which approach wins depends on query-table size, cache behavior, number of
-guides, PAM density, and candidate rate. A current fair full-human benchmark
-against Rust Sassy v1 and v2 has not yet been completed.
+guides, PAM density, and candidate rate. A fair full-human benchmark against
+Rust Sassy v1 and v2 has not been completed.
 
-## Current measured result
+## Current performance
 
-### AVX-512 end-to-end qualification
+GRCh38, 61 guides per motif. These numbers are evidence for one shared host and
+workload, not a universal speed claim. Setups and older records are in
+[Appendix A](#appendix-a-benchmark-history).
 
-September 26-27, 2026 runs of `scripts/benchmark_prefix_hash_scan_avx512.jl`
-used GRCh38, distance 3, count output, 11 alternating timed runs after 2
-warmups, and the script's 61 Cas9 and Cas12a test guides. The host was shared
-with other users' jobs during every run. Earlier runs on the same host varied by
-up to 40% between identical invocations, so these results are indicative only.
-
-| Code | Threads | Cas9 | Cas12a | Cas9_NGA (not `:auto`) |
-|---|---:|---:|---:|---:|
-| `846c0c17` (before refactor) | 24 | 0.93x | 0.96x | 0.97x |
-| refactored | 24 | 0.96x | 0.85x | 0.96x |
-| refactored | 12 | 0.99x | 0.99x | 1.02x |
-| refactored | 8 | 0.94x | 1.02x | 0.98x |
-
-Values are AVX-512 end-to-end speedup over AVX2 (median AVX2 time divided by
-median AVX-512 time). The script's gate requires at least 0.97x (at most 3%
-slower) for `:auto`-eligible motifs. All rows had exact AVX2/AVX-512 output
-parity. The scanner-only stage was 1.08x to 1.49x faster with AVX-512 in every
-run.
-
-Interpretation:
-
-- The refactor did not cause the gate failures; the pre-refactor commit fails
-  the same gate at 24 threads.
-- There is no thread-count trend, so these data do not support AVX-512
-  frequency reduction as the cause.
-- The profiled SIMD scan is a small share of end-to-end time (about 0.1 s of
-  about 1.5 s at 24 threads), so a 20-30% faster kernel changes end-to-end time
-  by about 2%. That is below this host's noise.
-
-Decision: `simd_backend=:auto` is unchanged. Repeat the qualification on an
-idle host before changing the `:auto` policy or relying on the end-to-end gate.
-
-### Generic kernel replacing the hand-written Cas9/Cas12a kernels
-
-An August 2, 2026 scanner microbenchmark measured the typed generic kernel at
-1.178x the latency of the hand-written Cas9 kernel. Two generator changes closed
-the gap before the hand-written kernels were removed (October 4, 2026):
-
-- strands whose 16 prefix offsets form one descending run no longer emit
-  `bitreverse` on both profiles followed by `reverse_codes`; the reversals
-  cancel, so the prefix packs directly (Cas9 plus, Cas12a minus);
-- reference offsets for Myers verification and materialization fold to
-  `base + step * ref_idx` when the guide and extension form one run, instead of
-  a tuple lookup per base.
-
-Hot-loop latency of generic relative to hand-written code, one thread, 32 MB
-seeded random A/C/G/T, distance 3, 11 alternating runs after 2 warmups, on a
-shared host (load average about 11 of 48 cores):
-
-| Stage | Cas9 before | Cas9 after | Cas12a before | Cas12a after |
-|---|---:|---:|---:|---:|
-| Raw scan, AVX2 | 1.164x | 0.995x | 1.114x | 0.995x |
-| Raw scan, AVX-512 | 1.295x | 0.961x | 1.126x | 0.919x |
-| Raw Myers verification | 1.042x | 1.005x | 1.103x | 0.986x |
-| Raw materialization | 1.6x | 0.81x | 1.5x | 0.96x |
-| LongDNA scan (fused/legacy) | 2.6x | 0.08x | 2.0x | 0.05x |
-| LongDNA materialization | 6.6x | 0.71x | 8.6x | 0.79x |
-
-The LongDNA scan now builds A/C/G/T block profiles from the packed 4-bit words
-with portable bit operations and runs the same block kernel as the raw path.
-Hits, hashes, guide masks, Myers distances, and materialized candidates were
-identical, including lowercase input, `N` runs, and chromosome edges.
-
-End-to-end GRCh38 search, 61 guides, distance 3, detail output, 24 threads,
-two alternating rounds of 5 timed runs after warmup (median seconds; the host
-load average rose from 10 to 19 during the runs):
-
-| Motif | Before, round 1 / 2 | After, round 1 / 2 | Output |
-|---|---:|---:|---|
-| Cas9 | 1.359 / 1.463 | 1.338 / 1.471 | identical (25,826 rows) |
-| Cas12a | 3.793 / 4.146 | 4.435 / 3.712 | identical (364,581 rows) |
-
-The differences are within the run-to-run noise of this host.
-
-### Full distance 0-4 human sweep
-
-The July 22, 2026 sweep used GRCh38, 24 Julia threads, 61 guides per motif,
-one warmup, and five timed repetitions per algorithm and distance. Algorithm
-order alternated between repetitions. Search used unlimited early-stopping
-thresholds. One distance-4 prefixHashDB was built per motif with one thread and
-reused for all requested distances. The timed `prefixHashScan` runs used the
-normal no-statistics path; a separate untimed pass collected phase counters.
+Distance sweep, detail output, 24 threads, July 22, 2026 (prefixHashDB build
+excluded):
 
 | Motif | Distance | Results | `prefixHashDB` median | `prefixHashScan` median | Scan speedup |
 |---|---:|---:|---:|---:|---:|
@@ -611,57 +417,33 @@ normal no-statistics path; a separate untimed pass collected phase counters.
 | Cas12a | 3 | 364,581 | 14.241 s | 3.532 s | 4.0x |
 | Cas12a | 4 | 1,073,287 | 120.346 s | 18.451 s | 6.5x |
 
-The d4 prefixHashDB builds took 1,419.7 s for Cas9 and 634.6 s for Cas12a.
-Their resulting indexes occupied 4.60 GB and 2.95 GB. These costs are excluded
-from the search table but are relevant for one-shot workflows.
+The d4 prefixHashDB builds took 1,419.7 s for Cas9 and 634.6 s for Cas12a and
+occupied 4.60 GB and 2.95 GB.
 
-Raw prefixHashDB detail output is the gold standard for this benchmark. The
-initial sweep recorded `parity=false` for Cas12a only because an obsolete
-Cas9-only filtering layer rejected every `extends5=false` row before comparison.
-Sorting the complete raw `prefixHashDB` and `prefixHashScan` CSV rows produced
-identical SHA-256 hashes at every Cas12a distance. Current parity compares exact
-detail-row multisets directly, including duplicate multiplicity; prefixHashDB
-rows are not independently filtered or reinterpreted. The July 23 parity
-repair reports PASS with zero scan-only and zero prefix-only rows for all ten motif/distance cases.
+Count versus detail output, 24 threads, August 8, 2026:
 
-The phase counters explain the d4 step change. Query construction took 7.61 s
-for Cas9 and 7.26 s for Cas12a. Cas9 d4 expanded 8,196,801 symbolic paths into
-111,720,240 guide/hash associations; Cas12a produced 109,038,602. The final
-Cas9 query is about 1.09 GB. D4 is consequently both a query-construction and
-scan/verification problem, rather than a small extension of d3.
+| Motif | Distance | Detail median | Count median | Speedup |
+|---|---:|---:|---:|---:|
+| Cas9 | 3 | 1.556 s | 1.446 s | 1.08x |
+| Cas9 | 4 | 14.376 s | 12.556 s | 1.14x |
+| Cas12a | 3 | 3.819 s | 1.069 s | 3.57x |
+| Cas12a | 4 | 20.819 s | 10.758 s | 1.94x |
 
-Cas12a remains output-heavy. At d3 it performed 364,581 tracebacks, and at d4
-it performed 1,073,287. Count-only output can bypass alignment materialization,
-string construction, detail-row deduplication, and detail CSV writes for these
-accepted candidates. This is a more credible large win than further Cas9
-micro-optimization.
+SIMD backends, October 5, 2026, Xeon Gold 6126 (Skylake-SP):
 
-### Matched Cas9 and Cas12a human benchmark
+| Measurement | AVX2 | AVX-512 | Portable | `:fused_directory` |
+|---|---:|---:|---:|---:|
+| Cas9 scanner, 32 MB, 1 thread | 68.0 ms | 65.0 ms | 68.6 ms | - |
+| Cas12a scanner, 32 MB, 1 thread | 29.0 ms | 25.5 ms | 30.2 ms | - |
+| Cas9 GRCh38 d3 detail, 24 threads | 1.359 s | - | 1.365 s | 11.481 s |
+| Cas12a GRCh38 d3 detail, 24 threads | 3.557 s | - | 3.959 s | 14.647 s |
 
-The July 16, 2026 comparison used GRCh38, distance 3, 8 Julia threads, 61
-guides per motif, unlimited early-stopping thresholds, and existing or newly
-built prefixHashDB indexes. Index construction was excluded. The Cas12a set was
-sampled from 61 distributed canonical `TTTV` sites in GRCh38 so every query had
-a real on-target. Each algorithm was warmed once in the same process and then
-measured three times. Both scans resolved to precomputed paths, `bitmask64`
-queries, and `streaming_fasta_simd`.
+End-to-end values are medians of 5 alternating runs; outputs were identical.
+`:fused_directory` was removed after this measurement (Appendix B).
+On x86 the portable profile costs little because LLVM vectorizes the SWAR loop
+and the scan is a small share of the search. ARM performance is not measured.
 
-| Motif | Results | `prefixHashScan` median | `prefixHashDB` median | Scan speedup | Scan runs | DB runs |
-|---|---:|---:|---:|---:|---|---|
-| Cas9 | 25,826 | 2.694 s | 22.861 s | 8.49x | 2.826, 2.694, 2.673 s | 23.263, 22.818, 22.861 s |
-| Cas12a | 364,581 | 5.083 s | 14.856 s | 2.92x | 5.377, 5.083, 4.863 s | 15.114, 14.856, 14.583 s |
-
-A separate single-pass harness measured Cas9 at 4.507 s versus 46.863 s
-(10.40x) and Cas12a at 7.921 s versus 19.823 s (2.50x). These first-pass
-numbers include more loading and runtime noise; the warmed medians above are
-the primary comparison. All comparisons exclude prefixHashDB construction.
-
-Both motifs had exact core-result parity on guide, distance, chromosome,
-position, and strand: zero scan-only and zero prefixHashDB-only rows. The
-Cas12a implementation also passed its focused scalar/SIMD/backend tests, CLI
-tests, sample prefixHashDB parity benchmark, and the complete Julia test suite.
-
-The workloads differ substantially despite equal guide counts:
+Workload shape, Cas9 versus Cas12a at d3:
 
 | Counter | Cas9 | Cas12a |
 |---|---:|---:|
@@ -672,30 +454,291 @@ The workloads differ substantially despite equal guide counts:
 | Precomputed path rows | 302,337 | 302,337 |
 | Concrete query hashes before cross-guide merge | 7,044,938 | 6,947,869 |
 
-Cas12a performs only 19% more guide/window verifications but 14.1x more
-tracebacks and output commits on this guide set. Its lower speedup relative to
-Cas9 is therefore primarily a verification-success and result-materialization
-effect, not failure of the specialized PAM scan. Sampled CPU profiles support
-this: Cas9 is dominated by the streaming scan/lookup kernel, while Cas12a has a
-large additional contribution from `evaluate_prefix_hash_scan_hits!`, `align`,
-sequence/string materialization, deduplication, and CSV commit. Thread/task
-utilization was about 69% for Cas9 and 71% for Cas12a, leaving scheduling or
-tail-latency headroom in both.
+Cas9 time is dominated by the scan/lookup kernel. Cas12a performs only 19% more
+verifications but 14.1x more tracebacks and output commits, so its detail time
+is dominated by materialization, `align`, deduplication, and CSV commit.
 
-The profile's `align_ns`, `verify_ns`, and other worker fields are summed across
-threads and can exceed wall time; they establish attribution, not serial stage
-duration. Sampling instrumentation also raised observed wall time to 5.816 s
-for Cas9 and 8.853 s for Cas12a, so those profiled timings are not used in the
-speedup table.
+D4 is a query-construction problem as well as a scan problem: Cas9 d4 expanded
+8,196,801 paths into 111,720,240 guide/hash associations and a 1.09 GB query,
+with 7.61 s query construction.
 
-The reusable human prefixHashDB indexes occupy approximately 3.3 GiB for Cas9
-and 1.5 GiB for Cas12a. `prefixHashScan` requires neither index; it needs only
-the reference FASTA and its small `.fai`.
+## Limitations
 
-### Earlier Cas9 scaling and tuning record
+1. Each optimized query holds at most 64 guides. Larger lists rescan the
+   reference once per batch.
+2. The prefix length is fixed at 16. Other prefix lengths and motifs outside
+   the envelope use the slower `:legacy` engine.
+3. Query guides must be unambiguous. `ambig_max` above 3 is unsupported.
+4. ARM performance of `:portable` is unmeasured; it is verified only by its
+   target-independent IR.
+5. Early stopping cannot cancel chunks already claimed by workers. Chunk-local
+   reduction bounds this overshoot.
+6. Global scheduling uses concurrent reference seeks. Evidence is for
+   warm-cache GRCh38; cold-cache and networked filesystems are unmeasured.
+7. Buffered workers retain the largest observed per-chunk hit and
+   prefilter-survivor capacities, which raises cumulative allocation by
+   1.8-3.4%.
+8. Requested statistics add counters and `time_ns()` calls to hot loops;
+   `stats=nothing` compiles them out.
+9. `PrefixHashScanStats` mixes summed worker CPU times with wall-clock fields;
+   they cannot be compared directly.
+10. Query construction is rebuilt for every call. Per-guide hash lists are
+    parallel, but the heap merge and directory construction are serial.
+    Cross-run reuse is out of scope for the one-shot workload.
+11. The 8.4 MB presence bitmap is probed in genome order and may be
+    memory-latency bound.
+12. Guide lengths above 28 bases are not qualified at d4: prefixHashDB, the
+    current oracle, uses a packed representation limited to 32 bases.
 
-Human GRCh38, 61 Cas9 guides, distance 3, warm-cache search, pinned physical
-CPUs:
+## Roadmap
+
+`prefixHashScan` is intended to become the primary CHOPOFF algorithm for
+ordinary reference-genome search: exact, deterministic,
+prefixHashDB-compatible coordinates and distances, no genome-specific database,
+and one bounded reference scan per 64-guide batch.
+
+### Completed
+
+- Registered and custom motifs at d0 through d4 in the Julia API and the
+  standalone CLI, including PAM-left, PAM-right, internal-PAM, PAMless,
+  strand-subset, and extension-direction definitions. `verbose` reports the
+  resolved backend without enabling statistics.
+- One generic motif-specialized kernel for all eligible motifs; the hand-written
+  Cas9 and Cas12a kernels were removed on October 4, 2026.
+- Distance 4 at p16 as the functional ceiling. The p14/p15/p16 evaluation
+  selected p16.
+- Sequential 64-guide batching for larger lists, with atomic multi-batch detail
+  output.
+- Count output without traceback, with exact parity against
+  `summarize_offtargets(detail; distance=k)` as a release gate.
+- Computational early stopping that masks retired guides and cancels future
+  chunk claims.
+- 2bit streaming and bounded IUPAC reference ambiguity (`ambig_max=0:3`).
+- AVX-512F/BW and `:portable` backends with parity tests and codegen
+  verification.
+- Representative generic qualification against prefixHashDB: full GRCh38
+  Cas9-NGA, CasX, and 25-base-guide cases, 65-guide multi-batch searches, d0
+  through d4, ambiguity zero through three, and bounded internal-PAM, PAMless,
+  16-base-guide, strand-subset, FASTA/2bit, IUPAC, indel, and chunk-boundary
+  cases. All 220 detail cases passed the reference-backed parity classifier and
+  all 220 count comparisons passed. Of the detail cases, 147 were exact; the
+  remainder contained only classified prefixHashDB ambiguity-limit or
+  duplicate-row behavior.
+
+### Closed decisions
+
+- Distance 4 stays at p16 and is a stretch configuration, not an optimization
+  target. Compressed or staged d4 representations are out of scope.
+- Sequential 64-guide batching is the large-guide architecture. Reconsider a
+  one-pass design only if a bounded-memory version beats batching by at least
+  10% on both dispersed and related guide sets.
+- No automatic crossover policy between prefixHashScan and prefixHashDB is
+  planned.
+
+### Remaining work, in priority order
+
+1. **Product completion.** Add path/query memory and progress reporting.
+2. **Qualification maintenance.** Add randomized property tests and qualify
+   guide lengths above 28 with an oracle other than prefixHashDB.
+3. **Portable performance.** Measure `:portable` on ARM (for example Graviton or
+   Apple Silicon) and on AMD Zen1/Zen2, where microcoded `PDEP` may make
+   portable packing faster than `:avx2`. Add an ARM SIMD path only if profiling
+   justifies it.
+
+### Replacement gates
+
+Make `prefixHashScan` the documented default for one-shot searches with eligible
+motifs when:
+
+1. Canonical searches retain exact detail parity, and representative generic d0
+   through d4 retain exact or reference-classified parity on sample and
+   human-scale fixtures.
+2. Legacy, FASTA streaming, and 2bit streaming backends have identical
+   results under every SIMD backend;
+   unsupported configurations select a correct fallback rather than fail.
+3. Count output marks early-stopped rows incomplete; detail output documents its
+   scheduling-dependent valid subset.
+4. Progress/memory reporting is clear enough for production use.
+5. The `:portable` backend is qualified on ARM hardware.
+6. Cas9/d3 and Cas12a/d3 detail latency regresses by no more than 3% unless a
+   measured feature-level benefit justifies it.
+
+Gates 1-3 and 6 are met. Keep `prefixHashDB` as the persistent-index backend
+for repeated or heavily capped workloads.
+
+## Performance research
+
+Speed research is optional and does not precede the remaining work above.
+Continue an experiment only with exact parity and a credible route to at least a
+10% end-to-end improvement on GRCh38 in its intended workload. Report detail and
+count modes separately, and verify that a motif-specific win does not regress
+the other motif.
+
+Another 1.5-3x is plausible only if profiling confirms avoidable lookup,
+scheduling, or temporary-data costs. Another 10x is unlikely because every exact
+indexless search must still inspect the reference.
+
+Open directions:
+
+- **Cas9:** genome-order presence-bitmap latency and last-level-cache behavior;
+  compare the bitmap/directory with a blocked Bloom, xor, or quotient-style
+  prefilter at equal memory; NUMA placement, pinning, and per-socket query
+  replicas; scheduler tail imbalance.
+- **Cas12a detail:** SIMD-vectorized Myers or traceback across independent
+  candidates; avoiding string conversion and generic dedup keys during commit.
+- **I/O:** fewer FASTA newline-compaction copies or a direct mmap-backed scan,
+  only after I/O measurements.
+
+Open questions:
+
+- How much of the 0.32-0.34 s query build is the serial heap merge and directory
+  construction?
+- Are the genome-order presence-bitmap probes limited by last-level cache misses
+  or memory latency?
+- How much of the 24-core 44.4% wait share is tail imbalance versus task/runtime
+  overhead, and can NUMA-local query placement reduce it?
+- Why does immediate verification show no latency gain despite allocating 5.78%
+  fewer bytes: instruction pressure or phase-locality loss?
+- How much Cas12a time can be removed by batching traceback or replacing
+  string-based commit/deduplication while preserving exact output ordering?
+- Why are Cas12a query/path preparation costs higher than Cas9 despite nearly
+  identical concrete-hash and path counts?
+- Does Cas12a keep its 2.9x advantage for guide sets with fewer accepted off-targets,
+  where traceback and CSV output do not dominate?
+
+## Appendix A: Benchmark history
+
+Entries are newest first. Unless stated otherwise: GRCh38, 61 guides per motif,
+warm cache, exact output parity in every comparison. The host was shared, and
+identical runs varied by up to 40%.
+
+### Generic kernel replaces hand-written kernels (August 2 to October 4, 2026)
+
+An August 2 scanner microbenchmark measured the generic kernel at 1.178x the
+latency of the hand-written Cas9 kernel. Two generator changes closed the gap
+before the hand-written kernels were removed:
+
+- strands whose 16 prefix offsets form one descending run no longer emit
+  `bitreverse` on both profiles followed by `reverse_codes`;
+- Myers and materialization reference offsets fold to
+  `base + step * ref_idx` when the guide and extension form one run, instead of
+  a tuple lookup per base.
+
+Generic latency relative to hand-written code, one thread, 32 MB seeded random
+A/C/G/T, d3, 11 alternating runs after 2 warmups:
+
+| Stage | Cas9 before | Cas9 after | Cas12a before | Cas12a after |
+|---|---:|---:|---:|---:|
+| Raw scan, AVX2 | 1.164x | 0.995x | 1.114x | 0.995x |
+| Raw scan, AVX-512 | 1.295x | 0.961x | 1.126x | 0.919x |
+| Raw Myers verification | 1.042x | 1.005x | 1.103x | 0.986x |
+| Raw materialization | 1.6x | 0.81x | 1.5x | 0.96x |
+| LongDNA scan (fused/legacy) | 2.6x | 0.08x | 2.0x | 0.05x |
+| LongDNA materialization | 6.6x | 0.71x | 8.6x | 0.79x |
+
+The LongDNA scan now builds profiles from packed 4-bit words and runs the raw
+block kernel. End-to-end d3 detail at 24 threads, two rounds of 5 runs: Cas9
+1.359 / 1.463 s before versus 1.338 / 1.471 s after; Cas12a 3.793 / 4.146 s
+versus 4.435 / 3.712 s. The differences are within host noise. Output was
+identical (25,826 and 364,581 rows).
+
+### AVX-512 end-to-end qualification (September 26-27, 2026)
+
+`scripts/benchmark_prefix_hash_scan_avx512.jl`, d3, count output, 11
+alternating runs after 2 warmups. AVX-512 end-to-end speedup over AVX2:
+
+| Code | Threads | Cas9 | Cas12a | Cas9_NGA (not `:auto`) |
+|---|---:|---:|---:|---:|
+| `846c0c17` (before refactor) | 24 | 0.93x | 0.96x | 0.97x |
+| refactored | 24 | 0.96x | 0.85x | 0.96x |
+| refactored | 12 | 0.99x | 0.99x | 1.02x |
+| refactored | 8 | 0.94x | 1.02x | 0.98x |
+
+The gate requires at least 0.97x for `:auto`-eligible motifs. The scanner-only
+stage was 1.08x to 1.49x faster with AVX-512 in every run, but the scan is only
+about 0.1 s of about 1.5 s end to end, so a 20-30% faster kernel changes
+end-to-end time by about 2%, below host noise. The pre-refactor commit fails the
+same gate, and there is no thread-count trend. Decision: `simd_backend=:auto`
+is unchanged; repeat on an idle host before changing it.
+
+### Count output (August 8, 2026)
+
+24 threads, one warmup, three alternating timed runs per mode. Count/detail
+summaries had exact parity and count mode performed zero tracebacks. Results
+are in [Current performance](#current-performance).
+
+### Full distance 0-4 sweep (July 22, 2026)
+
+24 threads, one warmup, five timed repetitions per algorithm and distance,
+alternating order, unlimited early-stopping thresholds. One d4 prefixHashDB per
+motif was built with one thread and reused for all distances. A separate untimed
+pass collected phase counters. Results are in
+[Current performance](#current-performance).
+
+Raw prefixHashDB detail output is the gold standard. Parity compares exact
+detail-row multisets, including duplicate multiplicity. The July 23 parity
+repair reports PASS with zero scan-only and zero prefix-only rows for all ten
+motif/distance cases. An initial Cas12a `parity=false` came from an obsolete
+Cas9-only filter that rejected every `extends5=false` row.
+
+Phase counters: d4 query construction took 7.61 s for Cas9 and 7.26 s for
+Cas12a, producing 111,720,240 and 109,038,602 guide/hash associations. Cas12a
+performed 364,581 tracebacks at d3 and 1,073,287 at d4. An earlier isolated
+61-guide Cas9 d4 run with 24 query workers took 10.8 seconds for query
+construction and reached 4.51 GB peak process RSS.
+
+### Matched Cas9 and Cas12a benchmark (July 16, 2026)
+
+d3, 8 threads, unlimited early stopping, existing prefixHashDB indexes. The
+Cas12a guides were sampled from 61 distributed canonical `TTTV` sites so every
+query had a real on-target. One warmup, three measured runs.
+
+| Motif | Results | `prefixHashScan` median | `prefixHashDB` median | Scan speedup | Scan runs | DB runs |
+|---|---:|---:|---:|---:|---|---|
+| Cas9 | 25,826 | 2.694 s | 22.861 s | 8.49x | 2.826, 2.694, 2.673 s | 23.263, 22.818, 22.861 s |
+| Cas12a | 364,581 | 5.083 s | 14.856 s | 2.92x | 5.377, 5.083, 4.863 s | 15.114, 14.856, 14.583 s |
+
+A single-pass harness measured Cas9 at 4.507 s versus 46.863 s (10.40x) and
+Cas12a at 7.921 s versus 19.823 s (2.50x), with more loading noise. The
+prefixHashDB indexes occupy about 3.3 GiB (Cas9) and 1.5 GiB (Cas12a). Both
+motifs had exact core-result parity on guide, distance, chromosome, position,
+and strand.
+
+Sampled profiles: Cas12a adds a large contribution from
+`evaluate_prefix_hash_scan_hits!`, `align`, sequence/string materialization,
+deduplication, and CSV commit. Thread utilization was about 69% for Cas9 and
+71% for Cas12a. Profile `align_ns`, `verify_ns`, and other worker fields are
+summed across threads and can exceed wall time. Sampling raised wall time to
+5.816 s and 8.853 s, so profiled timings are not used for speedups.
+
+### Large-guide batching (July 2026)
+
+1,024 Cas9/d3 guides, eight threads, seven rotated timed repetitions, exact
+detail-row multiset comparison. Brackets are bootstrap 95% intervals for the
+median.
+
+| workload | sequential 64-guide batches | best large directory | ratio |
+|---|---:|---:|---:|
+| dispersed guides | 608 s [556, 628] | 1,810 s [1,722, 1,977] | 2.98× |
+| related guides | 407 s [369, 420] | 1,130 s [933, 1,299] | 2.78× |
+
+The rejected one-pass design used a hash-to-guide-ID directory and optional
+reference-aware query filtering. Filtering cut the dispersed query from roughly
+1.45 GB to 242 MB, but latency stayed about three times slower: tens of millions
+of detail rows made one monolithic result and dedup state the dominant cost.
+Wider presence filters and a 12-base bucket did not close the gap.
+
+### Early stopping
+
+d3, 24 threads, Cas9 prefixHash-style caps: verification pairs fell from
+1,583,279 to 122,692, 51 guides retired, and detail median improved from
+1.418 s to 1.359 s. An 11-run single-thread Cas9 d4 count test measured a
+2.27x paired speedup (84.94 s versus 36.80 s median). Unlimited and default
+one-million caps stayed near baseline.
+
+### Cas9 scaling and tuning record
+
+Warm-cache d3 search on pinned physical CPUs:
 
 | Configuration | 12 CPUs | 24 CPUs | Notes |
 |---|---:|---:|---|
@@ -706,540 +749,78 @@ CPUs:
 | 8 MiB chunks, serial-query reference | 2.313 s | 1.717 s | Chunk-confirmation run |
 | `prefixHashDB` | 27.237 s | Not measured | Existing index; build excluded |
 
-The true no-statistics path was 1.09% faster than statistics-enabled execution.
-The initial end-to-end fusion comparison was 1.57% slower, but a later 12-run
-prepared-query scan comparison measured 1.610 s fused versus 1.616 s buffered,
-a 0.37% difference inside run variance. Fusion therefore has no demonstrated
-latency effect. It reduced full-search allocated bytes from 1,113,346,392 to
-1,049,027,928, a 5.78% reduction.
+Each promoted change used 15 alternating pairs unless noted. Every run kept the
+same 25,826 results, output bytes, and semantic counters.
 
-Reusing buffered hit vectors was tested over 15 alternating prepared-query scan
-pairs. Median time improved from 1.686 s to 1.675 s (0.69%), with a paired median
-delta of -33.7 ms. Allocated bytes fell from 812,254,224 to 750,851,360, a 7.56%
-reduction, and every run produced the same 25,826 verified hits. Reuse passed the
-memory-win/no-slowdown gate and is now the default buffered implementation. A
-three-run end-to-end sanity check had a 2.579 s median, within the observed
-machine variance.
+| Change | Result | Decision |
+|---|---|---|
+| Radix-ordered directory lookup | Prepared scan 1.321 → 1.171 s (11.3%) at 12 CPUs, 0.717 → 0.649 s (9.5%) at 24. End-to-end 6.7% and 6.2%. Allocation +1.8% / +3.4%; peak RSS 1.092 → 1.063 GB (2.6%) and 1.362 → 1.259 GB (7.6%). | Promoted |
+| Parallel per-guide query construction | Query build 0.728 → 0.320 s (56.1%) at 12 CPUs, 0.778 → 0.343 s (56.0%) at 24. End-to-end 16.4% and 24.6%. 8-guide crossover 5.6% and 8.7%. | Promoted for multi-guide queries |
+| 2 MiB chunks (versus 8 MiB) | End-to-end 2.313 → 2.227 s (3.73%) at 12 CPUs, 1.717 → 1.682 s (2.00%) at 24. Allocation 1.010 → 0.869 GB (14.0%) and 1.153 → 0.895 GB (22.3%). Peak RSS 1.650 → 1.393 GB (15.6%). | Promoted |
+| Parameter sweep: 2, 4, 8, 16 MiB chunks; 22, 24, 26 prefilter bits; 9 through 12 bucket bases | All configurations preserved output | Kept 26 bits and 11 bases |
+| Global chunk scheduling (8 MiB) | Prepared scan 1.593 → 1.407 s (13.21%) at 12 cores; 1.417 → 0.758 s (46.54% lower latency) at 24 cores. 6.24% and 12.62% fewer allocated bytes. | Promoted; whole-chromosome scheduler removed |
+| Reused buffered hit vectors | Prepared scan 1.686 → 1.675 s (0.69%); allocated bytes 812,254,224 → 750,851,360 (7.56%) | Promoted |
+| Fused scan/verify | 1.610 s fused versus 1.616 s buffered (0.37%, inside variance); allocated bytes 1,113,346,392 → 1,049,027,928 (5.78%) | Rejected, removed |
+| No-statistics hot path | 1.09% faster | Promoted |
 
-Global 8 MiB chunk scheduling was tested over 15 alternating prepared-query
-pairs against the former chromosome scheduler. At 12 pinned physical cores,
-median scan time improved from 1.593 s to 1.407 s (13.21%), with a paired median
-delta of -186.0 ms and 6.24% fewer allocated bytes. At 24 pinned physical cores,
-median scan time improved from 1.417 s to 0.758 s (46.54% lower latency, or an
-87.05% throughput speedup), with a paired median delta of -654.6 ms and 12.62%
-fewer allocated bytes. Both modes produced the same 25,826 verified hits. The
-experiment passed the 24-core 20%-improvement and 12-core no-regression gates,
-so global chunk scheduling is now the production streaming scheduler. A
-three-run 12-core end-to-end sanity check produced a 2.271 s median and
-byte-identical 25,826-row output.
-
-At that checkpoint, the scanner was 3.03x faster than its previous fused backend
-and 10.98x faster than prefixHashDB search for this experiment. A previous
-run observed peak process RSS of about 1.52 GiB. Before global scheduling, a 24-core
-end-to-end median of 2.933 s was slower than the 12-core result. The scheduler
-A/B result confirms whole-chromosome tail imbalance was a major cause.
-
-These numbers are evidence for this exact machine and workload, not a universal
-speed claim.
-
-The July 2026 stabilization refactor preserved full-GRCh38 output bytes,
-prepared-result signatures, semantic counters, and all 25,826 emitted rows at
-both 12 and 24 CPUs. The new three-argument public API also produced identical
-bytes for all 61 guides. Focused tests, the complete Julia suite, and the
-Documenter build passed after separating the source files and introducing
-`PrefixScanGeometry`. Refactor timing runs were made while unrelated R jobs
-occupied host CPUs and were about 11% above the idle-host results in the table;
-they are retained only as parity evidence and do not replace the uncontaminated
-production measurements.
-
-A staged GRCh38 sweep varied chunk size (2, 4, 8, and 16 MiB), prefilter
-width (22, 24, and 26 bits), and bucket prefix (9 through 12 bases) at 12 and 24
-pinned physical CPUs. Every configuration preserved result signatures, output
-bytes, and semantic statistics counters. The initial sweep identified 2 MiB /
-26 bits / 11 bases as a memory-win candidate.
-
-A follow-up used 15 alternating full-GRCh38 pairs and five allocation runs per
-configuration. At 12 CPUs, 2 MiB reduced median end-to-end time from 2.313 s to
-2.227 s (3.73%) and cumulative allocation from 1.010 GB to 0.869 GB (14.0%). At
-24 CPUs, time fell from 1.717 s to 1.682 s (2.00%) and allocation from 1.153 GB
-to 0.895 GB (22.3%). Three isolated 24-CPU processes per configuration measured
-median peak RSS of 1.650 GB for 8 MiB and 1.393 GB for 2 MiB, a 15.6% reduction.
-All runs produced the same 25,826 results, bytes, and semantic counters. The
-2 MiB configuration passed the memory-win/no-slowdown gate and is now the
-production default.
-
-Serial query construction was then compared with bounded per-guide tasks while
-retaining the deterministic heap merge. Over 15 alternating 61-guide GRCh38
-pairs, 12-CPU median query construction improved from 0.728 s to 0.320 s (56.1%)
-and end-to-end time from 2.064 s to 1.725 s (16.4%). At 24 CPUs, query
-construction improved from 0.778 s to 0.343 s (56.0%) and end-to-end time from
-1.591 s to 1.200 s (24.6%). Allocations changed by less than 0.01%, and all
-result signatures, output bytes, and semantic counters matched.
-
-The 8-guide crossover also improved end-to-end time by 5.6% at 12 CPUs and 8.7%
-at 24 CPUs. One-guide `:auto` execution stays serial. Parallel per-guide query
-construction therefore passed its promotion gate and is now the `:auto` behavior
-for multi-guide compact queries. Reproduce it with:
+Reproduce with `scripts/benchmark_prefix_hash_scan_tuning.jl` at commit
+`f27312d2` and `CHOPOFF_TUNING_STAGE=chunk|prefilter|bucket|final|query|lookup`,
+for example:
 
 ```bash
-CHOPOFF_TUNING_STAGE=query \
-  julia --project=. scripts/benchmark_prefix_hash_scan_tuning.jl
-```
-
-The promoted lookup experiment used 15 alternating full-GRCh38 pairs and five
-allocation runs per variant. At 12 CPUs, radix/bucket ordering reduced prepared
-scan time from 1.321 s to 1.171 s (11.3%) and end-to-end time from 1.833 s to
-1.710 s (6.7%). Allocated bytes rose from 0.869 GB to 0.885 GB (1.8%), while
-three isolated processes reduced median peak RSS from 1.092 GB to 1.063 GB
-(2.6%). At 24 CPUs, prepared scan time fell from 0.717 s to 0.649 s (9.5%) and
-end-to-end time from 1.139 s to 1.067 s (6.2%). Allocated bytes rose from 0.896
-GB to 0.926 GB (3.4%), while median peak RSS fell from 1.362 GB to 1.259 GB
-(7.6%). Every run produced the same 25,826 results, output bytes, and semantic
-counters. The experiment passed its 5% latency and 5% memory-regression gates,
-so compatible `:auto` searches now use bucketed lookup. Reproduce it with:
-
-```bash
+git checkout f27312d2
 CHOPOFF_TUNING_STAGE=lookup \
   julia --project=. scripts/benchmark_prefix_hash_scan_tuning.jl
 ```
 
-The current query contains 6,898,183 exact hashes. Its offset, suffix/mask, and
-presence arrays occupy about 16.8 MB, 69.0 MB, and 8.4 MB respectively. The
-26-bit bitmap has 3,121,043 set prefixes (4.65%), implying roughly 14.2 million
-prefilter survivors from the 304.4 million GRCh38 PAM candidates before exact
-directory lookup.
-
-Pre-experiment 2 MiB/parallel-query production sampling attributed 35.8%
-cumulative samples to SIMD scan/lookup and 19.5% to directory lookup at 12
-CPUs. At 24 CPUs, those shares fell to 16.0% and 7.9%. Worker wait rose from
-24.2% to 44.4%. Myers verification accounted for only 2.6% and 1.8%; FASTA
-range reading accounted for 3.2% and 1.5%.
-Hardware performance counters remain unavailable, so these are Julia sampling
-shares rather than direct cache-miss measurements.
-
-Earlier statistics-enabled profiling attributed about 0.97 s of a 2.51 s
-12-core run to serial query construction and 1.54 s to scan plus commit. The new
-parallel result removes query construction as the primary bottleneck; prepared
-scanning now dominates. Hardware performance counters remain unavailable on
-this host.
-
-## Current limitations and issues
-
-1. The fastest kernels remain separate Cas9 and Cas12a geometries at distances
-   0 through 4 with a 16-base prefix. Other eligible motifs use a typed generic
-   SIMD geometry; unsupported sizes use the exact legacy path.
-   Shared validation, bounds, overlap, and scheduling use
-   `PrefixScanGeometry{Kind}` without moving motif branches into SIMD loops.
-2. Each optimized query holds at most 64 guides. Larger public API and CLI
-   searches rescan the reference once per sequential batch.
-3. AVX2/BMI2 and AVX-512F/BW/BMI2 backends serve x86; the `:portable` backend
-   serves every other CPU with the same streaming path. ARM performance is
-   unmeasured.
-4. FASTA requires `.fai`; `.2bit` is streamed directly without a sidecar index.
-5. Ambiguous query guides are rejected.
-6. `ambig_max` supports zero through three IUPAC-ambiguous reference positions
-   per complete guide/PAM window. Larger ambiguity allowances are unsupported.
-7. Early stopping cannot cancel chunks already claimed by workers. Chunk-local
-   reduction bounds this overshoot.
-8. Global scheduling adds per-chunk result containers and concurrent FASTA
-   seeks. Current evidence is for warm-cache GRCh38; cold-cache and networked
-   filesystems have not been measured.
-9. Buffered workers retain the largest observed per-chunk hit and prefilter-survivor
-   capacities. The extra candidate/radix buffers improve locality but explain the
-   1.8-3.4% increase in cumulative allocation.
-10. Requested statistics still add counters and `time_ns()` calls to hot loops;
-    `stats=nothing` now compiles those operations out.
-11. Query construction is rebuilt for every call. Per-guide hash lists are now
-    parallel, but their heap merge and directory construction remain serial;
-    cross-run reuse is intentionally out of scope for the one-shot workload.
-12. Compact-directory accesses are now bucket ordered, but the 8.4 MB presence
-    bitmap is still probed in genome order and may remain memory-latency bound.
-13. `PrefixHashScanStats` contains summed worker CPU times and wall-clock fields;
-    those values cannot be compared directly without clear labeling.
-14. The exported three-argument `search_prefixHashScan` accepts registered names
-    or custom Julia `Motif` objects at distances 0 through 4. The standalone CLI
-    accepts registered names or complete custom motif definitions, including
-    PAM position, strand subsets, and extension direction.
-15. Source separates constant-free helpers, Cas9 and Cas12a kernels,
-    verification, streaming, and orchestration in the parent `CHOPOFF` module.
-
-## Potential speed optimizations
-
-Unfinished items in this section are optional research directions. They do not
-precede product completion, qualification maintenance, or portability work.
-
-### Highest-priority experiments
-
-1. **Completed: profile the current production path.** At 12 CPUs, SIMD
-   scan/lookup and directory lookup accounted for 35.8% and 19.5% cumulative
-   samples. At 24 CPUs these fell to 16.0% and 7.9%, while wait rose to 44.4%.
-   Hardware counters were unavailable.
-2. **Completed: true no-statistics hot path.** Per-worker statistics, counters,
-   and timers are absent when `stats=nothing`; measured gain was 1.09%.
-3. **Completed experiment: fuse lookup and verification.** Immediate
-   verification removed `PrefixHashScanHit` vectors and 5.78% of allocated bytes,
-   but produced no measurable latency change. The buffered implementation remains
-   the `:auto` backend.
-4. **Completed: reuse buffered hit vectors.** Worker-owned scratch vectors cut
-   prepared-scan allocations by 7.56% and improved median scan time by 0.69%
-   without changing output.
-5. **Completed: schedule chunks globally.** Stable `(chromosome, chunk)` work
-   items improved prepared scan time by 13.21% at 12 cores and reduced 24-core
-   latency by 46.54%. Exact ordering, statistics counters, and output parity are
-   preserved; this is now the production scheduler.
-
-### Cache and lookup experiments
-
-6. **Completed: sweep `prefilter_bits`, `bucket_bases`, and chunk size.** The
-   staged GRCh38 sweep retained 26 bits and 11 bases while identifying 2 MiB as
-   the memory candidate. Reproduce with
-   `scripts/benchmark_prefix_hash_scan_tuning.jl` and
-   `CHOPOFF_TUNING_STAGE=chunk|prefilter|bucket|final`.
-7. **Completed: confirm and promote 2 MiB chunks.** Fifteen paired runs at both
-   CPU counts showed 2.0-3.7% lower latency, 14.0-22.3% less cumulative
-   allocation, and 15.6% lower median peak RSS without changing output. Two MiB
-   is now the production default.
-8. **Completed: radix-order directory lookup.** Worker-scratch radix passes
-   over prefilter survivors improved prepared scans by 9.5-11.3% and end-to-end
-   time by 6.2-6.7%. Allocation rose 1.8-3.4%, peak RSS fell 2.6-7.6%, and exact
-   parity held. Compatible `:auto` searches now use it.
-9. Compare the current bitmap/directory with a cache-conscious blocked Bloom,
-   xor, or quotient-style prefilter. Any replacement must be exact after the
-   final directory lookup and must be evaluated at equal memory usage.
-10. Measure NUMA placement and pinning. Per-socket query replicas may outperform
-    shared random access if the directory is frequently fetched across sockets.
-
-### Query and verification experiments
-
-11. **Completed: parallelize per-guide concrete hash lists.** Bounded tasks
-    retain the deterministic serial merge. Query construction improved about 56%
-    and 61-guide end-to-end time improved 16.4-24.6%; `:auto` now selects it for
-    multi-guide compact queries.
-12. SIMD-vectorize raw Myers or traceback across independent candidate hits.
-    Cas9 averages only 1.023 guide pairs per hash hit and remains scan-heavy,
-    but the Cas12a human workload emitted 364,581 accepted candidates and made
-    verification/materialization substantial. Benchmark the motifs separately;
-    a Cas12a win must not complicate or regress the Cas9 path.
-13. **Completed:** add an AVX-512F/BW profiling kernel that handles 64 input
-    bytes per load and retains BMI2 prefix packing.
-
-### Lower-priority micro-optimizations
-
-14. Reduce FASTA newline-compaction copies or scan an mmap-backed representation
-    directly. This adds format complexity and should follow I/O measurements.
-15. Avoid string conversion and generic dedup keys during final commit. This is
-    low priority for the 25,826-row Cas9 workload but credible for the
-    364,581-row Cas12a workload.
-
-## Feature status
-
-Performance work should not be mixed blindly with generalization. Current
-feature status is:
-
-1. **Completed:** export and document registered and custom motifs at distances
-   0 through 4 for `search_prefixHashScan`, add a standalone CLI search mode,
-   and report the resolved backend and execution modes without enabling
-   statistics.
-2. **Completed:** support more than 64 guides through transparent sequential
-   64-guide batching after the one-pass alternatives lost the GRCh38 benchmark.
-3. **Completed:** computational early stopping masks retired guides and cancels
-   future chunk claims. Detail subsets may vary with scheduling by design.
-4. **Completed:** add distance 4 at p16 as the functional upper bound and
-   benchmark mode.
-5. **Completed:** add Cas12a as a separate specialized scan geometry using its
-   precomputed paths without forcing Cas9 constants into a generic SIMD loop.
-6. **Completed:** add optimized 2bit streaming and bounded IUPAC-reference
-   behavior for `ambig_max=0:3`.
-7. **Completed:** add count-only output without traceback or detail rows.
-8. **Completed:** add complete custom motif definitions to the standalone CLI,
-   including PAM-left, PAM-right, internal-PAM, PAMless, strand-subset, and
-   extension-direction configurations.
-9. **Completed:** run the representative generic qualification matrix against
-   prefixHashDB. It covers full GRCh38 Cas9-NGA, CasX, and 25-base-guide cases,
-   65-guide multi-batch searches, distances 0 through 4, ambiguity zero through
-   three, and bounded internal-PAM, PAMless, 16-base-guide, strand-subset,
-   FASTA/2bit, IUPAC, indel, and chunk-boundary cases. All 220 detail cases
-   passed the reference-backed parity classifier and all 220 count comparisons
-   passed. Of the detail cases, 147 were exact; the remainder contained only
-   classified prefixHashDB ambiguity-limit or duplicate-row behavior.
-10. **Completed:** make multi-batch detail output atomic. Batches append to a
-    sibling temporary file; successful completion renames it over the requested
-    path, while failure removes it and preserves any previous output.
-11. **Completed:** add typed AVX-512F/BW profiling with explicit Julia and CLI
-    selection, CPU-qualified automatic dispatch, parity tests, and ZMM codegen
-    verification.
-
-## Remaining implementation priorities
-
-The following decisions are closed:
-
-- Distance 4 remains fixed at p16. The p14/p15/p16 work selected p16, and d4 is
-  intentionally a stretch configuration rather than an optimization target.
-- Sequential 64-guide batching remains the large-guide architecture. It was
-  the fastest of the tested multi-guide designs; no new one-pass representation
-  or automatic routing policy is planned.
-- Count-only output and direct prefixHashDB parity are complete.
-
-Remaining work, in priority order:
-
-1. **Product completion.** Add clearer path/query memory and progress reporting.
-2. **Qualification maintenance.** Add randomized property tests and extend
-   long-guide coverage beyond 28 bases using a suitable exact oracle. The
-   completed prefixHashDB matrix cannot cover those d4 candidates because its
-   packed representation is limited to 32 bases.
-3. **Portable performance.** Qualify scalar and fused fallbacks on CPUs without
-   AVX2/BMI2, then add an ARM SIMD path if profiling justifies it.
-
-Further Cas9/Cas12a micro-optimization, NUMA experiments, alternative
-prefilters, mmap-backed FASTA, and vectorized traceback remain
-lower-priority research directions. Continue one only with exact parity and a
-credible end-to-end gain.
-
-## Recommended decision rule
-
-Continue speed research while an experiment has a credible route to at least a
-10% end-to-end improvement on GRCh38. No-statistics execution, scan/verify
-fusion, buffered-vector reuse, global scheduling, parameter sweeps, 2 MiB
-chunks, parallel guide hashing, production profiling, and radix-ordered lookup
-are now measured.
-
-Cache-local directory lookup passed, but its paired end-to-end gain was 6.2-6.7%
-and lookup is only 7.9% of cumulative samples at 24 CPUs. Cas12a specialization
-is now complete and confirms that motif geometries should remain separate.
-If performance research resumes, Cas9 work should target genome-order
-presence-bitmap probes or explain worker wait through NUMA/pinning measurements.
-Cas12a detail work should target accepted-candidate verification, alignment
-materialization, deduplication, and commit. Require exact parity and report both
-motifs so an optimization for the result-heavy Cas12a workload does not regress
-Cas9.
-
-The likely remaining gain without a genome index is meaningful but smaller than
-the previous 10x improvement. Another 1.5-3x is plausible only if profiling
-confirms avoidable lookup, scheduling, or temporary-data costs. Another 10x is
-unlikely because every exact indexless search must still inspect the reference.
-
-## Open research questions
-
-- How much of the remaining 0.32-0.34 s query build is the serial heap merge
-  and directory construction?
-- Are the remaining genome-order presence-bitmap probes limited by last-level
-  cache misses or memory latency?
-- How much of the 24-core 44.4% wait share is tail imbalance versus task/runtime
-  overhead, and can NUMA-local query placement reduce it?
-- Why does immediate verification show no latency gain despite allocating 5.78%
-  fewer bytes: instruction pressure or phase-locality loss?
-- How much Cas12a time can be removed by batching traceback or replacing
-  string-based commit/deduplication while preserving exact output ordering?
-- Why are Cas12a query/path preparation costs higher than Cas9 despite nearly
-  identical concrete-hash and path counts?
-- Does Cas12a retain its 2.9x advantage for guide sets with fewer accepted
-  off-targets, where traceback and CSV output do not dominate?
-
-## Generalization roadmap: primary indexless search
-
-This July 18, 2026 roadmap makes `prefixHashScan` the intended primary CHOPOFF
-algorithm for ordinary reference-genome search. The optimization record above
-is retained as historical evidence; the priorities below supersede its
-speed-first ordering.
-
-The target is an exact production search with:
-
-- no genome-specific CHOPOFF database or build step;
-- only reusable motif path assets and the standard FASTA `.fai`;
-- one bounded reference scan per 64-guide batch;
-- deterministic results with prefixHashDB-compatible coordinates and distances;
-- specialized hot loops for important motif geometries, without motif branches
-  inside those loops.
-
-The useful output surface, computational early stopping, custom CLI motif
-definitions, and representative generic correctness qualification are now
-complete. Atomic multi-batch detail output is also complete. Operational
-reporting is the next implementation priority.
-
-Implementation order changed July 22, 2026: detailed output for distances 0
-through 3 shipped first at p16, followed by distance 4 as the functional and
-benchmarking ceiling.
-
-### Priority 1: production distances 0 through 4 (completed at p16)
-
-Distances 0, 1, 2, 3, and 4 are supported public configurations for registered
-and custom motifs. A lower requested distance does not run a larger-threshold
-query and discard higher-distance results. Guide lengths 20 and 21 reuse exact
-p16 assets; other lengths generate the requested paths once per search.
-
-Distance parameterizes path selection, chunk overlap, and the Myers threshold.
-The existing Cas9 and Cas12a PAM/profile kernels remain separate and are not
-copied once per distance. Dispatch resolves the distance before entering each
-hot loop. Production prefix length remains fixed at 16.
-
-The p14/p15/p16 evaluation retained p16 as the final production prefix length.
-Distance 4 is supported as a stretch configuration, not as an optimization
-target. Exact detail and count parity with prefixHashDB remain release gates at
-every supported distance.
-
-### Priority 2: count output mode (completed)
-
-Only two output modes are needed:
-
-1. `detail` retains the current output with guide, alignment strings, exact
-   distance, chromosome, coordinate, and strand. Accepted candidates require
-   traceback.
-2. `counts` returns one summary row per guide with `D0` through `Dk` and a
-   `complete` flag. It does not produce location-only rows.
-
-Count mode should use the raw Myers result after the prefix filter and avoid
-candidate materialization, alignment strings, traceback, detail-row
-deduplication keys, and detail CSV writes whenever correctness permits. Its
-counts must match `summarize_offtargets(detail; distance=k)` for a complete
-search. This parity is a release gate rather than an assumed property: it must
-cover indels, both strands, chunk boundaries, and sites with competing optimal
-alignments.
-
-Finite limits use chunk-local counters. A guide retires after a `(cap + 1)`th
-hit proves incompleteness in any exact-distance bucket. Subsequent candidates
-mask that guide before Myers verification, and workers stop claiming chunks
-when every guide retires. Count output caps each bucket and reports
-`complete=false`; non-triggering buckets may then be partial lower bounds.
-
-This mode is also a performance feature. In the current 61-guide human
-experiments, detail output performs 25,826 Cas9 tracebacks and 364,581 Cas12a
-tracebacks. Count mode bypasses both workloads while preserving exact
-per-distance counts.
-
-An August 8, 2026 GRCh38 check used 61 guides, 24 Julia threads, one warmup,
-and three alternating timed runs per mode. Count/detail summaries had exact
-parity and count diagnostics performed zero tracebacks:
-
-| Motif | Distance | Detail median | Count median | Speedup |
-|---|---:|---:|---:|---:|
-| Cas9 | 3 | 1.556 s | 1.446 s | 1.08x |
-| Cas9 | 4 | 14.376 s | 12.556 s | 1.14x |
-| Cas12a | 3 | 3.819 s | 1.069 s | 3.57x |
-| Cas12a | 4 | 20.819 s | 10.758 s | 1.94x |
-
-### Completed: thousands of guides through batching
-
-The `UInt64` guide mask remains the fast representation for every optimized
-query. Larger input sets use sequential 64-guide batches, which bounds live
-query and detail-result state while preserving exact per-guide behavior.
-
-The rejected one-pass experiment used a compact hash-to-guide-ID directory and
-optional reference-aware query filtering. Although filtering reduced the
-dispersed query from roughly 1.45 GB to 242 MB, full-detail latency remained
-about three times slower than batching. The dominant workload contains tens of
-millions of verified detail rows, so retaining one monolithic result and dedup
-state outweighed the saved reference scans.
-
-Sequential batching is the production architecture rather than a fallback.
-The tested one-pass and large-directory alternatives were slower, so large-guide
-query redesign is not active work.
-
-### Completed: bounded IUPAC ambiguity
-
-`motif.ambig_max=0:3` bounds ambiguous reference positions across the complete
-candidate window. PAM symbols use IUPAC compatibility masks. Ambiguous hashed
-prefixes expand to compatible concrete hashes, and ambiguity outside the prefix
-uses IUPAC-aware Myers verification and traceback. Query guides remain
-unambiguous. FASTA preserves supported IUPAC symbols; 2bit represents ambiguous
-blocks as `N`.
-
-### Completed: distance 4 benchmark ceiling
-
-Distance 4 is the largest public search threshold and a benchmarking ceiling.
-For 20- and 21-base guides at p16, it uses the existing split d4 matrices:
-8,196,801 symbolic paths and about 125 MiB. Other guide lengths generate and
-deduplicate their paths before scanning.
-
-This mode intentionally reuses the d0-d4 compact query and motif-specific scan
-architecture. It is not expected to match lower-distance speed or memory use. In
-an earlier isolated 61-guide Cas9 memory run with 24 query workers, query
-construction took 10.8 seconds, produced 111,720,240 guide/hash associations
-and a 1.09 GB final query, reaching 4.51 GB peak process RSS. No guide-count cap
-below the existing 64 is imposed. The p14/p15/p16 evaluation retained p16;
-compressed or staged d4 representations are out of scope because d4 is already
-at the practical edge of the algorithm.
-
-### Workload-specific performance after generalization
-
-After the core implementation priorities, Cas9 and Cas12a performance research
-should retain separate gates:
-
-- Cas9 work should investigate genome-order presence-bitmap latency,
-  last-level-cache behavior, NUMA-local query copies, and scheduler tail
-  imbalance.
-- Cas12a detail work should target accepted-hit materialization, traceback,
-  string construction, deduplication, and CSV commit.
-- Count mode should be benchmarked independently because it removes most of the
-  Cas12a-specific output cost and exposes the scan/verification ceiling.
-- Non-AVX2 fallback qualification and ARM SIMD belong to the portability
-  priority. Mmap-backed input and further prefilter experiments remain optional
-  speed research.
-
-Continue an optimization only when it has a credible route to at least 10%
-end-to-end improvement in its intended workload. Always report detail and
-count modes separately and verify that a motif-specific win does not regress
-the other production geometry.
-
-### Successor readiness relative to prefixHashDB
-
-For a one-shot, complete search with at most 64 guides on supported x86
-hardware, `prefixHashScan` is already the likely successor to `prefixHashDB`.
-It avoids database construction and storage, and the measured Cas9/Cas12a
-searches are substantially faster. It cannot yet be described as universally
-superior because the two algorithms amortize genome work differently.
-
-`prefixHashScan` scans the reference once for each 64-guide batch. Thus 61,
-1,024, and 4,096 guides require 1, 16, and 64 reference scans respectively.
-`prefixHashDB` pays genome processing once during database construction and can
-reuse that index for arbitrary future searches. A persistent index can therefore
-win for repeated searches even when one scan is faster than one indexed search.
-The architectural comparison remains:
-
-```text
-prefixHashDB total = database build + searches * indexed search
-prefixHashScan total = searches * ceil(guides / 64) * reference scan
-```
-
-The main remaining gaps are:
-
-1. **Product completion.** Add path/query memory and progress reporting.
-   Custom motif definitions in the CLI and atomic multi-batch detail output are
-   complete.
-2. **Qualification maintenance.** The representative generic matrix is
-   complete: 220 detail cases passed its reference-backed classifier and all
-   220 count comparisons passed. Add randomized property tests and qualify
-   guide lengths above 28 with an oracle other than prefixHashDB, whose packed
-   d4 representation cannot cover those candidates.
-3. **Portable performance.** Every CPU uses the streaming path; non-x86 CPUs
-   use `:portable`. Measure it on ARM (for example Graviton or Apple Silicon)
-   and on AMD Zen1/Zen2, where microcoded `PDEP` may make portable packing
-   faster than `:avx2`.
-
-The decisive remaining product limitation is incomplete
-operational reporting. Sequential batching, atomic multi-batch output,
-computational early stopping, d4/p16, custom CLI motifs, and representative
-generic qualification are closed implementation items.
-
-#### Replacement gates
-
-Make `prefixHashScan` the documented default for its qualified workload when:
-
-1. Canonical searches retain exact detail parity, and representative generic
-   distances 0 through 4 retain exact or reference-classified parity on sample
-   and human-scale fixtures. Randomized coverage and guide lengths above 28 are
-   tracked as qualification maintenance.
-2. Scalar, fused, FASTA SIMD, and 2bit SIMD backends have identical results;
-   unsupported configurations select a correct fallback rather than fail.
-3. Count output marks early-stopped rows incomplete; detail output documents its
-   scheduling-dependent valid subset. Cancellation reduces verification or
-   unclaimed work.
-4. Progress/memory reporting is clear enough for production use. Atomic
-   multi-batch detail output and custom CLI motifs are already supported.
-5. The `:portable` backend is qualified on ARM hardware.
-6. Cas9/d3 and Cas12a/d3 detail latency regresses by no more than 3% unless a
-   measured feature-level benefit justifies it.
-
-The initial default should be one-shot searches with eligible motifs. Larger
-guide sets continue through the measured sequential batching path. Keep
-`prefixHashDB` as the persistent-index backend for repeated or heavily capped
-workloads; no automatic crossover policy is currently planned.
+The current script keeps only the `chunk` and `final` stages, because the
+prefilter width, bucket width, query construction, and lookup order are now
+fixed.
+
+Query and profile state at that point: 6,898,183 exact hashes; offset,
+suffix/mask, and presence arrays of about 16.8 MB, 69.0 MB, and 8.4 MB. The
+26-bit bitmap had 3,121,043 set prefixes (4.65%), implying roughly 14.2 million
+prefilter survivors from the 304.4 million PAM candidates. 1,547,796 windows
+passed the directory and expanded to 1,583,279 guide/window pairs, 1.023 per
+hit.
+
+Production sampling (2 MiB, parallel query, before radix lookup):
+
+| Share of cumulative samples | 12 CPUs | 24 CPUs |
+|---|---:|---:|
+| SIMD scan/lookup | 35.8% | 16.0% |
+| Directory lookup | 19.5% | 7.9% |
+| Worker wait | 24.2% | 44.4% |
+| Myers verification | 2.6% | 1.8% |
+| FASTA range reading | 3.2% | 1.5% |
+
+Hardware performance counters were unavailable. Earlier statistics-enabled
+profiling attributed about 0.97 s of a 2.51 s 12-core run to serial query
+construction and 1.54 s to scan plus commit, before query construction was
+parallelized.
+
+The July 2026 stabilization refactor (source split, `PrefixScanGeometry`)
+preserved full-GRCh38 output bytes, signatures, counters, and all 25,826 rows at
+12 and 24 CPUs.
+
+## Appendix B: Removed experimental backends
+
+These paths were measured, lost to the current defaults, and were removed. Check
+out the listed commit, the last one that contains them, to rerun them. The
+measurements in this document are unchanged.
+
+| Removed path | What it did | Why it was removed | Last commit |
+|---|---|---|---|
+| `scan_backend=:fused_fasta_simd` | Loaded a whole chromosome as raw bytes and split it across threads with the SIMD kernel | Replaced by global 2 MiB chunk streaming: 13.2% faster at 12 cores, 46.5% lower latency at 24 cores, lower peak RSS | `846c0c17` |
+| `scan_backend=:streaming_fasta_simd_fused` | Ran Myers verification inside the SIMD scan loop, with no hit vectors | 0.37% latency difference (inside run variance); 5.78% fewer allocated bytes; needed a second copy of each kernel loop and did not support early stopping | `846c0c17` |
+| `scan_backend=:fused_dict` | Whole-chromosome fused scan with a Julia `Dict` query | Replaced by the compact bitmap and directory query | `846c0c17` |
+| Streaming `Val(:chromosome)` scheduler | One whole chromosome per worker | Tail imbalance; replaced by global chunk scheduling | `846c0c17` |
+| `query_variant=:baseline` | Built each guide's hash set one path row at a time | Replaced by `:columnwise`, which produces identical hashes | `846c0c17` |
+| Hand-written Cas9 and Cas12a kernels | Motif-specific SIMD scan, Myers, and materialization; removed October 4, 2026 | Replaced by the generic kernel at equal or lower latency | `ef865b99` |
+| `scan_backend=:fused_directory` | Whole-chromosome `LongDNA` scan with the compact directory and the generic block kernel | Streaming covers every eligible geometry and was 8.4x faster for Cas9 d3 (1.359 s versus 11.481 s); `:auto` could no longer select it | `f27312d2` |
+| `verify_variant` (`:align`, `:distance_first`, `:myers_raw`) | Chose the verifier per backend | Only `:fused_directory` used the choice; streaming always uses raw Myers and `:legacy` always uses `align` | `f27312d2` |
+| `lookup_variant=:inline` and stream mode `:buffered_reuse` | Directory lookup in genome order | Radix-ordered lookup improved prepared scans by 9.5-11.3% (Appendix A) | `f27312d2` |
+| `prefilter_bits` and `bucket_bases` keywords | Configurable prefilter width (0, 22, 24, 26) and bucket width | The sweep kept 26 bits and 11 bases, and bucketed lookup requires both | `f27312d2` |
+| `query_build_backend=:serial` | Built per-guide hash lists on one task | Parallel construction improved query build by 56% with identical output (Appendix A) | `f27312d2` |
+| `query_variant=:columnwise` and the `CHOPOFF_PREFIX_HASH_SCAN_QUERY` variable | `Dict` from hash to guide-index vectors for more than 64 guides | Sequential 64-guide batching replaced one-pass large queries (Appendix A) | `f27312d2` |
+| `scripts/benchmark_prefix_hash_scan_experiment.jl`, `scripts/profile_prefix_hash_scan_query.jl` | Swept the backend, verify, bucket, prefilter, and query variants above | Nothing left to compare | `f27312d2` |

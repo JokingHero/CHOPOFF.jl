@@ -237,6 +237,7 @@ end
 
 @inline prefix_hash_scan_source_code(raw::AbstractVector{UInt8}, pos::Int) =
     @inbounds prefix_hash_scan_raw_code(raw[pos])
+# Legacy engine: direct prefix hashing from a converted chromosome.
 @inline prefix_hash_scan_source_code(chrom_seq::LongDNA{4}, pos::Int) =
     @inbounds prefix_hash_scan_twobit_nibble(UInt8(
         BioSequences.extract_encoded_element(chrom_seq, pos)))
@@ -246,18 +247,6 @@ end
 
     @inbounds for (offset, allowed) in constraints
         code = prefix_hash_scan_raw_code(raw[candidate_start + offset])
-        code == 0xff && return false
-        allowed & (UInt8(1) << code) != 0 || return false
-    end
-    return true
-end
-
-@inline function prefix_hash_scan_generic_matches(
-    chrom_seq::LongDNA{4}, candidate_start::Int, constraints)
-
-    @inbounds for (offset, allowed) in constraints
-        code = prefix_hash_scan_twobit_nibble(UInt8(
-            BioSequences.extract_encoded_element(chrom_seq, candidate_start + offset)))
         code == 0xff && return false
         allowed & (UInt8(1) << code) != 0 || return false
     end
@@ -284,7 +273,7 @@ function scan_generic_prefix_hits_raw_range_impl!(
     minus_hits::Vector{PrefixHashScanHit},
     plus_candidates, minus_candidates, plus_radix_scratch,
     minus_radix_scratch, radix_counts,
-    raw::Union{AbstractVector{UInt8}, LongDNA{4}}, query,
+    raw::AbstractVector{UInt8}, query,
     geometry::PrefixScanGeometry,
     bounds::PrefixScanBounds,
     simd_backend::Val,
@@ -418,40 +407,3 @@ function scan_generic_prefix_hits_raw_range(
         plus_hits, minus_hits, raw, query, geometry, bounds, simd_backend)
     return plus_hits, minus_hits, count
 end
-
-# Converted-sequence scan for the fused and legacy backends. LongDNA profiles
-# are built with portable bit operations, so this path needs no AVX2 or BMI2.
-function scan_generic_prefix_hits_range(
-    chrom_seq::LongDNA{4}, query, geometry::PrefixScanGeometry,
-    bounds::PrefixScanBounds)
-
-    plus_hits = PrefixHashScanHit[]
-    minus_hits = PrefixHashScanHit[]
-    count = scan_generic_prefix_hits_raw_range_impl!(
-        plus_hits, minus_hits, nothing, nothing, nothing, nothing, nothing,
-        chrom_seq, query, geometry, bounds, Val(:portable), Val(false))
-    return plus_hits, minus_hits, count
-end
-
-scan_prefix_hits_range(
-    geometry::PrefixScanGeometry, chrom_seq, query, hash_len, bounds) =
-    scan_generic_prefix_hits_range(chrom_seq, query, geometry, bounds)
-
-scan_prefix_hits_raw_range!(
-    geometry::PrefixScanGeometry, plus_hits, minus_hits,
-    raw, query, args...) =
-    scan_generic_prefix_hits_raw_range!(
-        plus_hits, minus_hits, raw, query, geometry, args...)
-
-scan_prefix_hits_raw_range_bucketed!(
-    geometry::PrefixScanGeometry, plus_hits, minus_hits,
-    plus_candidates, minus_candidates, plus_radix_scratch,
-    minus_radix_scratch, radix_counts, raw, query, args...) =
-    scan_generic_prefix_hits_raw_range_bucketed!(
-        plus_hits, minus_hits, plus_candidates, minus_candidates,
-        plus_radix_scratch, minus_radix_scratch, radix_counts,
-        raw, query, geometry, args...)
-
-scan_prefix_hits_raw_range(
-    geometry::PrefixScanGeometry, raw, query, args...) =
-    scan_generic_prefix_hits_raw_range(raw, query, geometry, args...)

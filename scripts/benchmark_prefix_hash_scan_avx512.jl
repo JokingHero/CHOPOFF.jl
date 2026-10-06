@@ -44,8 +44,8 @@ function scanner_case(raw, motif::Motif, label::String, runs::Int, warmups::Int)
     candidate_last = length(raw) - CHOPOFF.prefix_scan_candidate_last_offset(geometry)
     bounds = CHOPOFF.PrefixScanBounds(
         1:candidate_last, 1:candidate_last, 1:candidate_last)
-    run(backend) = CHOPOFF.scan_prefix_hits_raw_range(
-        geometry, raw, query, bounds, Val(backend))
+    run(backend) = CHOPOFF.scan_generic_prefix_hits_raw_range(
+        raw, query, geometry, bounds, Val(backend))
     times, values = alternating_times(
         () -> run(:avx2), () -> run(:avx512), runs, warmups)
     values[:avx2][3] == values[:avx512][3] ||

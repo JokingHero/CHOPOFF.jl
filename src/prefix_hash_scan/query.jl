@@ -147,25 +147,6 @@ function load_prefix_hash_scan_paths(
     return paths, source
 end
 
-function resolve_prefix_hash_scan_query_variant(query_variant::Symbol, nguides::Int = 0)
-    query_variant == :auto && return nguides <= 64 ? :bitmask64 : :columnwise
-    query_variant == :bruteforce && return :bruteforce
-    if query_variant == :bitmask64 && nguides > 64
-        error("query_variant=:bitmask64 supports at most 64 guides.")
-    end
-    query_variant in (:columnwise, :bitmask64) && return query_variant
-    error("query_variant must be :auto, :columnwise, :bitmask64, or :bruteforce.")
-end
-
-function prefix_hash_scan_query_variant()
-    raw = lowercase(strip(get(ENV, "CHOPOFF_PREFIX_HASH_SCAN_QUERY", "auto")))
-    raw == "auto" && return :auto
-    raw == "columnwise" && return :columnwise
-    raw == "bitmask64" && return :bitmask64
-    raw == "bruteforce" && return :bruteforce
-    error("Invalid CHOPOFF_PREFIX_HASH_SCAN_QUERY='$raw'. Allowed values: auto, columnwise, bitmask64, bruteforce.")
-end
-
 function oriented_prefix_hash_scan_guides(guides::Vector{LongDNA{4}}, motif::Motif)
     guides_ = copy(guides)
     if motif.extends5
@@ -227,19 +208,14 @@ function build_prefix_hash_scan_map_from_paths(
     paths,
     guides_::Vector{LongDNA{4}},
     hash_type::Type{<:Unsigned},
-    stats::Union{Nothing, PrefixHashScanStats} = nothing;
-    query_variant::Symbol = prefix_hash_scan_query_variant())
+    stats::Union{Nothing, PrefixHashScanStats} = nothing)
 
-    variant = resolve_prefix_hash_scan_query_variant(query_variant, length(guides_))
+    length(guides_) <= 64 || error("A bitmask query supports at most 64 guides.")
     if stats !== nothing
-        stats.query_variant = variant
+        stats.query_variant = :bitmask64
     end
 
-    if variant == :bitmask64
-        query = PrefixHashScanBitmaskQuery(Dict{hash_type, UInt64}())
-    else
-        query = Dict{hash_type, Vector{Int}}()
-    end
+    query = PrefixHashScanBitmaskQuery(Dict{hash_type, UInt64}())
     hash_start = prefix_hash_scan_timer(stats)
     for (guide_idx, guide) in enumerate(guides_)
         format_start = prefix_hash_scan_timer(stats)
@@ -267,15 +243,9 @@ function build_prefix_hash_scan_map_from_paths(
         end
 
         insert_start = prefix_hash_scan_timer(stats)
-        if variant == :bitmask64
-            bit = UInt64(1) << (guide_idx - 1)
-            for h in hashes
-                query.masks[h] = get(query.masks, h, zero(UInt64)) | bit
-            end
-        else
-            for h in hashes
-                push!(get!(query, h, Int[]), guide_idx)
-            end
+        bit = UInt64(1) << (guide_idx - 1)
+        for h in hashes
+            query.masks[h] = get(query.masks, h, zero(UInt64)) | bit
         end
         if stats !== nothing
             stats.query_insert_ns += time_ns() - insert_start
@@ -294,7 +264,6 @@ function build_prefix_hash_scan_map(
     hash_len::Int,
     hash_type::Type{<:Unsigned},
     stats::Union{Nothing, PrefixHashScanStats} = nothing;
-    query_variant::Symbol = prefix_hash_scan_query_variant(),
     paths = nothing)
 
     if paths === nothing
@@ -304,7 +273,7 @@ function build_prefix_hash_scan_map(
         stats.path_source = :prepared
     end
     guides_ = oriented_prefix_hash_scan_guides(guides, motif)
-    query = build_prefix_hash_scan_map_from_paths(paths, guides_, hash_type, stats; query_variant = query_variant)
+    query = build_prefix_hash_scan_map_from_paths(paths, guides_, hash_type, stats)
     return query, guides_
 end
 
@@ -342,17 +311,6 @@ function candidate_prefix_hashes(
         return unique(convert.(hash_type, expanded))
     end
     return hash_type[convert(hash_type, prefix)]
-end
-
-function append_prefix_hash_scan_guides!(candidate_guides::Vector{Int}, query::Dict, hashes)
-    empty!(candidate_guides)
-    for h in hashes
-        append!(candidate_guides, get(query, h, Int[]))
-    end
-    isempty(candidate_guides) && return false
-    sort!(candidate_guides)
-    unique!(candidate_guides)
-    return true
 end
 
 function prefix_hash_scan_candidate_mask(query::PrefixHashScanBitmaskQuery, hashes)
@@ -500,8 +458,7 @@ function build_prefix_hash_scan_compact_guide_hashes(
 end
 
 function build_prefix_hash_scan_compact_lists!(
-    lists, timings, paths, guides_, worker_count::Int, ::Val{Parallel},
-    timed::Val) where Parallel
+    lists, timings, paths, guides_, worker_count::Int, timed::Val)
 
     function build_guide!(guide_idx)
         hashes, guide_timings = build_prefix_hash_scan_compact_guide_hashes(
@@ -511,7 +468,7 @@ function build_prefix_hash_scan_compact_lists!(
         return nothing
     end
 
-    if Parallel && worker_count > 1
+    if worker_count > 1
         workers = map(1:worker_count) do worker_idx
             Threads.@spawn for guide_idx in worker_idx:worker_count:length(guides_)
                 build_guide!(guide_idx)
@@ -526,13 +483,10 @@ function build_prefix_hash_scan_compact_lists!(
     return nothing
 end
 
-@inline function resolve_prefix_hash_scan_query_build_backend(
-    query_build_backend::Symbol,
-    worker_count::Int)
-
-    return query_build_backend == :auto && worker_count > 1 ?
-        :parallel : (query_build_backend == :auto ? :serial : query_build_backend)
-end
+# Production directory geometry. The bucketed lookup's radix passes assume an
+# 11-base bucket (two 11-bit digits and a 10-bit suffix of the 32-bit hash).
+const PREFIX_HASH_SCAN_BUCKET_BASES = 11
+const PREFIX_HASH_SCAN_PREFILTER_BITS = 26
 
 function build_prefix_hash_scan_compact_query(
     guides::Vector{LongDNA{4}},
@@ -540,14 +494,9 @@ function build_prefix_hash_scan_compact_query(
     distance::Int,
     hash_len::Int,
     stats::Union{Nothing, PrefixHashScanStats};
-    bucket_bases::Int,
-    prefilter_bits::Int,
-    query_build_backend::Symbol = :serial,
     query_threads::Int = 1,
     paths = nothing)
 
-    query_build_backend in (:auto, :serial, :parallel) ||
-        error("query_build_backend must be :auto, :serial, or :parallel.")
     query_threads >= 1 || error("query_threads must be positive.")
 
     if paths === nothing
@@ -562,11 +511,8 @@ function build_prefix_hash_scan_compact_query(
     timings = stats === nothing ? nothing :
         Vector{NTuple{3, UInt64}}(undef, length(guides_))
     worker_count = min(query_threads, Threads.nthreads(), length(guides_))
-    resolved_backend = resolve_prefix_hash_scan_query_build_backend(
-        query_build_backend, worker_count)
     build_prefix_hash_scan_compact_lists!(
-        lists, timings, paths, guides_, worker_count,
-        Val(resolved_backend == :parallel), Val(stats !== nothing))
+        lists, timings, paths, guides_, worker_count, Val(stats !== nothing))
     if stats !== nothing
         stats.query_format_ns += sum(first, timings)
         stats.query_fold_ns += sum(x -> x[2], timings)
@@ -576,12 +522,10 @@ function build_prefix_hash_scan_compact_query(
 
     merge_start = prefix_hash_scan_timer(stats)
     keys_, masks = merge_prefix_hash_scan_hash_lists(lists)
-    directory = build_prefix_hash_scan_directory(
-        keys_, masks, hash_len, bucket_bases)
-    if prefilter_bits != 0
-        directory = build_prefix_hash_scan_prefilter(
-            directory, keys_, prefilter_bits)
-    end
+    directory = build_prefix_hash_scan_prefilter(
+        build_prefix_hash_scan_directory(
+            keys_, masks, hash_len, PREFIX_HASH_SCAN_BUCKET_BASES),
+        keys_, PREFIX_HASH_SCAN_PREFILTER_BITS)
     if stats !== nothing
         stats.query_insert_ns += time_ns() - merge_start
         stats.query_variant = :bitmask64

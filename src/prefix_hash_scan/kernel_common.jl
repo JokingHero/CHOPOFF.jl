@@ -67,20 +67,6 @@ end
     return exact
 end
 
-@inline function prefix_hash_scan_exact_block(
-    chrom_seq::LongDNA{4}, start_pos::Int, required_bases::Int,
-    ::Val = Val(:avx2))
-
-    exact = UInt128(0)
-    @inbounds for offset in 0:(required_bases - 1)
-        nibble = UInt8(BioSequences.extract_encoded_element(
-            chrom_seq, start_pos + offset))
-        prefix_hash_scan_twobit_nibble(nibble) != 0xff &&
-            (exact |= UInt128(1) << offset)
-    end
-    return exact
-end
-
 @inline function prefix_hash_scan_candidate_sequence(
     raw::AbstractVector{UInt8}, candidate_start::Int, candidate_bases::Int)
 
@@ -90,9 +76,6 @@ end
     return LongDNA{4}(
         @view raw[candidate_start:(candidate_start + candidate_bases - 1)])
 end
-@inline prefix_hash_scan_candidate_sequence(
-    chrom_seq::LongDNA{4}, candidate_start::Int, candidate_bases::Int) =
-    chrom_seq[candidate_start:(candidate_start + candidate_bases - 1)]
 
 function prefix_hash_scan_window_prefix(
     candidate::LongDNA{4}, motif::Motif, is_antisense::Bool, hash_len::Int)
@@ -183,47 +166,6 @@ function scan_ambiguous_prefix_hits_range!(
     sort!(plus_hits; by = hit -> hit.start, alg = QuickSort)
     sort!(minus_hits; by = hit -> hit.start, alg = QuickSort)
     return nothing
-end
-
-# Whole-chromosome LongDNA scan for the :fused_directory fallback. Splits the
-# candidate span across tasks, each running the geometry's range kernel.
-function scan_prefix_hits(
-    geometry::PrefixScanGeometry,
-    chrom_seq::LongDNA{4},
-    dbi::DBInfo,
-    query,
-    hash_len::Int,
-    stats::Union{Nothing, PrefixHashScanStats} = nothing;
-    scan_threads::Int = Threads.nthreads())
-
-    bounds = prefix_scan_bounds(geometry, chrom_seq, dbi)
-    bounds === nothing && return PrefixHashScanHit[], PrefixHashScanHit[]
-    candidate_first, candidate_last = first(bounds.all), last(bounds.all)
-    thread_count = min(max(scan_threads, 1), length(bounds.all))
-    chunk_size = cld(length(bounds.all), thread_count)
-    tasks = map(candidate_first:chunk_size:candidate_last) do first_
-        part = PrefixScanBounds(
-            first_:min(first_ + chunk_size - 1, candidate_last),
-            bounds.plus, bounds.minus)
-        Threads.@spawn scan_prefix_hits_range(
-            geometry, chrom_seq, query, hash_len, part)
-    end
-    plus_hits = PrefixHashScanHit[]
-    minus_hits = PrefixHashScanHit[]
-    motif_candidates = 0
-    for task in tasks
-        local_plus, local_minus, local_count = fetch(task)
-        append!(plus_hits, local_plus)
-        append!(minus_hits, local_minus)
-        motif_candidates += local_count
-    end
-    if dbi.motif.ambig_max > 0
-        scan_ambiguous_prefix_hits_range!(
-            plus_hits, minus_hits, chrom_seq, geometry, dbi, query,
-            hash_len, bounds, Val(dbi.motif.ambig_max), stats)
-    end
-    stats === nothing || (stats.motif_candidates += motif_candidates)
-    return plus_hits, minus_hits
 end
 
 @inline function prefix_hash_scan_record_candidate!(

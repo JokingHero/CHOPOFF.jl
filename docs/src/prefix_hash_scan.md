@@ -5,10 +5,9 @@ CollapsedDocStrings = true
 # prefixHashScan search
 
 `search_prefixHashScan` searches an indexed FASTA or 2bit reference directly
-without building a CHOPOFF genome database. Hand-written Cas9 and Cas12a
-kernels remain the canonical fast paths; a motif-specialized generic kernel
-handles other PAM sequences, PAM positions, strand selections, and motifs
-without a PAM.
+without building a CHOPOFF genome database. One motif-specialized generic
+kernel handles Cas9, Cas12a, other PAM sequences, PAM positions, strand
+selections, and motifs without a PAM.
 
 ## Supported configuration
 
@@ -183,11 +182,12 @@ the same across thread schedules. The seven-column detail schema is unchanged.
 
 The standalone equivalent is `prefixHashScan --output_mode counts`.
 
-`simd_backend` accepts `:auto`, `:avx2`, or `:avx512`. AVX2 requires AVX2 and
-BMI2; AVX-512 requires AVX-512F, AVX-512BW, and BMI2. Automatic dispatch uses
-AVX-512 only for benchmark-qualified CPU-family and scan-geometry pairs. Other
-geometries retain AVX2 or the existing non-SIMD fallback. An explicit
-unsupported backend errors.
+`simd_backend` accepts `:auto`, `:avx2`, `:avx512`, or `:portable`. AVX2
+requires AVX2 and BMI2; AVX-512 requires AVX-512F, AVX-512BW, and BMI2.
+`:portable` uses plain Julia bit operations and runs on any CPU. Automatic
+dispatch uses AVX-512 only for benchmark-qualified CPU-family and scan-geometry
+pairs. Other geometries use AVX2, and CPUs without AVX2/BMI2 use `:portable`.
+An explicit unsupported backend errors.
 
 With `verbose=true`, the search reports the resolved scan and SIMD backends,
 lookup mode, query-build mode, scheduler, thread count, and chunk size.
@@ -302,6 +302,16 @@ The Intel Xeon Gold 6126 (`skylake-avx512`) qualification produced:
 All outputs matched exactly. Cas9 and Cas12a therefore qualify for automatic
 AVX-512 on this CPU family; generic geometries retain AVX2.
 
+!!! warning "Qualification needs a rerun"
+    A September 26-27, 2026 rerun at 8, 12, and 24 threads on the same CPU, with
+    other users' jobs on the host, did not reproduce this result. At 24 threads
+    the end-to-end speedup was 0.96x for Cas9 and 0.85x for Cas12a, below the
+    0.97x gate, and the commit before the generic-kernel refactor failed the same
+    gate. Identical runs on that host varied by up to 40%, so the result is
+    inconclusive. Automatic AVX-512 selection is unchanged until the
+    qualification is repeated on an idle host. The run details are in
+    `prefixHashScan.md` in the repository root.
+
 ## Cas9 ambiguity benchmark
 
 The following measurement used an Intel Xeon Gold 6126 with GRCh38, 61 standard
@@ -383,10 +393,14 @@ retained about 85% of specialized Cas9 throughput. This isolates motif scanning,
 prefix packing, and failed hash lookup; end-to-end overhead varies with PAM
 frequency, query hits, verification, I/O, and output volume.
 
+Two later generator changes closed this gap: the generic raw scan reached
+0.995x of the hand-written AVX2 Cas9 scanner. The hand-written Cas9 and Cas12a
+kernels were then removed on October 4, 2026.
+
 ## Implementation boundary
 
 The three-argument method defaults to Cas9/distance 3 and accepts any registered
 motif name or custom `Motif` plus `distance=0:4`. Geometry dispatch happens
-before the canonical or typed generic hot loop. PAMless searches reuse and
+before the typed generic hot loop. PAMless searches reuse and
 remap canonical symbolic paths by distance and prefix length; scanner
 specialization remains independent of query-template construction.

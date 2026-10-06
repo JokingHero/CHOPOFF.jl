@@ -78,14 +78,6 @@ function check_prefix_helper_matches_materialized(tdir::String, seq::String, mot
 end
 
 
-function normalize_phs_query_map(query::Dict)
-    out = Dict{eltype(keys(query)), Vector{Int}}()
-    for (k, v) in query
-        out[k] = sort(v)
-    end
-    return out
-end
-
 function normalize_phs_query_map(query::CHOPOFF.PrefixHashScanBitmaskQuery)
     out = Dict{eltype(keys(query.masks)), Vector{Int}}()
     for (k, mask0) in query.masks
@@ -149,8 +141,8 @@ function phs_scan_cas9_raw(raw, dbi, query)
     bounds = CHOPOFF.prefix_scan_bounds(
         CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, raw, dbi)
     bounds === nothing ||
-        CHOPOFF.scan_prefix_hits_raw_range!(
-            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, plus, minus, raw, query, bounds)
+        CHOPOFF.scan_generic_prefix_hits_raw_range!(
+            plus, minus, raw, query, CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, bounds)
     return plus, minus
 end
 
@@ -586,7 +578,7 @@ end
             write_phs_fasta(genome, "chr1", sequence)
             guide = LongDNA{4}(guide_string)
             outputs = String[]
-            for backend in (:legacy, :fused_directory, :streaming_fasta_simd)
+            for backend in (:legacy, :streaming_fasta_simd)
                 output = joinpath(tdir, "generic_motif_$(case_idx)_$(backend).csv")
                 backend_stats = CHOPOFF.PrefixHashScanStats()
                 CHOPOFF.search_prefixHashScan(
@@ -795,7 +787,7 @@ end
             limits = fill(100, distance + 1)
             distance_outputs = String[]
             for backend in (
-                    :legacy, :fused_directory, :streaming_fasta_simd, :auto)
+                    :legacy, :streaming_fasta_simd, :auto)
                 output = joinpath(
                     tdir, "supported_api_d$(distance)_$(backend).csv")
                 stats = CHOPOFF.PrefixHashScanStats()
@@ -941,7 +933,7 @@ end
         @test phs_counts(legacy_output) == phs_expected_counts(
             single_detail_output, [guide, absent], 2)
         @test legacy_stats.traceback_calls == 0
-        for query_variant in (:columnwise, :bruteforce)
+        for query_variant in (:bruteforce,)
             variant_output = joinpath(
                 tdir, "count_semantics_$(query_variant).csv")
             CHOPOFF.search_prefixHashScan(
@@ -1100,11 +1092,8 @@ end
 
                 expected_materialized = CHOPOFF.materialize_normalized_candidate(
                     chrom_seq, candidate_range, dbi, is_antisense)
-                observed = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS12A_D3_PREFIX_SCAN_GEOMETRY, 
-                    chrom_seq, first(candidate_range), dbi, is_antisense)
                 raw_observed = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS12A_D3_PREFIX_SCAN_GEOMETRY, 
                     collect(codeunits(seq)), first(candidate_range), dbi, is_antisense)
-                @test observed == expected_materialized
                 @test raw_observed == expected_materialized
             end
         end
@@ -1112,7 +1101,7 @@ end
         outputs = Dict{Symbol, String}()
         backend_stats = Dict{Symbol, CHOPOFF.PrefixHashScanStats}()
         for backend in (
-                :legacy, :fused_directory, :streaming_fasta_simd, :auto)
+                :legacy, :streaming_fasta_simd, :auto)
             output = joinpath(tdir, "cas12a_$(backend).csv")
             backend_stats[backend] = CHOPOFF.PrefixHashScanStats()
             CHOPOFF.search_prefixHashScan(
@@ -1168,7 +1157,7 @@ end
             limits = fill(100, distance + 1)
             distance_outputs = String[]
             for backend in (
-                    :legacy, :fused_directory, :streaming_fasta_simd, :auto)
+                    :legacy, :streaming_fasta_simd, :auto)
                 output = joinpath(
                     tdir, "cas12a_d$(distance)_$(backend).csv")
                 stats_d = CHOPOFF.PrefixHashScanStats()
@@ -1277,7 +1266,7 @@ end
 
         backend_outputs = String[]
         for backend in (
-                :legacy, :fused_directory, :streaming_fasta_simd, :auto)
+                :legacy, :streaming_fasta_simd, :auto)
             accepted, output, stats = run_ambiguous_site(
                 "cas9_ambig_backend", cas9_guide, one_n, motif1;
                 backend = backend)
@@ -1346,7 +1335,7 @@ end
         cas12a_site = "TTTR" * cas12a_string[1:7] * "N" * cas12a_string[9:end]
         cas12a_motif = Motif("Cas12a"; distance = 0, ambig_max = 2)
         cas12a_outputs = String[]
-        for backend in (:legacy, :fused_directory, :streaming_fasta_simd, :auto)
+        for backend in (:legacy, :streaming_fasta_simd, :auto)
             result, output, _ = run_ambiguous_site(
                 "cas12a_ambig_backend", cas12a_guide, cas12a_site,
                 cas12a_motif; backend = backend)
@@ -1442,69 +1431,50 @@ end
                 paths, guide, hash_type) == expected
         end
 
-        columnwise_stats = CHOPOFF.PrefixHashScanStats()
         bitmask_stats = CHOPOFF.PrefixHashScanStats()
-        auto_stats = CHOPOFF.PrefixHashScanStats()
-        columnwise_query = CHOPOFF.build_prefix_hash_scan_map_from_paths(paths, guides_, hash_type, columnwise_stats; query_variant = :columnwise)
-        bitmask_query = CHOPOFF.build_prefix_hash_scan_map_from_paths(paths, guides_, hash_type, bitmask_stats; query_variant = :bitmask64)
-        auto_query = CHOPOFF.build_prefix_hash_scan_map_from_paths(paths, guides_, hash_type, auto_stats; query_variant = :auto)
-        columnwise_norm = normalize_phs_query_map(columnwise_query)
-        @test normalize_phs_query_map(bitmask_query) == columnwise_norm
-        @test normalize_phs_query_map(auto_query) == columnwise_norm
-        @test columnwise_stats.query_variant == :columnwise
+        bitmask_query = CHOPOFF.build_prefix_hash_scan_map_from_paths(
+            paths, guides_, hash_type, bitmask_stats)
+        expected_map = Dict{hash_type, Vector{Int}}()
+        for (guide_idx, guide) in enumerate(guides_)
+            for hash in CHOPOFF.prefix_hash_scan_guide_hashes(paths, guide, hash_type)
+                push!(get!(expected_map, hash, Int[]), guide_idx)
+            end
+        end
+        @test normalize_phs_query_map(bitmask_query) == expected_map
         @test bitmask_stats.query_variant == :bitmask64
-        @test auto_stats.query_variant == :bitmask64
         @test bitmask_query isa CHOPOFF.PrefixHashScanBitmaskQuery
-        @test columnwise_stats.query_fold_ns > 0
-        @test columnwise_stats.query_dedup_ns > 0
-        @test columnwise_stats.query_insert_ns > 0
+        @test bitmask_stats.query_fold_ns > 0
+        @test bitmask_stats.query_dedup_ns > 0
         @test bitmask_stats.query_insert_ns > 0
 
+        # One query worker must build the same compact query as several.
         compact_guides = [guides; first(guides)]
-        serial_compact_stats = CHOPOFF.PrefixHashScanStats()
+        single_compact_stats = CHOPOFF.PrefixHashScanStats()
         parallel_compact_stats = CHOPOFF.PrefixHashScanStats()
-        serial_compact, serial_guides = CHOPOFF.build_prefix_hash_scan_compact_query(
-            compact_guides, motif, 3, hash_len, serial_compact_stats;
-            bucket_bases = 11, prefilter_bits = 26,
-            query_build_backend = :serial, query_threads = 4)
+        single_compact, single_guides = CHOPOFF.build_prefix_hash_scan_compact_query(
+            compact_guides, motif, 3, hash_len, single_compact_stats;
+            query_threads = 1)
         parallel_compact, parallel_guides = CHOPOFF.build_prefix_hash_scan_compact_query(
             compact_guides, motif, 3, hash_len, parallel_compact_stats;
-            bucket_bases = 11, prefilter_bits = 26,
-            query_build_backend = :parallel, query_threads = 4)
-        @test parallel_guides == serial_guides
-        @test parallel_compact.presence == serial_compact.presence
-        @test parallel_compact.prefix_bits == serial_compact.prefix_bits
-        @test parallel_compact.directory.offsets == serial_compact.directory.offsets
-        @test parallel_compact.directory.suffixes == serial_compact.directory.suffixes
-        @test parallel_compact.directory.masks == serial_compact.directory.masks
-        @test parallel_compact_stats.path_rows == serial_compact_stats.path_rows
-        @test parallel_compact_stats.query_hashes == serial_compact_stats.query_hashes
+            query_threads = 4)
+        @test parallel_guides == single_guides
+        @test parallel_compact.presence == single_compact.presence
+        @test parallel_compact.prefix_bits == single_compact.prefix_bits
+        @test parallel_compact.directory.offsets == single_compact.directory.offsets
+        @test parallel_compact.directory.suffixes == single_compact.directory.suffixes
+        @test parallel_compact.directory.masks == single_compact.directory.masks
+        @test parallel_compact_stats.path_rows == single_compact_stats.path_rows
+        @test parallel_compact_stats.query_hashes == single_compact_stats.query_hashes
         @test parallel_compact_stats.query_variant == :bitmask64
-        @test serial_compact_stats.query_variant == :bitmask64
-        one_serial, _ = CHOPOFF.build_prefix_hash_scan_compact_query(
-            guides[1:1], motif, 3, hash_len, nothing; bucket_bases = 11,
-            prefilter_bits = 26, query_build_backend = :serial, query_threads = 4)
-        one_auto, _ = CHOPOFF.build_prefix_hash_scan_compact_query(
-            guides[1:1], motif, 3, hash_len, nothing; bucket_bases = 11,
-            prefilter_bits = 26, query_build_backend = :auto, query_threads = 4)
-        @test one_auto.presence == one_serial.presence
-        @test one_auto.directory.masks == one_serial.directory.masks
+        @test single_compact_stats.query_variant == :bitmask64
 
         @test_throws ErrorException CHOPOFF.build_prefix_hash_scan_compact_query(
-            guides, motif, 3, hash_len, nothing; bucket_bases = 11,
-            prefilter_bits = 26, query_build_backend = :invalid)
-        @test_throws ErrorException CHOPOFF.build_prefix_hash_scan_compact_query(
-            guides, motif, 3, hash_len, nothing; bucket_bases = 11,
-            prefilter_bits = 26, query_threads = 0)
+            guides, motif, 3, hash_len, nothing; query_threads = 0)
 
         many_guides = fill(first(guides_), 65)
-        many_stats = CHOPOFF.PrefixHashScanStats()
-        many_query = CHOPOFF.build_prefix_hash_scan_map_from_paths(UInt8[1 2; 2 3], many_guides, UInt8, many_stats; query_variant = :auto)
-        @test many_stats.query_variant == :columnwise
-        @test many_query isa Dict
-        @test_throws ErrorException CHOPOFF.build_prefix_hash_scan_map_from_paths(UInt8[1 2; 2 3], many_guides, UInt8; query_variant = :bitmask64)
+        @test_throws ErrorException CHOPOFF.build_prefix_hash_scan_map_from_paths(
+            UInt8[1 2; 2 3], many_guides, UInt8)
     end
-
 
     @testset "direct Cas9 candidate hash matches prefix helper" begin
         motif = Motif("Cas9"; distance = 2)
@@ -1557,11 +1527,8 @@ end
                 for candidate_range in CHOPOFF.findguides(dbi, chrom_seq, is_antisense)
                     expected = CHOPOFF.materialize_normalized_candidate(
                         chrom_seq, candidate_range, dbi, is_antisense)
-                    observed = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
-                        chrom_seq, first(candidate_range), dbi, is_antisense)
                     raw_observed = CHOPOFF.materialize_normalized_candidate_specialized(CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
                         collect(codeunits(seq)), first(candidate_range), dbi, is_antisense)
-                    @test observed == expected
                     @test raw_observed == expected
                 end
             end
@@ -1596,9 +1563,7 @@ end
         end
         query = CHOPOFF.PrefixHashScanBitmaskQuery(masks)
         directory = CHOPOFF.build_prefix_hash_scan_directory(query, hash_len, 8)
-        expected = CHOPOFF.scan_prefix_hits(
-            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, chrom_seq, dbi, directory,
-            hash_len; scan_threads = 1)
+        expected = phs_scan_cas9_raw(raw, dbi, directory)
         for bits in (22, 24, 26)
             filtered = CHOPOFF.build_prefix_hash_scan_prefilter(
                 directory, keys(masks), bits)
@@ -1704,10 +1669,6 @@ end
         end
 
         query = CHOPOFF.PrefixHashScanBitmaskQuery(query_masks)
-        plus_hits, minus_hits = CHOPOFF.scan_prefix_hits(
-            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, chrom_seq, dbi, query, hash_len)
-        @test [(hit.start, hit.mask) for hit in plus_hits] == expected[1]
-        @test [(hit.start, hit.mask) for hit in minus_hits] == expected[2]
 
         directory = CHOPOFF.build_prefix_hash_scan_directory(query, hash_len, 8)
         raw = collect(codeunits(fused_seq))
@@ -1721,18 +1682,18 @@ end
         scratch_minus_id = objectid(scratch_minus)
         bounds = CHOPOFF.prefix_scan_bounds(
             CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, raw, dbi)
-        motif_candidates = CHOPOFF.scan_prefix_hits_raw_range!(
-            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
-            scratch_plus, scratch_minus, raw, directory, bounds)
+        motif_candidates = CHOPOFF.scan_generic_prefix_hits_raw_range!(
+            scratch_plus, scratch_minus, raw, directory,
+            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, bounds)
         @test scratch_plus == raw_plus
         @test scratch_minus == raw_minus
         @test motif_candidates >= length(scratch_plus) + length(scratch_minus)
         @test objectid(scratch_plus) == scratch_plus_id
         @test objectid(scratch_minus) == scratch_minus_id
 
-        CHOPOFF.scan_prefix_hits_raw_range!(
-            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, 
+        CHOPOFF.scan_generic_prefix_hits_raw_range!(
             scratch_plus, scratch_minus, raw, directory,
+            CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY,
             CHOPOFF.PrefixScanBounds(2:1, 2:1, 2:1))
         @test isempty(scratch_plus)
         @test isempty(scratch_minus)
@@ -1747,11 +1708,11 @@ end
         bucket_minus = CHOPOFF.PrefixHashScanHit[]
         lookup_scratch = CHOPOFF.PrefixHashScanLookupScratch()
         bucket_motif_candidates =
-            CHOPOFF.scan_prefix_hits_raw_range_bucketed!(
-                CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, bucket_plus, bucket_minus, lookup_scratch.plus_candidates,
+            CHOPOFF.scan_generic_prefix_hits_raw_range_bucketed!(
+                bucket_plus, bucket_minus, lookup_scratch.plus_candidates,
                 lookup_scratch.minus_candidates, lookup_scratch.plus_radix,
                 lookup_scratch.minus_radix, lookup_scratch.radix_counts, raw,
-                bucket_query, bounds)
+                bucket_query, CHOPOFF.CAS9_D3_PREFIX_SCAN_GEOMETRY, bounds)
         @test bucket_plus == raw_plus
         @test bucket_minus == raw_minus
         @test bucket_motif_candidates == motif_candidates
@@ -1806,8 +1767,9 @@ end
 
         stream_query = CHOPOFF.PrefixHashScanBitmaskQuery(
             Dict(hash => UInt64(1) for hash in keys(query_masks)))
-        stream_directory = CHOPOFF.build_prefix_hash_scan_directory(
-            stream_query, hash_len, 8)
+        stream_directory = CHOPOFF.build_prefix_hash_scan_prefilter(
+            CHOPOFF.build_prefix_hash_scan_directory(stream_query, hash_len, 11),
+            collect(keys(stream_query.masks)), 26)
         reference_lengths = FASTA.Index(fused_genome * ".fai").lengths
         function stream_result_tuples(results, ranges)
             tuples = Tuple[]
@@ -1832,13 +1794,11 @@ end
             chrom_stats = with_stats ? CHOPOFF.PrefixHashScanStats() : nothing
             chunk_results, chunk_ranges = CHOPOFF.stream_prefix_hash_scan(
                 fused_genome, reference_lengths, stream_directory, dbi,
-                [guide_oriented], [myers_profile], 3, 64, 4,
-                Val(:buffered_reuse), chunk_stats)
+                [guide_oriented], [myers_profile], 3, 64, 4, chunk_stats)
             chrom_results, chrom_ranges = CHOPOFF.stream_prefix_hash_scan(
                 fused_genome, reference_lengths, stream_directory, dbi,
                 [guide_oriented], [myers_profile], 3,
-                maximum(reference_lengths), 4, Val(:buffered_reuse),
-                chrom_stats)
+                maximum(reference_lengths), 4, chrom_stats)
             @test stream_result_tuples(chunk_results, chunk_ranges) ==
                 stream_result_tuples(chrom_results, chrom_ranges)
             if with_stats
@@ -1859,8 +1819,7 @@ end
         end
 
         outputs = Dict{Symbol, DataFrame}()
-        for backend in (
-                :legacy, :fused_directory, :streaming_fasta_simd, :auto)
+        for backend in (:legacy, :streaming_fasta_simd, :auto)
             output = joinpath(tdir, "scan_" * string(backend) * ".csv")
             CHOPOFF.search_prefixHashScan(
                 [guide3],
@@ -1870,9 +1829,7 @@ end
                 distance = 3,
                 hash_len = hash_len,
                 early_stopping = fill(100, 4),
-                query_variant = :bitmask64,
                 scan_backend = backend,
-                bucket_bases = 8,
                 stream_chunk_bases = 64,
             )
             df = DataFrame(CSV.File(output))
@@ -1880,112 +1837,47 @@ end
             outputs[backend] = df
         end
         @test nrow(outputs[:legacy]) > 0
-        @test outputs[:fused_directory] == outputs[:legacy]
         @test outputs[:streaming_fasta_simd] == outputs[:legacy]
         @test outputs[:auto] == outputs[:legacy]
 
         default_output = joinpath(tdir, "scan_default_tuning.csv")
         explicit_output = joinpath(tdir, "scan_explicit_tuning.csv")
-        default_kwargs = (
-            distance = 3,
-            early_stopping = fill(100, 4),
-            query_variant = :bitmask64,
-            scan_backend = :auto,
-        )
+        default_kwargs = (distance = 3, early_stopping = fill(100, 4))
         CHOPOFF.search_prefixHashScan(
             [guide3], fused_genome, motif3, default_output; default_kwargs...)
         CHOPOFF.search_prefixHashScan(
             [guide3], fused_genome, motif3, explicit_output;
-            default_kwargs...,
-            bucket_bases = 11,
-            stream_chunk_bases = 2 * 1024 * 1024,
-            prefilter_bits = 26,
-        )
+            default_kwargs..., scan_backend = :streaming_fasta_simd,
+            stream_chunk_bases = 2 * 1024 * 1024)
         @test read(default_output) == read(explicit_output)
-        lookup_outputs = Dict{Symbol, Vector{UInt8}}()
-        lookup_stats = Dict{Symbol, CHOPOFF.PrefixHashScanStats}()
-        for lookup_variant in (:inline, :bucketed, :auto)
-            output = joinpath(
-                tdir, "scan_lookup_" * string(lookup_variant) * ".csv")
-            variant_stats = CHOPOFF.PrefixHashScanStats()
-            CHOPOFF.search_prefixHashScan(
-                [guide3], fused_genome, motif3, output;
-                distance = 3, hash_len = hash_len,
-                early_stopping = fill(100, 4), query_variant = :bitmask64,
-                scan_backend = :streaming_fasta_simd, bucket_bases = 11,
-                stream_chunk_bases = 64, prefilter_bits = 26,
-                lookup_variant = lookup_variant, stats = variant_stats)
-            lookup_outputs[lookup_variant] = read(output)
-            lookup_stats[lookup_variant] = variant_stats
-        end
-        @test lookup_outputs[:bucketed] == lookup_outputs[:inline]
-        @test lookup_outputs[:auto] == lookup_outputs[:inline]
-        for field in (
-                :motif_candidates, :prefix_hits, :guide_pairs,
-                :alignment_calls, :distance_calls, :traceback_calls,
-                :emitted_rows)
-            @test getfield(lookup_stats[:bucketed], field) ==
-                getfield(lookup_stats[:inline], field)
-            @test getfield(lookup_stats[:auto], field) ==
-                getfield(lookup_stats[:inline], field)
-        end
 
-        lookup_plain = joinpath(tdir, "scan_lookup_plain.csv")
-        CHOPOFF.search_prefixHashScan(
-            [guide3], fused_genome, motif3, lookup_plain;
-            distance = 3, early_stopping = fill(100, 4),
-            query_variant = :bitmask64,
-            scan_backend = :streaming_fasta_simd, bucket_bases = 11,
-            stream_chunk_bases = 64, prefilter_bits = 26,
-            lookup_variant = :bucketed)
-        @test read(lookup_plain) == lookup_outputs[:inline]
-
-        query_build_outputs = Dict{Symbol, Vector{UInt8}}()
-        query_build_stats = Dict{Symbol, CHOPOFF.PrefixHashScanStats}()
+        # Query construction on one worker and on several must not change output.
+        query_build_outputs = Dict{Int, Vector{UInt8}}()
+        query_build_stats = Dict{Int, CHOPOFF.PrefixHashScanStats}()
         query_build_guides = [
             guide3, LongDNA{4}("TGCATGCATGCATGCATGCA"), guide3]
-        for query_build_backend in (:serial, :parallel, :auto)
-            output = joinpath(
-                tdir, "scan_query_" * string(query_build_backend) * ".csv")
+        for scan_threads in (1, 4)
+            output = joinpath(tdir, "scan_query_threads$(scan_threads).csv")
             backend_stats = CHOPOFF.PrefixHashScanStats()
             CHOPOFF.search_prefixHashScan(
                 query_build_guides, fused_genome, motif3, output;
                 distance = 3, early_stopping = fill(100, 4),
-                query_variant = :bitmask64, scan_backend = :auto,
-                scan_threads = 4, stream_chunk_bases = 64,
-                query_build_backend = query_build_backend, stats = backend_stats)
-            query_build_outputs[query_build_backend] = read(output)
-            query_build_stats[query_build_backend] = backend_stats
+                scan_threads = scan_threads, stream_chunk_bases = 64,
+                stats = backend_stats)
+            query_build_outputs[scan_threads] = read(output)
+            query_build_stats[scan_threads] = backend_stats
         end
-        @test query_build_outputs[:parallel] == query_build_outputs[:serial]
-        @test query_build_outputs[:auto] == query_build_outputs[:serial]
+        @test query_build_outputs[4] == query_build_outputs[1]
         for field in (
                 :path_rows, :query_hashes, :motif_candidates, :prefix_hits,
                 :guide_pairs, :alignment_calls, :distance_calls,
                 :traceback_calls, :emitted_rows)
-            @test getfield(query_build_stats[:parallel], field) ==
-                getfield(query_build_stats[:serial], field)
-            @test getfield(query_build_stats[:auto], field) ==
-                getfield(query_build_stats[:serial], field)
+            @test getfield(query_build_stats[4], field) ==
+                getfield(query_build_stats[1], field)
         end
-
-        plain_query_outputs = Dict{Symbol, Vector{UInt8}}()
-        for query_build_backend in (:serial, :parallel)
-            output = joinpath(
-                tdir, "scan_query_plain_" * string(query_build_backend) * ".csv")
-            CHOPOFF.search_prefixHashScan(
-                query_build_guides, fused_genome, motif3, output;
-                distance = 3, early_stopping = fill(100, 4),
-                query_variant = :bitmask64, scan_backend = :auto,
-                scan_threads = 4, stream_chunk_bases = 64,
-                query_build_backend = query_build_backend)
-            plain_query_outputs[query_build_backend] = read(output)
-        end
-        @test plain_query_outputs[:parallel] == plain_query_outputs[:serial]
-
 
         early_outputs = Dict{Symbol, Vector{UInt8}}()
-        for backend in (:fused_directory, :streaming_fasta_simd)
+        for backend in (:legacy, :streaming_fasta_simd)
             output = joinpath(tdir, "scan_early_" * string(backend) * ".csv")
             CHOPOFF.search_prefixHashScan(
                 [guide3],
@@ -1995,15 +1887,12 @@ end
                 distance = 3,
                 hash_len = hash_len,
                 early_stopping = fill(1, 4),
-                query_variant = :bitmask64,
                 scan_backend = backend,
-                bucket_bases = 8,
                 stream_chunk_bases = 64,
             )
             early_outputs[backend] = read(output)
         end
-        @test early_outputs[:streaming_fasta_simd] ==
-            early_outputs[:fused_directory]
+        @test early_outputs[:streaming_fasta_simd] == early_outputs[:legacy]
 
         stream_stats = CHOPOFF.PrefixHashScanStats()
         CHOPOFF.search_prefixHashScan(
@@ -2014,65 +1903,30 @@ end
             distance = 3,
             hash_len = hash_len,
             early_stopping = fill(100, 4),
-            query_variant = :bitmask64,
             scan_backend = :streaming_fasta_simd,
-            bucket_bases = 8,
             stream_chunk_bases = 64,
             stats = stream_stats,
         )
         @test stream_stats.scan_backend == :streaming_fasta_simd
+        @test stream_stats.distance_calls > 0
+        @test stream_stats.traceback_calls == stream_stats.emitted_rows
 
-        myers_output = joinpath(tdir, "scan_myers_raw.csv")
-        myers_stats = CHOPOFF.PrefixHashScanStats()
-        CHOPOFF.search_prefixHashScan(
-            [guide3],
-            fused_genome,
-            motif3,
-            myers_output;
-            distance = 3,
-            hash_len = hash_len,
-            early_stopping = fill(100, 4),
-            query_variant = :bitmask64,
-            scan_backend = :streaming_fasta_simd,
-            bucket_bases = 8,
-            verify_variant = :myers_raw,
-            stats = myers_stats,
-        )
-        myers_df = DataFrame(CSV.File(myers_output))
-        sort!(myers_df, names(myers_df))
-        @test myers_df == outputs[:legacy]
-        @test myers_stats.distance_calls > 0
-        @test myers_stats.traceback_calls == myers_stats.emitted_rows
+        error_output = joinpath(tdir, "scan_error.csv")
         @test_throws ErrorException CHOPOFF.search_prefixHashScan(
-            [guide3], fused_genome, motif3, myers_output;
+            [guide3], fused_genome, motif3, error_output;
             distance = 3, early_stopping = fill(100, 4),
-            lookup_variant = :invalid)
+            scan_backend = :fused_directory)
         @test_throws ErrorException CHOPOFF.search_prefixHashScan(
-            [guide3], fused_genome, motif3, myers_output;
+            [guide3], fused_genome, motif3, error_output;
             distance = 3, early_stopping = fill(100, 4),
-            scan_backend = :streaming_fasta_simd, bucket_bases = 11,
-            prefilter_bits = 0, lookup_variant = :bucketed)
+            scan_backend = :streaming_2bit_simd)
         @test_throws ErrorException CHOPOFF.search_prefixHashScan(
-            [guide3], fused_genome, motif3, myers_output;
+            [guide3], fused_genome, motif3, error_output;
             distance = 3, early_stopping = fill(100, 4),
-            scan_backend = :streaming_fasta_simd, bucket_bases = 8,
-            lookup_variant = :bucketed)
+            query_variant = :bruteforce, scan_backend = :streaming_fasta_simd)
         @test_throws ErrorException CHOPOFF.search_prefixHashScan(
-            [guide3], fused_genome, motif3, myers_output;
-            distance = 3, early_stopping = fill(100, 4),
-            scan_backend = :fused_directory, bucket_bases = 11,
-            lookup_variant = :bucketed)
-
-        @test_throws ErrorException CHOPOFF.search_prefixHashScan(
-            [guide3],
-            fused_genome,
-            motif3,
-            myers_output;
-            distance = 3,
-            early_stopping = fill(100, 4),
-            scan_backend = :fused_directory,
-            verify_variant = :myers_raw,
-        )
+            fill(guide3, 65), fused_genome, motif3, error_output;
+            distance = 3, early_stopping = fill(100, 4))
     end
 
     guide = LongDNA{4}("ACGTACGTACGTACGTACGT")
@@ -2097,7 +1951,7 @@ end
     write(decoy, "not a search result\n")
     search_prefixHashDB(db_path, [guide], prefix_out; distance = 2, early_stopping = fill(100, 3))
     @test read(decoy, String) == "not a search result\n"
-    CHOPOFF.search_prefixHashScan([guide], genome, motif, scan_out; distance = 2, early_stopping = fill(100, 3), query_variant = :bitmask64)
+    CHOPOFF.search_prefixHashScan([guide], genome, motif, scan_out; distance = 2, early_stopping = fill(100, 3))
     CHOPOFF.search_prefixHashScan([guide], genome, motif, brute_out; distance = 2, early_stopping = fill(100, 3), query_variant = :bruteforce)
     search_prefixHashScan(
         [guide], genome, count_out;
@@ -2184,7 +2038,7 @@ end
                 motif = make_motif(ambig)
                 label = "edge_$(name)_k$(k)_a$(ambig)"
                 outs = Dict{Symbol, String}()
-                for backend in (:legacy, :fused_directory, :streaming_fasta_simd)
+                for backend in (:legacy, :streaming_fasta_simd)
                     out = joinpath(nbounds_dir, "$(label)_$(backend).csv")
                     CHOPOFF.search_prefixHashScan(
                         [LongDNA{4}(guide)], fa, motif, out;
