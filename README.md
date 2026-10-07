@@ -66,7 +66,8 @@ a custom motif supplied through the CLI, without building a CHOPOFF database, us
 `prefixHashScan` on an indexed FASTA or directly on a `.2bit` reference.
 `--ambig_max` allows zero through three
 ambiguous IUPAC reference positions in each complete guide/PAM window; zero is
-the default. Query guides must be unambiguous.
+the default. Query guides may contain IUPAC symbols, up to 64 concrete prefix
+expansions per guide.
 
 ```bash
 export JULIA_NUM_THREADS=8

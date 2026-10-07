@@ -11,7 +11,8 @@ selections, and motifs without a PAM.
 
 ## Supported configuration
 
-- any number of unambiguous guides, processed in batches of at most 64;
+- any number of guides, processed in batches of at most 64; IUPAC guide bases
+  are allowed up to 64 concrete prefix expansions per guide;
 - any registered motif name or custom `Motif` object;
 - one contiguous PAM block at any position, or no PAM;
 - inferred PAMless searches for homogeneous guide files, qualified for guide
@@ -129,7 +130,7 @@ holds.
 
 The inferred motif searches both reference strands and retains CHOPOFF's
 existing `extends5=true` alignment and coordinate convention. Query guides
-must be unambiguous. Set `ambig_max=0:3` to control ambiguous reference bases:
+may contain IUPAC symbols. Set `ambig_max=0:3` to control ambiguous reference bases:
 
 ```julia
 guide15 = LongDNA{4}.(["ACGTACGTACGTACG"])

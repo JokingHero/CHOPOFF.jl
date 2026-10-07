@@ -420,6 +420,15 @@ function emit_prefix_hash_scan_legacy_hit!(
 end
 
 
+# Upper bound on the concrete prefixes one IUPAC guide may expand to; each
+# expansion adds up to one guide's worth of query hashes.
+const PREFIX_HASH_SCAN_MAX_GUIDE_EXPANSIONS = 64
+
+# Concrete prefixes produced by IUPAC bases at oriented positions `1:reach`.
+prefix_hash_scan_guide_expansions(guide::LongDNA{4}, reach::Int) = prod(
+    (length(FROM_AMBIGUOUS[base]) for base in guide[1:min(reach, end)]
+        if isambiguous(base)); init = 1)
+
 # Shared by both `search_prefixHashScan` methods so the two entry points cannot
 # drift apart on what they accept. The motif/distance check is load bearing:
 # when no precomputed path asset matches, `load_prefix_hash_scan_paths` falls
@@ -444,8 +453,14 @@ function validate_prefix_hash_scan_query(
     guide_bases = length_noPAM(motif)
     all(==(guide_bases), length.(guides)) ||
         error("Guide queries are not of the correct length to use with this Motif: " * string(motif))
-    any(isambig.(guides)) &&
-        error("search_prefixHashScan does not support ambiguous query guides.")
+    reach = min(guide_bases - distance, 16) + distance
+    for guide in oriented_prefix_hash_scan_guides(guides, motif)
+        prefix_hash_scan_guide_expansions(guide, reach) <=
+            PREFIX_HASH_SCAN_MAX_GUIDE_EXPANSIONS || error(
+            "Guide $(motif.extends5 ? reverse(guide) : guide) expands to more than " *
+            "PREFIX_HASH_SCAN_MAX_GUIDE_EXPANSIONS = " *
+            "$PREFIX_HASH_SCAN_MAX_GUIDE_EXPANSIONS concrete prefixes.")
+    end
     length(early_stopping) == (distance + 1) ||
         error("Specify one early stopping condition for each distance from 0 to $distance.")
     all(>=(0), early_stopping) ||
@@ -531,7 +546,10 @@ distance-0-through-4/prefix-16 motif, Cas9 and Cas12a included, uses one typed
 generic scan kernel; configurations outside its size envelope use the exact
 legacy engine.
 Reference windows may contain zero through three IUPAC ambiguity symbols, as
-specified by `motif.ambig_max`. Query guides must be unambiguous.
+specified by `motif.ambig_max`. Query guides may contain IUPAC symbols; a guide
+base matches any reference base whose IUPAC set intersects its own. Ambiguity
+in the first `16 + distance` prefix-side guide bases expands the query, at most
+`PREFIX_HASH_SCAN_MAX_GUIDE_EXPANSIONS` (64) concrete prefixes per guide.
 
 `distance` must not exceed `motif.distance`: when no precomputed path asset
 matches, the symbolic paths are generated from the motif, so a motif carrying a
@@ -1110,7 +1128,8 @@ be combined with `motif`.
 
 `ambig_max` - Overrides the inferred or supplied motif's `ambig_max`, that is,
 how many ambiguous IUPAC reference bases a candidate guide/PAM window may
-contain. Supported range is 0 through 3. Query guides must be unambiguous.
+contain. Supported range is 0 through 3. Query guides may contain IUPAC
+symbols, up to 64 concrete prefix expansions per guide.
 
 `distance` - Defines maximum levenshtein distance (insertions, deletions,
 mismatches) for which off-targets are considered. Supported range is 0

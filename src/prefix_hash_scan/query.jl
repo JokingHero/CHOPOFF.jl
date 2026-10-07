@@ -155,6 +155,16 @@ function oriented_prefix_hash_scan_guides(guides::Vector{LongDNA{4}}, motif::Mot
     return guides_
 end
 
+# Concrete guides whose prefix hashes cover an oriented IUPAC guide. Paths read
+# only oriented positions `1:reach` (`hash_len + distance`), so ambiguity after
+# `reach` is left to Myers verification and is not expanded.
+function prefix_hash_scan_guide_variants(guide::LongDNA{4}, reach::Int)
+    isambig(guide) || return [guide]
+    reach = min(reach, length(guide))
+    prefixes, _ = expand_ambiguous(guide[1:reach])
+    return [prefix * guide[(reach + 1):end] for prefix in prefixes]
+end
+
 function unique_sorted_prefix_hashes!(hashes::Vector{T}) where {T <: Unsigned}
     isempty(hashes) && return hashes
     write_idx = 1
@@ -187,7 +197,8 @@ function build_prefix_hash_scan_map_from_paths(
     paths,
     guides_::Vector{LongDNA{4}},
     hash_type::Type{<:Unsigned},
-    stats::Union{Nothing, PrefixHashScanStats} = nothing)
+    stats::Union{Nothing, PrefixHashScanStats} = nothing;
+    reach::Int = typemax(Int))
 
     length(guides_) <= 64 || error("A bitmask query supports at most 64 guides.")
     if stats !== nothing
@@ -196,9 +207,10 @@ function build_prefix_hash_scan_map_from_paths(
 
     query = PrefixHashScanBitmaskQuery(Dict{hash_type, UInt64}())
     hash_start = prefix_hash_scan_timer(stats)
-    for (guide_idx, guide) in enumerate(guides_)
+    for (guide_idx, guide) in enumerate(guides_),
+            variant in prefix_hash_scan_guide_variants(guide, reach)
         format_start = prefix_hash_scan_timer(stats)
-        guide_formatted = guide_to_template_format(guide; alphabet = ALPHABET_TWOBIT)
+        guide_formatted = guide_to_template_format(variant; alphabet = ALPHABET_TWOBIT)
         if stats !== nothing
             stats.query_format_ns += time_ns() - format_start
         end
@@ -252,7 +264,8 @@ function build_prefix_hash_scan_map(
         stats.path_source = :prepared
     end
     guides_ = oriented_prefix_hash_scan_guides(guides, motif)
-    query = build_prefix_hash_scan_map_from_paths(paths, guides_, hash_type, stats)
+    query = build_prefix_hash_scan_map_from_paths(
+        paths, guides_, hash_type, stats; reach = hash_len + distance)
     return query, guides_
 end
 
@@ -405,12 +418,34 @@ function build_prefix_hash_scan_compact_guide_hashes(
     return hashes, (format_ns, fold_ns, dedup_ns)
 end
 
+# Union of the per-variant hash lists. Each variant is deduplicated before
+# appending, which bounds the transient peak to one raw path-sized buffer.
+function build_prefix_hash_scan_compact_guide_hashes(
+    paths, variants::Vector{LongDNA{4}}, timed::Val)
+
+    length(variants) == 1 &&
+        return build_prefix_hash_scan_compact_guide_hashes(
+            paths, only(variants), timed)
+    hashes = UInt32[]
+    timings = (UInt64(0), UInt64(0), UInt64(0))
+    for variant in variants
+        variant_hashes, variant_timings =
+            build_prefix_hash_scan_compact_guide_hashes(paths, variant, timed)
+        append!(hashes, variant_hashes)
+        timings = timings .+ variant_timings
+    end
+    sort!(hashes)
+    unique_sorted_prefix_hashes!(hashes)
+    return hashes, timings
+end
+
 function build_prefix_hash_scan_compact_lists!(
-    lists, timings, paths, guides_, worker_count::Int, timed::Val)
+    lists, timings, paths, guides_, worker_count::Int, timed::Val, reach::Int)
 
     function build_guide!(guide_idx)
+        variants = prefix_hash_scan_guide_variants(guides_[guide_idx], reach)
         hashes, guide_timings = build_prefix_hash_scan_compact_guide_hashes(
-            paths, guides_[guide_idx], timed)
+            paths, variants, timed)
         lists[guide_idx] = hashes
         timings === nothing || (timings[guide_idx] = guide_timings)
         return nothing
@@ -460,7 +495,8 @@ function build_prefix_hash_scan_compact_query(
         Vector{NTuple{3, UInt64}}(undef, length(guides_))
     worker_count = min(query_threads, Threads.nthreads(), length(guides_))
     build_prefix_hash_scan_compact_lists!(
-        lists, timings, paths, guides_, worker_count, Val(stats !== nothing))
+        lists, timings, paths, guides_, worker_count, Val(stats !== nothing),
+        hash_len + distance)
     if stats !== nothing
         stats.query_format_ns += sum(first, timings)
         stats.query_fold_ns += sum(x -> x[2], timings)

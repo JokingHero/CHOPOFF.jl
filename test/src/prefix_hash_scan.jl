@@ -948,7 +948,7 @@ end
         @test_throws ErrorException search_prefixHashScan(
             [LongDNA{4}("ACGTACGTACGTACGTACG")], genome, public_out)
         @test_throws ErrorException search_prefixHashScan(
-            [LongDNA{4}("ACGTACGTACGTACGTACGN")], genome, public_out)
+            [LongDNA{4}("ACGTACGTACGTACGNNNNT")], genome, public_out)
         @test_throws ErrorException search_prefixHashScan(
             [guide], genome, public_out; early_stopping = fill(100, 3))
         @test_throws SystemError search_prefixHashScan(
@@ -1624,6 +1624,160 @@ end
         @test CHOPOFF.prefix_hash_scan_raw_myers_distance(
             PHS_CAS9_D3, profile, minus_raw, minus_start, true, 3) ==
             CHOPOFF.levenshtein(guide_oriented, minus_ot, 3, iscompatible)
+    end
+
+    @testset "ambiguous query guides" begin
+        rng = MersenneTwister(20261006)
+        bases = collect("ACGT")
+        expansions(guide) = first(expand_ambiguous(guide))
+
+        # Raw Myers with an IUPAC guide equals the minimum over its expansions.
+        motif3 = Motif("Cas9"; distance = 3)
+        fixture_genome = joinpath(tdir, "prefix_hash_scan_simd_blocks.fa")
+        dbi = DBInfo(fixture_genome, "ambiguous_guide_myers", motif3)
+        for _ in 1:100
+            chars = rand(rng, bases, 20)
+            for pos in rand(rng, 1:20, rand(rng, 1:3))
+                chars[pos] = rand(rng, collect("RYSWKMBDHVN"))
+            end
+            guide = LongDNA{4}(String(chars))
+            site = collect(string(rand(rng, expansions(guide))))
+            for _ in 1:rand(rng, 0:3)
+                pos = rand(rng, 1:length(site))
+                edit = rand(rng, 1:3)
+                edit == 1 && (site[pos] = rand(rng, bases))
+                edit == 2 && insert!(site, pos, rand(rng, bases))
+                edit == 3 && deleteat!(site, pos)
+            end
+            rand(rng) < 0.3 && (site[rand(rng, 1:length(site))] = rand(rng, collect("NRS")))
+            site = String(rand(rng, bases, 3)) * String(site)
+            site = site[(end - 19):end]
+            raw = collect(codeunits(site * "AGG" * "ACG"))
+            ot, _ = CHOPOFF.materialize_normalized_candidate_specialized(
+                PHS_CAS9_D3, raw, 1, dbi, false)
+            guide_oriented = reverse(guide)
+            profile = CHOPOFF.build_prefix_hash_scan_myers_profile(guide_oriented)
+            raw_distance = CHOPOFF.prefix_hash_scan_raw_myers_distance(
+                PHS_CAS9_D3, profile, raw, 1, false, 3)
+            @test raw_distance ==
+                CHOPOFF.levenshtein(guide_oriented, ot, 3, iscompatible)
+            @test raw_distance == minimum(
+                CHOPOFF.levenshtein(variant, ot, 3, iscompatible)
+                for variant in expansions(guide_oriented))
+        end
+        # Guide N matches reference N; R matches S because both allow G.
+        n_raw = collect(codeunits("ACGTACGTANGTACGTACGT" * "AGG" * "ACG"))
+        n_profile = CHOPOFF.build_prefix_hash_scan_myers_profile(
+            reverse(LongDNA{4}("ACGTACGTANGTACGTACGT")))
+        @test CHOPOFF.prefix_hash_scan_raw_myers_distance(
+            PHS_CAS9_D3, n_profile, n_raw, 1, false, 3) == 0
+        rs_raw = collect(codeunits("ACGTACGTASGTACGTACGT" * "AGG" * "ACG"))
+        rs_profile = CHOPOFF.build_prefix_hash_scan_myers_profile(
+            reverse(LongDNA{4}("ACGTACGTARGTACGTACGT")))
+        @test CHOPOFF.prefix_hash_scan_raw_myers_distance(
+            PHS_CAS9_D3, rs_profile, rs_raw, 1, false, 3) == 0
+
+        # Query hashes are the union of the expansions' hashes; ambiguity past
+        # `reach` is not expanded.
+        motif2 = Motif("Cas9"; distance = 2)
+        paths, _ = CHOPOFF.load_prefix_hash_scan_paths(motif2, 2, 16)
+        oriented = LongDNA{4}("ACRTACGTACGTANGTACGN")
+        variants = CHOPOFF.prefix_hash_scan_guide_variants(oriented, 18)
+        @test length(variants) == 8
+        @test all(variant -> variant[20] == DNA_N, variants)
+        @test only(CHOPOFF.prefix_hash_scan_guide_variants(
+            LongDNA{4}("ACGTACGTACGTACGTACGN"), 18)) ==
+            LongDNA{4}("ACGTACGTACGTACGTACGN")
+        hash_type = phs_hash_type(16)
+        ambiguous_map = CHOPOFF.build_prefix_hash_scan_map_from_paths(
+            paths, [oriented], hash_type; reach = 18)
+        expected_keys = union((keys(CHOPOFF.build_prefix_hash_scan_map_from_paths(
+            paths, [variant], hash_type).masks) for variant in variants)...)
+        @test Set(keys(ambiguous_map.masks)) == expected_keys
+        compact, _ = CHOPOFF.build_prefix_hash_scan_compact_guide_hashes(
+            paths, variants, Val(false))
+        @test compact == sort!(collect(UInt32.(expected_keys)))
+
+        # Search equals the per-locus minimum over searches of the expansions.
+        base = String(rand(rng, bases, 20))
+        guides = LongDNA{4}.([
+            base[1:18] * "N" * base[20],
+            base[1:3] * "R" * base[5:20],
+            base[1:9] * "Y" * base[11:14] * "N" * base[16:20],
+        ])
+        spacer = repeat("A", 30)
+        sites = String[]
+        for guide in guides, _ in 1:3
+            site = collect(string(rand(rng, expansions(guide))))
+            for pos in rand(rng, 1:20, rand(rng, 0:2))
+                site[pos] = rand(rng, bases)
+            end
+            rand(rng) < 0.3 && (site[rand(rng, 1:20)] = 'N')
+            site = String(site) * "AGG"
+            push!(sites, rand(rng, Bool) ? site :
+                string(reverse_complement(LongDNA{4}(site))))
+        end
+        sequence = spacer * join(sites, spacer) * spacer
+        genome = joinpath(tdir, "ambiguous_guides.fa")
+        twobit = joinpath(tdir, "ambiguous_guides.2bit")
+        write_phs_fasta(genome, "chr1", sequence)
+        write_phs_twobit(twobit, "chr1", sequence)
+
+        function min_by_locus(core)
+            out = Dict{Tuple{String, Int, String}, Int}()
+            for row in eachrow(core)
+                key = (row.chromosome, row.start, row.strand)
+                out[key] = min(get(out, key, typemax(Int)), row.distance)
+            end
+            return out
+        end
+
+        for distance in 0:2
+            limits = fill(1_000, distance + 1)
+            label = "ambiguous_guides_d$(distance)"
+            output = joinpath(tdir, label * ".csv")
+            search_prefixHashScan(guides, genome, output;
+                distance = distance, ambig_max = 1, early_stopping = limits)
+            core = phs_core(output)
+            @test nrow(core) > 0
+            for (idx, guide) in enumerate(guides)
+                oracle = joinpath(tdir, label * "_oracle_$(idx).csv")
+                search_prefixHashScan(expansions(guide), genome, oracle;
+                    distance = distance, ambig_max = 1, early_stopping = limits)
+                @test min_by_locus(core[core.guide .== string(guide), :]) ==
+                    min_by_locus(phs_core(oracle))
+            end
+
+            motif = setambig(Motif("Cas9"; distance = distance), 1)
+            for (reference, backend, variant) in (
+                    (twobit, :auto, :auto), (genome, :legacy, :auto),
+                    (genome, :legacy, :bruteforce))
+                other = joinpath(tdir, label * "_$(backend)_$(variant).csv")
+                CHOPOFF.search_prefixHashScan(guides, reference, motif, other;
+                    distance = distance, early_stopping = limits,
+                    scan_backend = backend, query_variant = variant)
+                @test phs_core(other) == core
+            end
+
+            counts = joinpath(tdir, label * "_counts.csv")
+            search_prefixHashScan(guides, genome, counts;
+                distance = distance, ambig_max = 1, early_stopping = limits,
+                output = :counts)
+            @test phs_counts(counts) == phs_expected_counts(output, guides, distance)
+        end
+
+        # The cap counts only ambiguity the prefix paths can read.
+        too_ambiguous = LongDNA{4}(base[1:12] * "NNNN" * base[17:20])
+        @test_throws ErrorException search_prefixHashScan(
+            [too_ambiguous], genome, joinpath(tdir, "ambiguous_cap.csv");
+            distance = 0)
+        distal = LongDNA{4}("NNNN" * base[5:20])
+        distal_output = joinpath(tdir, "ambiguous_distal.csv")
+        search_prefixHashScan([distal], genome, distal_output; distance = 0)
+        @test nrow(phs_core(distal_output)) ==
+            count(site -> !occursin('N', site) && (occursin(base[5:20] * "AGG", site) ||
+                occursin(string(reverse_complement(LongDNA{4}(base[5:20] * "AGG"))), site)),
+                sites)
     end
 
     @testset "FAI search metadata and streamed validation" begin

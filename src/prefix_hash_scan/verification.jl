@@ -32,10 +32,11 @@ function build_prefix_hash_scan_myers_profile(guide::LongDNA{4})
     peq = zeros(UInt64, 4)
     @inbounds for idx in eachindex(guide)
         bit = UInt64(1) << (idx - 1)
-        guide[idx] == DNA_A && (peq[1] |= bit)
-        guide[idx] == DNA_C && (peq[2] |= bit)
-        guide[idx] == DNA_G && (peq[3] |= bit)
-        guide[idx] == DNA_T && (peq[4] |= bit)
+        # IUPAC guide bases match every base they allow.
+        iscompatible(guide[idx], DNA_A) && (peq[1] |= bit)
+        iscompatible(guide[idx], DNA_C) && (peq[2] |= bit)
+        iscompatible(guide[idx], DNA_G) && (peq[3] |= bit)
+        iscompatible(guide[idx], DNA_T) && (peq[4] |= bit)
     end
     eq_by_iupac = ntuple(16) do idx
         mask = UInt8(idx - 1)

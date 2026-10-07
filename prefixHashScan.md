@@ -24,7 +24,9 @@ The optimized envelope is:
 - 64 guides per query batch; larger lists are batched automatically;
 - FASTA with a standard `.fai`, or a `.2bit` reference;
 - reference windows with zero through three IUPAC-ambiguous positions
-  (`motif.ambig_max`); query guides must be unambiguous;
+  (`motif.ambig_max`);
+- IUPAC query guides, at most 64 concrete prefix expansions per guide
+  ([Ambiguous guides](#ambiguous-guides));
 - any CPU: x86 CPUs with AVX2 and BMI2 use `:avx2`, qualified CPUs use
   AVX-512F/BW, and every other CPU uses the `:portable` backend.
 
@@ -202,6 +204,34 @@ Hashes are sorted and deduplicated per guide. Formatting, folding, sorting, and
 deduplication run as bounded tasks, at most `scan_threads` workers, each writing
 a distinct guide-list slot. `:auto` uses serial construction for one guide or
 one worker.
+
+### Ambiguous guides
+
+A guide base matches a reference base when their IUPAC sets intersect, so guide
+`N` matches reference `N`. For such a guide `g`, the edit distance equals the
+minimum distance over its concrete expansions. Two changes follow from this:
+
+- `prefix_hash_scan_guide_variants` expands IUPAC bases at oriented positions
+  `1:hash_len + distance`, the only positions the paths read. The union of the
+  variants' hashes is stored under the guide's bit. Ambiguity after that range
+  is not expanded.
+- The Myers equality profile sets each position's bit for every base the guide
+  symbol allows. `align` already uses `iscompatible`.
+
+Validation rejects a guide whose prefix range expands to more than
+`PREFIX_HASH_SCAN_MAX_GUIDE_EXPANSIONS` (64) variants. Each `N` multiplies
+that guide's query hashes by up to 4, `R`/`Y` by 2. The extra hashes are
+shared by the batch as more prefilter survivors and directory lookups, but not
+as Myers work for other guides. Unambiguous guides take a one-variant path
+that builds the same hashes as before.
+
+Measured on GRCh38, Cas9 d3: after deduplication one `N` adds 3.2x query
+hashes, `R` plus `Y` 3.4x, and two `N`s 10.8x. A single 2N guide searched in
+1.09 s against 0.69 s for its plain form. Adding one or two ambiguous guides to
+the 61-guide batch did not change end-to-end time beyond host noise. Each guide
+expands on one query task, so an ambiguous guide is the slowest task in a mixed
+batch: one `N` guide raised Cas9 d4 query construction from 7.0 s to 11.2 s
+([Appendix A](#ambiguous-query-guides-october-6-2026)).
 
 ### 3. Merge hashes into the compact query directory
 
@@ -570,7 +600,9 @@ with 7.61 s query construction.
    reference once per batch.
 2. The prefix length is fixed at 16. Other prefix lengths and motifs outside
    the envelope use the slower `:legacy` engine.
-3. Query guides must be unambiguous. `ambig_max` above 3 is unsupported.
+3. An ambiguous guide may expand to at most
+   `PREFIX_HASH_SCAN_MAX_GUIDE_EXPANSIONS` (64) concrete prefixes.
+   `ambig_max` above 3 is unsupported.
 4. ARM performance of `:portable` is unmeasured; it is verified only by its
    target-independent IR.
 5. Early stopping cannot cancel chunks already claimed by workers. Chunk-local
@@ -620,6 +652,9 @@ and one bounded reference scan per 64-guide batch.
 - Computational early stopping that masks retired guides and cancels future
   chunk claims.
 - 2bit streaming and bounded IUPAC reference ambiguity (`ambig_max=0:3`).
+- IUPAC query guides through prefix expansion, capped at 64 variants per guide,
+  with byte-identical output and no measured regression for unambiguous guides
+  (October 6, 2026).
 - AVX-512F/BW and `:portable` backends with parity tests and codegen
   verification.
 - Progress and path, guide-hash, query, and peak-RSS memory reporting through
@@ -695,6 +730,8 @@ Open directions:
   candidates; avoiding string conversion and generic dedup keys during commit.
 - **I/O:** fewer FASTA newline-compaction copies or a direct mmap-backed scan,
   only after I/O measurements.
+- **Ambiguous guides:** split one guide's variants across query tasks, only if
+  ambiguous guides at d4 become a common workload.
 
 Open questions:
 
@@ -718,6 +755,56 @@ Open questions:
 Entries are newest first. Unless stated otherwise: GRCh38, 61 guides per motif,
 warm cache, exact output parity in every comparison. The host was shared, and
 identical runs varied by up to 40%.
+
+### Ambiguous query guides (October 6, 2026)
+
+24 threads, load average 22-45 on 48 cores. Baseline is the commit before
+ambiguous-guide support, extracted from `HEAD` into a separate project and run
+in alternating processes.
+
+Unambiguous guides, 6 alternating rounds, early stopping off. Output was
+byte-identical in all 18 run pairs (25,826, 364,581, and 61 rows):
+
+| Case | Baseline median | New median | New/baseline |
+|---|---:|---:|---:|
+| Cas9 d3 detail | 1.669 s | 1.505 s | 0.90 |
+| Cas12a d3 detail | 5.621 s | 5.529 s | 0.98 |
+| Cas9 d4 counts | 11.846 s | 10.990 s | 0.93 |
+
+Single runs of one case varied from 1.4 s to 8.4 s, so query construction, the
+only changed stage for unambiguous guides, was also timed in isolation (54
+builds per case at d3, 18 at d4):
+
+| Query build, 61 guides | Baseline median | New median | New/baseline |
+|---|---:|---:|---:|
+| Cas9 d3 | 0.494 s | 0.458 s | 0.93 |
+| Cas12a d3 | 0.395 s | 0.397 s | 1.00 |
+| Cas9 d4 | 8.30 s | 8.53 s | 1.03 |
+
+The d4 builds of one configuration ranged from 6.8 s to 12.9 s, so the 3%
+difference is inside noise. The new code adds one `isambig` check and a
+one-element variant vector per guide per batch.
+
+Ambiguous guides, new code, Cas9, median of 3 runs. Variants of guide
+`TGGTACCAGAAGCAGGGGCC` (positions 5' to 3', PAM after base 20):
+
+| Case | Time | Query hashes | Query build | Guide pairs | Rows |
+|---|---:|---:|---:|---:|---:|
+| plain, d3 | 0.69 s | 109,073 | 0.15 s | 24,641 | 177 |
+| `N` at 18 | 0.79 s | 352,190 | 0.07 s | 62,260 | 488 |
+| `R` at 12, `Y` at 16 | 0.83 s | 369,574 | 0.07 s | 42,134 | 348 |
+| `N` at 10 and 17 | 1.09 s | 1,179,716 | 0.24 s | 194,635 | 2,051 |
+| `N` at 1 (not expanded at d3) | 0.64 s | 109,073 | 0.04 s | 24,641 | 529 |
+| 61 plain, d3 | 1.86 s | 7,044,938 | 0.58 s | 1,583,279 | 25,826 |
+| 61 plain + `N` at 18, d3 | 1.60 s | 7,397,128 | 0.93 s | 1,645,539 | 26,314 |
+| 61 plain + both `N` guides, d3 | 1.91 s | 8,576,844 | 0.84 s | 1,840,174 | 28,365 |
+| 61 plain, d4 counts | 12.19 s | 111,720,240 | 7.04 s | 14,825,845 | 61 |
+| 61 plain + `N` at 18, d4 counts | 11.84 s | 116,681,502 | 11.19 s | 15,502,019 | 62 |
+
+Query build values come from a separate statistics pass. A distal `N` adds no
+query hashes but more rows, because it matches every base. In mixed batches the
+ambiguous guide's variants run serially on one task, which explains the longer
+query build despite 4.4% more hashes; end-to-end time stayed within noise.
 
 ### PAMless and Sassy (October 6, 2026)
 
