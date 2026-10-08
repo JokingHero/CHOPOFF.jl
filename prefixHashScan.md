@@ -686,6 +686,48 @@ and one bounded reference scan per 64-guide batch.
    Apple Silicon) and on AMD Zen1/Zen2, where microcoded `PDEP` may make
    portable packing faster than `:avx2`. Add an ARM SIMD path only if profiling
    justifies it.
+3. **Region restriction** (`--region`), specified below. Also used by the VCF
+   search (`vcf.md`).
+
+### Planned: region restriction
+
+`search_prefixHashScan(...; region=nothing)` and `--region` limit the search to
+parts of the reference. Status: design, no code.
+
+Syntax:
+
+- a comma-separated list of `chrom` or `chrom:start-end`, 1-based inclusive
+  (samtools style), for example `chr22,chr1:1000-2000`;
+- or a path to a `.bed` file, 0-based half-open; columns after the third are
+  ignored.
+
+Overlapping and adjacent intervals are merged per chromosome. An unknown
+chromosome is a startup error, as with an empty result the run would look
+successful. An `end` past the chromosome is clamped and counted.
+
+Rule: a site is reported when its candidate window (motif window plus the
+`distance` extension that Myers reads) overlaps a region by at least one base.
+This is a superset of "the aligned site overlaps": a row may lie up to
+`distance` bases outside, never missing an overlapping site.
+
+Implementation: the streaming emission is already restricted to each work
+item's core range of candidate starts (section 4). Each region is widened to the
+candidate starts whose window can overlap it, using the geometry's window
+offsets per strand. Widened intervals are merged and cut into 2 MiB core ranges
+as today. The existing left and right read overlaps supply the bases. No
+per-hit test and no kernel change are needed. Other parts:
+
+- `:legacy` skips chromosomes without a region and drops candidates whose
+  window misses every region, so the fallback supports `region` too.
+- Progress `total_bases` counts the widened core ranges.
+- Output schema, early stopping, and count mode are unchanged.
+- The `prefixHashScan execution` record lists the region count and the bases
+  scanned.
+
+Tests: a region run must equal the full run filtered to rows whose candidate
+window overlaps the region. Cover both strands, Cas9 and Cas12a, a site
+straddling each region edge, adjacent and overlapping regions, BED and string
+input, and `:legacy`.
 
 ### Replacement gates
 
