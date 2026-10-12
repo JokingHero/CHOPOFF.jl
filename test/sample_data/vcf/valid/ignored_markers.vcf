@@ -1,0 +1,6 @@
+##fileformat=VCFv4.2
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+chr1	45	no_alt	G	.	.	PASS	.
+chr1	46	spanning	T	*	.	PASS	.
+chr1	47	mixed	C	<NON_REF>,A	.	PASS	.
+chr1	48	nonref	A	<*>	.	PASS	.

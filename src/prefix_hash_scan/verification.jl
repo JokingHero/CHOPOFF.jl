@@ -369,7 +369,8 @@ function commit_prefix_hash_scan_verified!(
     is_es,
     seen,
     stats::Union{Nothing, PrefixHashScanStats};
-    prelimited::Bool = false)
+    prelimited::Bool = false,
+    variant_output = nothing)
 
     guide_idx = hit.guide_idx
     !prelimited && is_es[guide_idx] && return nothing
@@ -395,8 +396,13 @@ function commit_prefix_hash_scan_verified!(
     end
 
     emit_start = prefix_hash_scan_timer(stats)
-    print(out, guide, ",", hit.aln_guide, ",", hit.aln_ref, ",",
-        hit.dist, ",", chrom_name, ",", hit.pos, ",", strand, "\n")
+    if variant_output === nothing
+        print(out, guide, ",", hit.aln_guide, ",", hit.aln_ref, ",",
+            hit.dist, ",", chrom_name, ",", hit.pos, ",", strand, "\n")
+    else
+        data, names, geometry, motif = variant_output
+        write_variant_reference_hit(out, hit, guide, chrom_name, (data, names), geometry, motif)
+    end
     if stats !== nothing
         stats.emit_ns += time_ns() - emit_start
         stats.emitted_rows += 1
@@ -417,7 +423,8 @@ function commit_prefix_hash_scan_chunks!(
     is_es,
     seen,
     stats::Union{Nothing, PrefixHashScanStats};
-    prelimited::Bool)
+    prelimited::Bool,
+    variant_output = nothing)
 
     for chrom_idx in eachindex(chrom_chunk_ranges)
         chrom_name = chrom_names[chrom_idx]
@@ -446,6 +453,7 @@ function commit_prefix_hash_scan_chunks!(
                         seen,
                         stats,
                         prelimited = prelimited,
+                        variant_output = variant_output,
                     )
                 end
             end

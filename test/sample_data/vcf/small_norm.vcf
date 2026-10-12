@@ -1,0 +1,6 @@
+##fileformat=VCFv4.2
+##reference=semirandom.fa
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+semirandom1	985	snp	A	C	.	PASS	.
+semirandom1	990	ins	T	TC	.	PASS	.
+semirandom1	995	del	GT	G	.	PASS	.

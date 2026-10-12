@@ -423,6 +423,19 @@ $(make_example_doc())
 ```
 """
 function filter_overlapping(res::DataFrame, distance::Int)
+    if :start_origin in propertynames(res) && :variants in propertynames(res)
+        order, groups, _ = variant_locus_groups(res, distance)
+        seen = Set{Tuple{Int, String}}()
+        keep = Int[]
+        for i in order
+            key = (groups[i], variant_output_text(res.variants[i]))
+            key in seen && continue
+            push!(seen, key)
+            push!(keep, i)
+        end
+        return res[keep, :]
+    end
+    isempty(res.start) && return res
     sort!(res, [:guide,  :chromosome, :strand, :distance, :start])
 
     to_remove = falses(size(res)[1])
@@ -446,6 +459,64 @@ function filter_overlapping(res::DataFrame, distance::Int)
     res = res[.!to_remove, :]
 end
 
+variant_output_text(value) = ismissing(value) ? "" : string(value)
+
+# POS and trimmed ALT length of an origin key `chrom:POS:REF>ALT` (escaped).
+function variant_origin_extent(key)
+    m = match(r":(\d+):([^:>]+)>([^:]+)$", key)
+    unescape(x) = replace(x, "%3B" => ";", "%7C" => "|", "%25" => "%")
+    ref, alt = unescape(m.captures[2]), unescape(m.captures[3])
+    prefix = 0
+    while prefix < min(length(ref), length(alt)) && ref[prefix + 1] == alt[prefix + 1]
+        prefix += 1
+    end
+    suffix = 0
+    while suffix < min(length(ref), length(alt)) - prefix && ref[end - suffix] == alt[end - suffix]
+        suffix += 1
+    end
+    return parse(Int, m.captures[1]), length(alt) - prefix - suffix
+end
+
+function variant_locus_groups(res::DataFrame, distance::Int)
+    distance >= 0 || error("Locus distance must not be negative")
+    coordinates = Int[]
+    axes = Tuple{String, String, String, String}[]
+    for row in eachrow(res)
+        origin = :start_origin in propertynames(res) ? variant_output_text(row.start_origin) : ""
+        axis, coordinate = if isempty(origin)
+            "", Int(row.start)
+        else
+            parts = rsplit(origin, ':'; limit = 2)
+            offset = parse(Int, parts[2])
+            pos, inserted = variant_origin_extent(parts[1])
+            # Starts within `distance` of an insertion end are the reference
+            # locus at POS; deeper offsets are distinct sites inside the insertion.
+            min(offset, inserted - offset + 1) <= distance ? ("", pos) : (String(parts[1]), offset)
+        end
+        push!(axes, (string(row.guide), string(row.chromosome), string(row.strand), axis))
+        push!(coordinates, coordinate)
+    end
+    variants = variant_output_text.(res.variants)
+    order = sortperm(1:nrow(res); by = i -> (axes[i], res.distance[i],
+        !isempty(variants[i]), coordinates[i], variants[i],
+        string(res.alignment_guide[i]), string(res.alignment_reference[i])))
+    occupied = Dict{Tuple{String, String, String, String}, Dict{Int, Int}}()
+    groups = zeros(Int, nrow(res))
+    representatives = Int[]
+    for i in order
+        positions = get!(Dict{Int, Int}, occupied, axes[i])
+        group = get(positions, coordinates[i], 0)
+        if group == 0
+            push!(representatives, i)
+            group = length(representatives)
+            for pos in (coordinates[i] - distance):(coordinates[i] + distance)
+                get!(positions, pos, group)
+            end
+        end
+        groups[i] = group
+    end
+    return order, groups, representatives
+end
 
 # small helper that is similar to R table function
 function counts_by_dist(distances, max_dist)
@@ -478,7 +549,19 @@ You can specify distance to filter out some of the higher distances.
 $(make_example_doc())
 ```
 """
-function summarize_offtargets(res::DataFrame; distance::Int = maximum(res.distance))
+function summarize_offtargets(res::DataFrame;
+    distance::Int = isempty(res.distance) ? 0 : maximum(res.distance),
+    variant_aware::Bool = false)
+
+    if variant_aware
+        :variants in propertynames(res) || error("variant_aware requires VCF detail output")
+        _, _, representatives = variant_locus_groups(res, distance)
+        res = res[representatives, :]
+    end
+    res = res[res.distance .<= distance, :]
+    if nrow(res) == 0
+        return DataFrame(:guide => String[], (Symbol("D$i") => Int[] for i in 0:distance)...)
+    end
     df = groupby(res, :guide)
     df = combine(df,  :distance => (x -> counts_by_dist(x, distance)) => AsTable)
     sort!(df, vcat([Symbol("D$i") for i in 0:distance], :guide))

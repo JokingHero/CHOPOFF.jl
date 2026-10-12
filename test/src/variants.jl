@@ -1,0 +1,7 @@
+include(joinpath(@__DIR__, "..", "helpers", "vcf.jl"))
+include(joinpath(@__DIR__, "..", "variants", "regressions.jl"))
+include(joinpath(@__DIR__, "..", "variants", "corpus.jl"))
+include(joinpath(@__DIR__, "..", "variants", "input.jl"))
+include(joinpath(@__DIR__, "..", "variants", "boundaries.jl"))
+include(joinpath(@__DIR__, "..", "variants", "execution.jl"))
+include(joinpath(@__DIR__, "..", "variants", "coverage.jl"))

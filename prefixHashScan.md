@@ -61,6 +61,8 @@ guide after applying deterministic per-distance caps.
 - `src/prefix_hash_scan/verification.jl`: Myers, traceback, and result commit;
 - `src/prefix_hash_scan/streaming.jl`: chunk streaming and global scheduler;
 - `src/prefix_hash_scan/twobit.jl`: 2bit metadata and range decoding.
+- `src/variants.jl`, `src/variants/`: VCF reader, allele-combination walks,
+  fragments and variant scan ([vcf.md](vcf.md)).
 
 ## Core idea
 
@@ -84,6 +86,22 @@ not only Hamming-distance candidates.
 
 The prefix test is necessary but not sufficient. A hash hit is a candidate;
 Myers and the final traceback establish the full edit distance.
+
+### VCF searches
+
+`vcf="variants.vcf.gz"` adds sequence-resolved variant searches in detail mode.
+The reader expands IUPAC ALT alleles, enumerates compatible local walks, and
+prepares flat fragment descriptors once for all guide batches. Variant scans
+reuse the query directory and streaming kernel. Reference and variant hits
+have independent early-stopping budgets.
+
+`region="chr1,chr22"` selects whole chromosomes, with or without VCF input.
+Interval and BED selection remain planned. VCF output includes allele
+annotations and insertion-relative endpoints. Filtering retains distinct
+allele combinations, and `summarize --variant_aware --distance k` counts each
+locus once. `vcf_max_alleles` (default 3) caps ALT alleles per local haplotype,
+because exhaustive combination is infeasible for cohort VCFs. See
+[VCF input, output, and validation](vcf.md).
 
 ## Geometry and kernel
 
@@ -686,13 +704,15 @@ and one bounded reference scan per 64-guide batch.
    Apple Silicon) and on AMD Zen1/Zen2, where microcoded `PDEP` may make
    portable packing faster than `:avx2`. Add an ARM SIMD path only if profiling
    justifies it.
-3. **Region restriction** (`--region`), specified below. Also used by the VCF
-   search (`vcf.md`).
+3. **Interval/BED restriction** (`--region`), specified below. Also used by the VCF
+   search ([vcf.md](vcf.md)).
 
-### Planned: region restriction
+### Planned: interval/BED restriction
 
-`search_prefixHashScan(...; region=nothing)` and `--region` limit the search to
-parts of the reference. Status: design, no code.
+`search_prefixHashScan(...; region=nothing)` and `--region` support whole
+chromosome names. The interval and BED extensions below remain design work.
+VCF interval selection also requires deletion-aware reachability, as described
+in [the VCF deferred design](vcf.md#deferred-design).
 
 Syntax:
 

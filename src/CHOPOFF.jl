@@ -50,6 +50,7 @@ include("db_tree.jl")
 
 include("db_prefix_hash.jl")
 include("db_prefix_hash_scan.jl")
+include("variants.jl")
 include("db_hash.jl")
 include("db_dict.jl")
 include("db_vcf.jl")
@@ -345,6 +346,20 @@ function parse_commandline(args::Array{String})
     end
 
     @add_arg_table! s["search"]["prefixHashScan"] begin
+        "--vcf"
+            help = "Normalized VCF of sequence-resolved alleles. Searches every compatible combination; requires detail output."
+            arg_type = String
+        "--vcf_annotate"
+            help = "Comma-separated INFO/key or FORMAT/key fields to copy into allele annotations."
+            arg_type = String
+            default = ""
+        "--vcf_max_alleles"
+            help = "Maximum ALT alleles in one searched local haplotype. Larger values grow memory quickly in dense loci; see vcf.md."
+            arg_type = Int
+            default = PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES
+        "--region"
+            help = "Comma-separated reference chromosome names. Interval and BED selection are not supported."
+            arg_type = String
         "--genome"
             help = "Path to an indexed FASTA or 2bit reference."
             arg_type = String
@@ -488,6 +503,12 @@ function parse_commandline(args::Array{String})
 
 
     @add_arg_table! s["summarize"] begin
+        "--variant_aware"
+            help = "Count VCF loci once, using the best distance across allele combinations."
+            action = :store_true
+        "--distance"
+            help = "Maximum edit distance and locus grouping radius; use the same value as filter."
+            arg_type = Int
         "--detail_file"
             help = "Path to the file where the database is stored."
             arg_type = String
@@ -687,6 +708,10 @@ function main(args::Array{String})
                 simd_backend = Symbol(scan_args["simd_backend"]),
                 verbose = true,
                 progress_interval = scan_args["progress_interval"],
+                vcf = scan_args["vcf"],
+                vcf_annotate = isempty(scan_args["vcf_annotate"]) ? String[] : String.(split(scan_args["vcf_annotate"], ',')),
+                vcf_max_alleles = scan_args["vcf_max_alleles"],
+                region = scan_args["region"],
             )
         elseif args["%COMMAND%"] == "sassy"
             sassy_args = args["sassy"]
@@ -750,7 +775,8 @@ function main(args::Array{String})
     elseif args["%COMMAND%"] == "summarize"
         args = args["summarize"]
         res = DataFrame(CSV.File(args["detail_file"]))
-        res = summarize_offtargets(res)
+        distance = something(args["distance"], isempty(res.distance) ? 0 : maximum(res.distance))
+        res = summarize_offtargets(res; distance = distance, variant_aware = args["variant_aware"])
         CSV.write(args["output"], res)
 
     elseif args["%COMMAND%"] == "list"

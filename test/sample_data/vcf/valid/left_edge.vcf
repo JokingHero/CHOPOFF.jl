@@ -1,0 +1,5 @@
+##fileformat=VCFv4.2
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+chr1	1	before	A	CA	.	PASS	.
+chr1	1	delete	AC	C	.	PASS	.
+chr1	3	near	G	A	.	PASS	.

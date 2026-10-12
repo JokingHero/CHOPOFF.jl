@@ -1,0 +1,13 @@
+##fileformat=VCFv4.2
+##INFO=<ID=AF,Number=A,Type=Float,Description="ALT frequency">
+##INFO=<ID=AD,Number=R,Type=Integer,Description="Allele depths">
+##INFO=<ID=PAIR,Number=2,Type=Integer,Description="Pair">
+##INFO=<ID=FLAG,Number=0,Type=Flag,Description="Flag">
+##INFO=<ID=NOTE,Number=.,Type=String,Description="Text">
+##INFO=<ID=MISSING,Number=1,Type=String,Description="Absent">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=AF,Number=A,Type=Float,Description="ALT fraction">
+##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allele depths">
+##FORMAT=<ID=PL,Number=G,Type=Integer,Description="Likelihoods">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	sample1	sample%2
+chr1	45	id%q;id2	G	A,C	.	PASS	AF=0.1,0.2;AD=100,10,20;PAIR=7,8;FLAG;NOTE=a,b"c%|	GT:AF:AD:PL	0|1:0.25,0.75:8,2,6:0,1,2,3,4,5	./.:.:.:.

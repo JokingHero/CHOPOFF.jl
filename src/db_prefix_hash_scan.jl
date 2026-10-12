@@ -131,6 +131,19 @@ mutable struct PrefixHashScanStats
     guide_hash_bytes::Int
     query_bytes::Int
     peak_rss_bytes::Int
+    variants_read::Int
+    variants_skipped::Int
+    fragments::Int
+    max_anchor_fragments::Int
+    vcf_truncated_anchors::Int
+    fragment_bases::Int
+    descriptor_bytes::Int
+    enumeration_ns::UInt64
+    variant_io_ns::UInt64
+    variant_candidates::Int
+    anchor_rejected::Int
+    variant_rows::Int
+    variant_retired_guides::Int
     path_source::Symbol
     query_variant::Symbol
     scan_backend::Symbol
@@ -612,6 +625,19 @@ least 64.
 `stats` - Optional `CHOPOFF.PrefixHashScanStats` to fill with counters and
 per-stage timings.
 
+`vcf` - Normalized, sorted VCF path, optionally gzip-compressed. Searches all
+compatible sequence-resolved allele combinations. Requires streaming detail
+output; adds endpoint, allele, and insertion-origin columns. Reference and
+variant scans have independent early-stopping limits.
+
+`vcf_annotate` - INFO/key or FORMAT/key fields to retain in allele annotations.
+
+`vcf_max_alleles` - Maximum ALT alleles in one searched local haplotype (default
+`CHOPOFF.PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES`). Combinations with more ALT alleles are
+omitted with a warning. Larger values grow memory like C(n, k) in dense loci.
+
+`region` - Comma-separated whole chromosome names, or `nothing` for all.
+
 # Examples
 ```julia
 $(make_prefix_hash_scan_example_doc())
@@ -637,7 +663,12 @@ function search_prefixHashScan(
     _append_output::Bool = false,
     _collect_counts::Bool = false,
     _paths = nothing,
-    _batch::Tuple{Int, Int} = (1, 1))
+    _batch::Tuple{Int, Int} = (1, 1),
+    vcf::Union{Nothing, String} = nothing,
+    vcf_annotate::Vector{String} = String[],
+    vcf_max_alleles::Int = PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES,
+    region::Union{Nothing, String} = nothing,
+    _variants = nothing)
 
     validate_prefix_hash_scan_query(
         guides, motif, distance, early_stopping, output)
@@ -666,6 +697,28 @@ function search_prefixHashScan(
         uses_raw_simd, early_stop_state) = resolve_prefix_hash_scan_plan(
         guides, motif, dbi, distance, hash_len, early_stopping,
         query_variant, scan_backend, simd_backend, stream_chunk_bases)
+    selected = prefix_hash_scan_chromosomes(region, dbi.gi.chrom)
+    vcf === nothing && !isempty(vcf_annotate) && error("vcf_annotate requires vcf")
+    vcf === nothing && vcf_max_alleles != PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES &&
+        error("vcf_max_alleles requires vcf")
+    variant_data = _variants
+    if vcf !== nothing
+        output == :detail || error("VCF searches require output=:detail")
+        uses_raw_simd || error("VCF searches require a streaming backend")
+        variant_data === nothing && (variant_data = prepare_prefix_hash_scan_variants(
+            vcf, dbi, reference_lengths, selected, vcf_annotate; verbose = verbose,
+            max_alleles = vcf_max_alleles))
+    end
+    if stats !== nothing && variant_data !== nothing
+        stats.variants_read = variant_data.counts[:records]
+        stats.variants_skipped = sum(variant_data.counts[k] for k in (:outside_region, :no_alt, :spanning_deletion, :non_ref, :iupac_skipped))
+        stats.fragments = length(variant_data.fragments)
+        stats.max_anchor_fragments = variant_data.max_anchor_fragments
+        stats.vcf_truncated_anchors = variant_data.truncated_anchors
+        stats.fragment_bases = sum(f -> f.bases, variant_data.fragments; init = 0)
+        stats.descriptor_bytes = Base.summarysize(variant_data)
+        stats.enumeration_ns = variant_data.enumeration_ns
+    end
     if verbose && _batch[1] == 1
         scheduler = uses_raw_simd ? :chunk : :record
         @info(
@@ -755,7 +808,7 @@ function search_prefixHashScan(
     myers_profiles = uses_raw_simd ?
         build_prefix_hash_scan_myers_profiles(guides_) : nothing
     run_stream(stream_fn) = stream_fn(
-        geometry::PrefixScanGeometry, dbi.gi.filepath, reference_lengths,
+        geometry::PrefixScanGeometry, dbi.gi.filepath, reference_lengths .* selected,
         query, dbi, guides_, myers_profiles::Vector{PrefixHashScanMyersProfile},
         distance, stream_chunk_bases, scan_threads,
         stats, early_stop_state; simd_backend = Val(effective_simd_backend),
@@ -778,7 +831,7 @@ function search_prefixHashScan(
         else
             search_prefix_hash_scan_legacy_counts(
                 dbi, reference_lengths, query, guides_, distance,
-                hash_len, hash_type, use_bruteforce_query, stats, progress)
+                hash_len, hash_type, use_bruteforce_query, stats, progress; selected = selected)
         end
         merge_prefix_hash_scan_early_stop_stats!(stats, early_stop_state)
         stats === nothing || (stats.scan_ns += time_ns() - scan_start)
@@ -792,7 +845,8 @@ function search_prefixHashScan(
     mkpath(dirname(output_file))
     open(output_file, _append_output ? "a" : "w") do out
         _append_output ||
-            write(out, "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n")
+            write(out, variant_data === nothing ?
+                "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n" : PREFIX_SCAN_VARIANT_HEADER)
 
         if uses_raw_simd
             scan_start = prefix_hash_scan_timer(stats)
@@ -800,7 +854,13 @@ function search_prefixHashScan(
             commit_prefix_hash_scan_chunks!(
                 out, chunk_results, chrom_chunk_ranges, dbi.gi.chrom, guides,
                 early_stopping, es_acc, is_es, seen, stats;
-                prelimited = early_stop_state !== nothing)
+                prelimited = early_stop_state !== nothing,
+                variant_output = variant_data === nothing ? nothing :
+                    (variant_data, dbi.gi.chrom, geometry, motif))
+            variant_data === nothing || stream_prefix_hash_scan_variants!(
+                out, variant_data, geometry, query, dbi, guides, guides_, myers_profiles,
+                distance, stream_chunk_bases, scan_threads, early_stopping, stats,
+                Val(effective_simd_backend))
             stats === nothing || (stats.scan_ns += time_ns() - scan_start)
             return nothing
         end
@@ -809,7 +869,7 @@ function search_prefixHashScan(
         search_prefix_hash_scan_legacy_detail!(
             out, dbi, reference_lengths, query, guides, guides_, motif,
             distance, hash_len, hash_type, early_stopping,
-            es_acc, is_es, seen, use_bruteforce_query, stats, progress)
+            es_acc, is_es, seen, use_bruteforce_query, stats, progress; selected = selected)
         stats === nothing || (stats.scan_ns += time_ns() - scan_start)
     end
     merge_prefix_hash_scan_early_stop_stats!(stats, early_stop_state)
@@ -819,7 +879,7 @@ end
 
 function foreach_prefix_hash_scan_record(
     f, dbi::DBInfo, reference_lengths, stats::Union{Nothing, PrefixHashScanStats},
-    progress::Union{Nothing, PrefixHashScanProgress})
+    progress::Union{Nothing, PrefixHashScanProgress}; selected = nothing)
 
     progress === nothing ||
         (progress.total_bases = sum(reference_lengths; init = 0))
@@ -831,7 +891,8 @@ function foreach_prefix_hash_scan_record(
             PrefixHashScanFASTARecords(
                 reader, dbi.gi.chrom, reference_lengths) :
             PrefixHashScanIndexedRecords(reader, dbi.gi.chrom)
-        for (chrom_name, record, record_io_ns) in records
+        for (ci, (chrom_name, record, record_io_ns)) in enumerate(records)
+            selected === nothing || selected[ci] || continue
             convert_start = prefix_hash_scan_timer(stats)
             chrom_seq = dbi.gi.is_fa ?
                 FASTA.sequence(LongDNA{4}, record) :
@@ -939,10 +1000,10 @@ function search_prefix_hash_scan_legacy_detail!(
     seen,
     use_bruteforce_query::Bool,
     stats::Union{Nothing, PrefixHashScanStats},
-    progress::Union{Nothing, PrefixHashScanProgress})
+    progress::Union{Nothing, PrefixHashScanProgress}; selected = nothing)
 
     foreach_prefix_hash_scan_record(
-            dbi, reference_lengths, stats, progress) do chrom_name, chrom_seq
+            dbi, reference_lengths, stats, progress; selected = selected) do chrom_name, chrom_seq
         foreach_prefix_hash_scan_legacy_candidate(
                 chrom_seq, dbi, query, hash_len, hash_type,
                 use_bruteforce_query, is_es,
@@ -978,12 +1039,12 @@ function search_prefix_hash_scan_legacy_counts(
     hash_type::Type{<:Unsigned},
     use_bruteforce_query::Bool,
     stats::Union{Nothing, PrefixHashScanStats},
-    progress::Union{Nothing, PrefixHashScanProgress})
+    progress::Union{Nothing, PrefixHashScanProgress}; selected = nothing)
 
     counts = zeros(Int, length(guides_), distance + 1)
     no_retired_guides = falses(length(guides_))
     foreach_prefix_hash_scan_record(
-            dbi, reference_lengths, stats, progress) do _, chrom_seq
+            dbi, reference_lengths, stats, progress; selected = selected) do _, chrom_seq
         foreach_prefix_hash_scan_legacy_candidate(
                 chrom_seq, dbi, query, hash_len, hash_type,
                 use_bruteforce_query, no_retired_guides,
@@ -1158,6 +1219,12 @@ per-batch summary.
 
 See the four-argument method for the scan tuning options.
 
+`vcf`, `vcf_annotate`, `vcf_max_alleles`, and `region` - Add normalized VCF alleles,
+copy selected INFO/key or FORMAT/key fields, cap ALT alleles per local haplotype,
+and select comma-separated whole chromosomes.
+VCF input requires streaming detail output. See the four-argument method and
+`vcf.md` for allele, coordinate, and early-stopping semantics.
+
 # Examples
 ```julia
 $(make_prefix_hash_scan_example_doc())
@@ -1176,7 +1243,11 @@ function search_prefixHashScan(
     simd_backend::Symbol = :auto,
     output::Symbol = :detail,
     verbose::Bool = false,
-    progress_interval::Real = PREFIX_HASH_SCAN_PROGRESS_INTERVAL_S)
+    progress_interval::Real = PREFIX_HASH_SCAN_PROGRESS_INTERVAL_S,
+    vcf::Union{Nothing, String} = nothing,
+    vcf_annotate::Vector{String} = String[],
+    vcf_max_alleles::Int = PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES,
+    region::Union{Nothing, String} = nothing)
 
     progress_interval >= 0 || error("progress_interval must not be negative.")
     distance in 0:4 ||
@@ -1205,6 +1276,22 @@ function search_prefixHashScan(
     hash_len = min(guide_bases - distance, 16)
     hash_len >= 1 ||
         error("search_prefixHashScan requires guide length greater than distance.")
+    vcf === nothing && !isempty(vcf_annotate) && error("vcf_annotate requires vcf")
+    vcf === nothing && vcf_max_alleles != PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES &&
+        error("vcf_max_alleles requires vcf")
+    variant_data = nothing
+    if vcf !== nothing || region !== nothing
+        dbi, lengths = prefix_hash_scan_dbinfo(genome_path, motif_)
+        selected = prefix_hash_scan_chromosomes(region, dbi.gi.chrom)
+        if vcf !== nothing
+            output == :detail || error("VCF searches require output=:detail")
+            resolve_prefix_scan_geometry(motif_, distance, hash_len) === nothing &&
+                error("VCF searches require a streaming backend")
+            variant_data = prepare_prefix_hash_scan_variants(
+                vcf, dbi, lengths, selected, vcf_annotate; verbose = verbose,
+                max_alleles = vcf_max_alleles)
+        end
+    end
     prepared_paths, _ = load_prefix_hash_scan_paths(
         motif_, distance, hash_len)
     batch_size = 64
@@ -1238,12 +1325,17 @@ function search_prefixHashScan(
                 _collect_counts = output == :counts,
                 _paths = prepared_paths,
                 _batch = (batch_idx, batch_count),
+                vcf = vcf,
+                vcf_annotate = vcf_annotate,
+                vcf_max_alleles = vcf_max_alleles,
+                region = region,
+                _variants = variant_data,
             )
             output == :counts && (counts[first_idx:last_idx, :] .= result)
         end
         return nothing
     end
-    if output == :detail && batch_count > 1
+    if output == :detail && (batch_count > 1 || vcf !== nothing)
         with_atomic_output(output_file) do temporary
             run_batches(temporary)
         end
