@@ -355,16 +355,78 @@ Reference-only medians were 0.44-0.49 s. Stored reference spans add 5 MB
 (synthetic), 4 MB (GIAB) and 1 MB (ClinVar) of descriptors. Items per thread of
 2, 4 and 8 gave the same synthetic median within noise; the code uses 4.
 
-GIAB and ClinVar preparation is dominated by parsing the whole genome-wide VCF,
+GIAB and ClinVar preparation was dominated by reading the whole genome-wide VCF,
 since `region` still reads every record. Reading all chromosomes with REF checks
 took 67.0 s before and 38.7 s after the block reader for GIAB, and 81.4 s and
-52.4 s for ClinVar; parsing alone took 9-13 s.
+52.4 s for ClinVar; reading with no chromosome selected took 9-13 s.
+
+The reader now splits records by line and parses only CHROM and POS for
+unselected chromosomes. Name, contiguity and order checks still cover every
+record; the full parser runs on selected records only. Most of the old cost was
+not the parser: the reader loop ran inside an `open(...) do` closure, which boxed
+the reassigned loop state (`previous_chrom`, `previous_pos`). Without the closure,
+reading GIAB with no chromosome selected takes 1.6 s instead of 6.3 s (line
+splitting and decompression take 0.9 s). Medians of five alternating runs, same
+benchmark, measured October 13, 2026, output byte-identical:
+
+| VCF, chromosome 22 | Before | After | Preparation before / after |
+|---|---:|---:|---:|
+| Synthetic | 1.00 s | 0.90 s | 0.39 / 0.35 s |
+| GIAB HG001 v4.2.1 | 6.90 s | 2.68 s | 6.41 / 2.15 s |
+| ClinVar, multiallelics joined | 33.6 s | 28.0 s | 31.3 / 26.4 s |
+
+Genome-wide reads are unchanged (43.6 s before, 44.3 s after for GIAB), since every
+record is parsed either way.
 
 Descriptor memory was measured with `Base.summarysize`, which tracks object
 identity. On genome-wide GIAB it took 189-223 s, four times the preparation, in
 every CLI run (the CLI logs it) and every run with `stats`. A linear count of
 array and string bytes replaced it (0.3 s). It omits per-object headers, so it
 reports about 20% less (1.35 GB versus 1.71 GB for genome-wide GIAB).
+
+### Genome-wide preparation profile
+
+Preparation of every chromosome, k = 3, Cas9 distance 3, three repetitions in one
+process after a chr21 warm-up, measured October 13, 2026. "Read" is
+`read_scan_variants` alone; "preparation" repeats the read and adds enumeration
+and reference spans.
+
+| VCF | Read | Read GC | Preparation | Preparation GC | Allocated | Fragments | Peak RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| GIAB HG001 v4.2.1 | 29-37 s | 10-18 s | 41-44 s | 15-17 s | 19.6 GB | 4.42M | 4.1 GB |
+| ClinVar, multiallelics joined | 47-95 s | 14-43 s | 1,034-1,386 s | 114-145 s | 325 GB | 455M | 158 GB |
+
+For GIAB, the read is about 80% of preparation. It allocates 14.3 GB, about 3.6 KB
+per record. A CPU profile of one GIAB preparation (5,157 samples at 10 ms, GC
+time counted at the allocating line):
+
+| Part | Share |
+|---|---:|
+| `foreach_concrete_variant`: copies and IUPAC checks run for plain ACGT ALTs too | 21% |
+| ID and allele-key strings: `"$chrom:$pos:$ref>$alt"` built twice, `variant_token` runs three `replace` calls | 20% |
+| `VCF.Record` parse of selected records | 17% |
+| Enumeration walk and reference spans | 17% |
+| REF and ALT accessors, `uppercase`, REF check | 12% |
+| Variant sort (tuple key ending in the annotation string) | 5% |
+
+Genome-wide ClinVar at k = 3 is not practical: 455M fragments, 91 GB of descriptors
+and 158 GB peak RSS, with enumeration taking 95% of the time. Catalog VCFs need
+`region` per chromosome, as the cost table shows.
+
+Repeated GIAB preparations in one process took 40.6-44.0 s, so the 84 s and 100 s
+benchmark runs were not reproduced with preparation alone. Their cause (host load,
+or GC state left by the previous search) is unknown.
+
+Candidate fixes for the read, none applied yet:
+
+1. Pass plain ACGT ALTs to the callback directly in `foreach_concrete_variant`.
+2. Build the `chrom:pos:ref>alt` key once per ALT, and skip `replace` in
+   `variant_token` when the string has no `%`, `;` or `|`.
+3. Take ID, REF and ALT from the tab-split line and keep `VCF.Record` only for
+   `vcf_annotate`.
+
+Items 1 and 2 are small changes. They touch 41% of the profile, so an estimated
+20-30% of GIAB genome-wide preparation, not yet measured. Item 3 adds a second field parser.
 
 ## Allele cap and measured cost
 
@@ -507,6 +569,14 @@ Cheap speed and documentation:
   49 s median versus 2.5 s for reference only, after replacing `Base.summarysize`.
 - [x] README section: bcftools recipe, one example, output columns, and when to
   change `vcf_max_alleles`. The example runs on the standalone app.
+- [x] Line scan for records on unselected chromosomes: GIAB chr22 6.90 s to 2.68 s;
+  see [Speed changes](#speed-changes). Standalone app rebuilt 2026-10-13 before
+  this change, so it does not include it.
+- [x] Profile genome-wide preparation (GIAB, ClinVar): phase times, CPU profile,
+  and the slowdown of repeated runs in one process; see
+  [Genome-wide preparation profile](#genome-wide-preparation-profile).
+- [ ] Read-path fixes 1-2 from the profile (concrete-ALT fast path, allele key
+  built once).
 
 Features and evaluation:
 
@@ -522,16 +592,13 @@ Features and evaluation:
 ## Deferred design
 
 Speed and memory, in priority order. Each needs exact output parity and a measured
-win on the chr22 benchmark. Work sizing, stored reference spans and block reads
-are done ([Speed changes](#speed-changes)).
+win on the chr22 benchmark. Work sizing, stored reference spans, block reads and
+the line scan for unselected chromosomes are done ([Speed changes](#speed-changes)).
 
-1. Skip records on unselected chromosomes with a light line scan (CHROM and POS
-   only, keeping the order and name checks) instead of the full VCF parser. For
-   GIAB on chromosome 22 the full parse is most of the 6.6 s preparation.
-2. Accept a hit only when its window plus extension overlaps the last taken
+1. Accept a hit only when its window plus extension overlaps the last taken
    variant of its fragment, and trim fragments to that band. Each site context is
    then verified once instead of once per fragment that contains it.
-3. Prepare and scan one chromosome at a time (D07), bounding peak memory by the
+2. Prepare and scan one chromosome at a time (D07), bounding peak memory by the
    largest chromosome, and share walk prefixes (a trie) instead of copying segment
    paths. These are the changes that could make k = 4-5 feasible for cohorts.
 

@@ -128,11 +128,19 @@ function read_scan_variants(path, dbi, lengths, selected, annotate; progress = n
         read_prefix_hash_scan_twobit_index(dbi.gi.filepath)
     chrom_index = Dict(name => i for (i, name) in enumerate(dbi.gi.chrom))
     stream = open(path, "r")
-    reader = nothing
+    genome = open(dbi.gi.filepath, "r")
     try
         endswith(lowercase(path), ".gz") && (stream = GzipDecompressorStream(stream))
-        reader = VCF.Reader(stream)
-        header = VariantCallFormat.header(reader)
+        # Records are split by line so that unselected chromosomes skip the
+        # full record parser; only CHROM and POS are read for them.
+        lines = eachline(stream)
+        header_lines = String[]
+        line = iterate(lines)
+        while line !== nothing && startswith(line[1], '#')
+            push!(header_lines, line[1])
+            line = iterate(lines)
+        end
+        header = VariantCallFormat.header(VCF.Reader(IOBuffer(join(header_lines, '\n') * '\n')))
         fields = variant_annotation_fields(header, annotate)
         seen_chrom = Set{String}()
         previous_chrom = ""
@@ -142,85 +150,91 @@ function read_scan_variants(path, dbi, lengths, selected, annotate; progress = n
         progress === nothing || (progress.total_bases = sum(lengths; init = 0))
         finished_bases = 0
         reported = 0
-        open(dbi.gi.filepath, "r") do genome
-            cursor = VariantReferenceCursor(genome, index, lengths)
-            for record in reader
-                counts[:records] += 1
-                source = counts[:records]
-                chrom = VCF.chrom(record)
-                if !haskey(chrom_index, chrom)
-                    renamed = startswith(chrom, "chr") ? chrom[4:end] : "chr" * chrom
-                    error("VCF chromosome is absent from the reference: $chrom; " * (haskey(chrom_index, renamed) ?
-                        "the reference names it $renamed, rename with `bcftools annotate --rename-chrs`" :
-                        "drop records on contigs absent from the reference, e.g. `bcftools view -t ^$chrom`"))
-                end
-                ci = chrom_index[chrom]
-                pos = VCF.pos(record)
-                if chrom != previous_chrom
-                    chrom in seen_chrom && error("VCF chromosome blocks are not contiguous: $chrom")
-                    isempty(previous_chrom) || (finished_bases += lengths[chrom_index[previous_chrom]])
-                    push!(seen_chrom, chrom)
-                    previous_chrom, previous_pos = chrom, 0
-                end
-                pos >= previous_pos || error("VCF positions are not sorted at $chrom:$pos")
-                previous_pos = pos
-                report_prefix_hash_scan_progress!(progress, finished_bases + pos - reported)
-                reported = finished_bases + pos
-                if !selected[ci]
-                    counts[:outside_region] += 1
+        cursor = VariantReferenceCursor(genome, index, lengths)
+        while line !== nothing
+            text = line[1]
+            line = iterate(lines)
+            isempty(text) && continue
+            counts[:records] += 1
+            source = counts[:records]
+            tab1 = findfirst('\t', text)
+            tab2 = tab1 === nothing ? nothing : findnext('\t', text, tab1 + 1)
+            pos = tab2 === nothing ? nothing : tryparse(Int, SubString(text, tab1 + 1, tab2 - 1))
+            pos === nothing && error("Malformed VCF record $source: $(first(text, 80))")
+            chrom = String(SubString(text, 1, tab1 - 1))
+            if !haskey(chrom_index, chrom)
+                renamed = startswith(chrom, "chr") ? chrom[4:end] : "chr" * chrom
+                error("VCF chromosome is absent from the reference: $chrom; " * (haskey(chrom_index, renamed) ?
+                    "the reference names it $renamed, rename with `bcftools annotate --rename-chrs`" :
+                    "drop records on contigs absent from the reference, e.g. `bcftools view -t ^$chrom`"))
+            end
+            ci = chrom_index[chrom]
+            if chrom != previous_chrom
+                chrom in seen_chrom && error("VCF chromosome blocks are not contiguous: $chrom")
+                isempty(previous_chrom) || (finished_bases += lengths[chrom_index[previous_chrom]])
+                push!(seen_chrom, chrom)
+                previous_chrom, previous_pos = chrom, 0
+            end
+            pos >= previous_pos || error("VCF positions are not sorted at $chrom:$pos")
+            previous_pos = pos
+            report_prefix_hash_scan_progress!(progress, finished_bases + pos - reported)
+            reported = finished_bases + pos
+            if !selected[ci]
+                counts[:outside_region] += 1
+                continue
+            end
+            record = VCF.Record(text)
+            ref = uppercase(VCF.ref(record))
+            1 <= pos && pos + length(ref) - 1 <= lengths[ci] ||
+                error("VCF REF is outside the reference at $chrom:$pos")
+            reference = uppercase(String(variant_reference_view(cursor, ci, pos, pos + length(ref) - 1)))
+            for (a, b) in zip(codeunits(ref), codeunits(reference))
+                ma, mb = prefix_hash_scan_iupac_mask(a), prefix_hash_scan_iupac_mask(b)
+                mb != 0 && ma & mb == mb || error("VCF REF mismatch at $chrom:$pos: $ref versus $reference; " *
+                    "check the reference build and normalize with `bcftools norm -f reference.fa -c e`")
+            end
+            alts = VCF.hasalt(record) ? VCF.alt(record) : String[]
+            isempty(alts) && (counts[:no_alt] += 1)
+            length(alts) > 1 && (counts[:multiallelic] += 1)
+            # The parser can expose cumulative ranges for multiple IDs.
+            # Reading their complete field preserves the original ID list.
+            id_field = VCF.hasid(record) ? String(record.data[
+                first(first(record.id)):last(last(record.id))]) : ""
+            for (alt_idx, alt_raw) in enumerate(alts)
+                if alt_raw in (".", "*", "<NON_REF>", "<*>")
+                    reason = alt_raw == "." ? :no_alt : alt_raw == "*" ? :spanning_deletion : :non_ref
+                    counts[reason] += 1
                     continue
                 end
-                ref = uppercase(VCF.ref(record))
-                1 <= pos && pos + length(ref) - 1 <= lengths[ci] ||
-                    error("VCF REF is outside the reference at $chrom:$pos")
-                reference = uppercase(String(variant_reference_view(cursor, ci, pos, pos + length(ref) - 1)))
-                for (a, b) in zip(codeunits(ref), codeunits(reference))
-                    ma, mb = prefix_hash_scan_iupac_mask(a), prefix_hash_scan_iupac_mask(b)
-                    mb != 0 && ma & mb == mb || error("VCF REF mismatch at $chrom:$pos: $ref versus $reference; " *
-                        "check the reference build and normalize with `bcftools norm -f reference.fa -c e`")
+                alt = uppercase(alt_raw)
+                all(b -> prefix_hash_scan_iupac_mask(b) != 0, codeunits(alt)) ||
+                    error("Unsupported VCF ALT at $chrom:$pos: $alt_raw; only sequence-resolved alleles are supported")
+                ambiguous = any(b -> prefix_hash_scan_raw_code(b) == 0xff, codeunits(alt))
+                # Long runs of N encode unknown sequence; their expansion is 4^n.
+                if prod(count_ones(prefix_hash_scan_iupac_mask(b)) for b in codeunits(alt)) >
+                        PREFIX_HASH_SCAN_MAX_GUIDE_EXPANSIONS
+                    counts[:iupac_skipped] += 1
+                    length(iupac_examples) < 5 && push!(iupac_examples, "$chrom:$pos")
+                    continue
                 end
-                alts = VCF.hasalt(record) ? VCF.alt(record) : String[]
-                isempty(alts) && (counts[:no_alt] += 1)
-                length(alts) > 1 && (counts[:multiallelic] += 1)
-                # The parser can expose cumulative ranges for multiple IDs.
-                # Reading their complete field preserves the original ID list.
-                id_field = VCF.hasid(record) ? String(record.data[
-                    first(first(record.id)):last(last(record.id))]) : ""
-                for (alt_idx, alt_raw) in enumerate(alts)
-                    if alt_raw in (".", "*", "<NON_REF>", "<*>")
-                        reason = alt_raw == "." ? :no_alt : alt_raw == "*" ? :spanning_deletion : :non_ref
-                        counts[reason] += 1
-                        continue
-                    end
-                    alt = uppercase(alt_raw)
-                    all(b -> prefix_hash_scan_iupac_mask(b) != 0, codeunits(alt)) ||
-                        error("Unsupported VCF ALT at $chrom:$pos: $alt_raw; only sequence-resolved alleles are supported")
-                    ambiguous = any(b -> prefix_hash_scan_raw_code(b) == 0xff, codeunits(alt))
-                    # Long runs of N encode unknown sequence; their expansion is 4^n.
-                    if prod(count_ones(prefix_hash_scan_iupac_mask(b)) for b in codeunits(alt)) >
-                            PREFIX_HASH_SCAN_MAX_GUIDE_EXPANSIONS
-                        counts[:iupac_skipped] += 1
-                        length(iupac_examples) < 5 && push!(iupac_examples, "$chrom:$pos")
-                        continue
-                    end
-                    counts[:ambiguous] += ambiguous
-                    prefix, suffix = variant_trim(reference, alt)
-                    first = pos + prefix
-                    stop = pos + length(ref) - suffix
-                    allele_key = variant_token("$chrom:$pos:$ref>$alt")
-                    id = isempty(id_field) ? "$chrom:$pos:$ref>$alt" : id_field
-                    annotation = variant_token(id) * "|" * allele_key
-                    extra = variant_allele_annotation(record, fields, header.sampleID, alt_idx)
-                    foreach_concrete_variant(alt) do concrete
-                        resolved = ambiguous ? "|resolved=" * String(copy(concrete)) : ""
-                        push!(variants, ScanVariant(ci, pos, first, stop, source, ref, alt,
-                            concrete[(prefix + 1):(end - suffix)], allele_key, annotation * resolved * extra))
-                    end
+                counts[:ambiguous] += ambiguous
+                prefix, suffix = variant_trim(reference, alt)
+                first = pos + prefix
+                stop = pos + length(ref) - suffix
+                allele_key = variant_token("$chrom:$pos:$ref>$alt")
+                id = isempty(id_field) ? "$chrom:$pos:$ref>$alt" : id_field
+                annotation = variant_token(id) * "|" * allele_key
+                extra = variant_allele_annotation(record, fields, header.sampleID, alt_idx)
+                foreach_concrete_variant(alt) do concrete
+                    resolved = ambiguous ? "|resolved=" * String(copy(concrete)) : ""
+                    push!(variants, ScanVariant(ci, pos, first, stop, source, ref, alt,
+                        concrete[(prefix + 1):(end - suffix)], allele_key, annotation * resolved * extra))
                 end
             end
         end
     finally
-        reader === nothing ? close(stream) : close(reader)
+        close(stream)
+        close(genome)
     end
     counts[:iupac_skipped] > 0 && @warn "VCF ALT alleles with more than $PREFIX_HASH_SCAN_MAX_GUIDE_EXPANSIONS IUPAC realizations ignored" alleles=counts[:iupac_skipped] examples=iupac_examples
     sort!(variants; by = v -> (v.chrom, v.first, v.first == v.stop ? 0 : 1, v.source, v.annotation))
