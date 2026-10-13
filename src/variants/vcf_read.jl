@@ -11,6 +11,30 @@ struct ScanVariant
     annotation::String
 end
 
+# Variant records and reference spans arrive sorted within a chromosome, so one
+# forward block read replaces a seek per record.
+const PREFIX_HASH_SCAN_VARIANT_REFERENCE_BLOCK = 1 << 20
+
+mutable struct VariantReferenceCursor
+    io::IOStream
+    index::Union{FASTA.Index, PrefixHashScanTwoBitIndex}
+    lengths::Vector{Int}
+    chrom::Int
+    first::Int
+    bytes::Vector{UInt8}
+end
+
+VariantReferenceCursor(io, index, lengths) = VariantReferenceCursor(io, index, lengths, 0, 0, UInt8[])
+
+function variant_reference_view(cursor::VariantReferenceCursor, chrom, a, b)
+    if cursor.chrom != chrom || a < cursor.first || b >= cursor.first + length(cursor.bytes)
+        stop = min(cursor.lengths[chrom], max(b, a + PREFIX_HASH_SCAN_VARIANT_REFERENCE_BLOCK - 1))
+        cursor.bytes = read_prefix_hash_scan_range!(cursor.bytes, cursor.io, cursor.index, chrom, a, stop)
+        cursor.chrom, cursor.first = chrom, a
+    end
+    return @view cursor.bytes[(a - cursor.first + 1):(b - cursor.first + 1)]
+end
+
 function prefix_hash_scan_chromosomes(region, names)
     region === nothing && return trues(length(names))
     requested = strip.(split(region, ','))
@@ -95,7 +119,7 @@ function variant_allele_annotation(record, fields, samples, alt_idx)
     return "|" * join(parts, '|')
 end
 
-function read_scan_variants(path, dbi, lengths, selected, annotate)
+function read_scan_variants(path, dbi, lengths, selected, annotate; progress = nothing)
     variants = ScanVariant[]
     counts = Dict(:records => 0, :outside_region => 0, :no_alt => 0,
         :spanning_deletion => 0, :non_ref => 0, :multiallelic => 0, :ambiguous => 0, :iupac_skipped => 0)
@@ -113,22 +137,35 @@ function read_scan_variants(path, dbi, lengths, selected, annotate)
         seen_chrom = Set{String}()
         previous_chrom = ""
         previous_pos = 0
-        buffer = UInt8[]
+        # Progress counts reference bases of finished chromosomes plus POS,
+        # since VCF chromosome blocks need not follow reference order.
+        progress === nothing || (progress.total_bases = sum(lengths; init = 0))
+        finished_bases = 0
+        reported = 0
         open(dbi.gi.filepath, "r") do genome
+            cursor = VariantReferenceCursor(genome, index, lengths)
             for record in reader
                 counts[:records] += 1
                 source = counts[:records]
                 chrom = VCF.chrom(record)
-                haskey(chrom_index, chrom) || error("VCF chromosome is absent from the reference: $chrom")
+                if !haskey(chrom_index, chrom)
+                    renamed = startswith(chrom, "chr") ? chrom[4:end] : "chr" * chrom
+                    error("VCF chromosome is absent from the reference: $chrom; " * (haskey(chrom_index, renamed) ?
+                        "the reference names it $renamed, rename with `bcftools annotate --rename-chrs`" :
+                        "drop records on contigs absent from the reference, e.g. `bcftools view -t ^$chrom`"))
+                end
                 ci = chrom_index[chrom]
                 pos = VCF.pos(record)
                 if chrom != previous_chrom
                     chrom in seen_chrom && error("VCF chromosome blocks are not contiguous: $chrom")
+                    isempty(previous_chrom) || (finished_bases += lengths[chrom_index[previous_chrom]])
                     push!(seen_chrom, chrom)
                     previous_chrom, previous_pos = chrom, 0
                 end
                 pos >= previous_pos || error("VCF positions are not sorted at $chrom:$pos")
                 previous_pos = pos
+                report_prefix_hash_scan_progress!(progress, finished_bases + pos - reported)
+                reported = finished_bases + pos
                 if !selected[ci]
                     counts[:outside_region] += 1
                     continue
@@ -136,11 +173,11 @@ function read_scan_variants(path, dbi, lengths, selected, annotate)
                 ref = uppercase(VCF.ref(record))
                 1 <= pos && pos + length(ref) - 1 <= lengths[ci] ||
                     error("VCF REF is outside the reference at $chrom:$pos")
-                raw = read_prefix_hash_scan_range!(buffer, genome, index, ci, pos, pos + length(ref) - 1)
-                reference = uppercase(String(copy(raw)))
+                reference = uppercase(String(variant_reference_view(cursor, ci, pos, pos + length(ref) - 1)))
                 for (a, b) in zip(codeunits(ref), codeunits(reference))
                     ma, mb = prefix_hash_scan_iupac_mask(a), prefix_hash_scan_iupac_mask(b)
-                    mb != 0 && ma & mb == mb || error("VCF REF mismatch at $chrom:$pos: $ref versus $reference")
+                    mb != 0 && ma & mb == mb || error("VCF REF mismatch at $chrom:$pos: $ref versus $reference; " *
+                        "check the reference build and normalize with `bcftools norm -f reference.fa -c e`")
                 end
                 alts = VCF.hasalt(record) ? VCF.alt(record) : String[]
                 isempty(alts) && (counts[:no_alt] += 1)

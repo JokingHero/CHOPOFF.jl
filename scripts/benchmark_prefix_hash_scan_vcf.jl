@@ -1,4 +1,4 @@
-# julia --project=. -t 8 scripts/benchmark_prefix_hash_scan_vcf.jl GENOME VCF GUIDES CHROM OUTDIR [RUNS]
+# julia --project=. -t 8 scripts/benchmark_prefix_hash_scan_vcf.jl GENOME VCF GUIDES CHROM|all OUTDIR [RUNS]
 # Compare uncapped Cas9 distance-3 searches. VCF preparation is timed on every run.
 using CHOPOFF, BioSequences, CSV, DataFrames, Statistics
 
@@ -18,7 +18,7 @@ function main(args)
         path = joinpath(output, with_vcf ? "variants.csv" : "reference.csv")
         GC.gc()
         timing = @timed CHOPOFF.search_prefixHashScan(guides, genome, motif, path;
-            distance = 3, vcf = with_vcf ? vcf : nothing, region = chrom,
+            distance = 3, vcf = with_vcf ? vcf : nothing, region = chrom == "all" ? nothing : chrom,
             early_stopping = fill(typemax(Int), 4), stats = stats)
         bytes = read(path)
         if repetition == 0

@@ -39,7 +39,7 @@ merely because their inputs have rejection tests.
 | V11 | Reference-overlap annotations | [x] implemented, fragments | tested; [complete-row oracle](test/helpers/vcf.jl), [exact multiple-ID annotation](test/variants/input.jl) |
 | V12 | Independent caps; duplicates and flank candidates spend no budget | [x] implemented, scanner | tested; [cap retirement and duplicate-fragment regressions](test/variants/regressions.jl) |
 | V13 | Preserve allele combinations in filtering; summarize loci once; insertion starts within `distance` of an insertion end join POS | [x] implemented, [utilities](src/utils.jl) | tested; [exact summaries, origin axes, ordering and idempotence](test/variants/execution.jl) |
-| V14 | Region selection, API/CLI parity and atomic output | [x] implemented, [API](src/db_prefix_hash_scan.jl) | partial; [input failures](test/variants/input.jl), [CLI parity](test/variants/execution.jl) and [shared atomic rollback helper](test/src/prefix_hash_scan.jl) tested; VCF mid-scan I/O failure injection untested |
+| V14 | Region selection, API/CLI parity and atomic output | [x] implemented, [API](src/db_prefix_hash_scan.jl) | tested; [input failures](test/variants/input.jl), [CLI parity and a failure injected into the second batch's variant scan](test/variants/execution.jl), [shared atomic rollback helper](test/src/prefix_hash_scan.jl) |
 | V15 | Batching, reference formats, SIMD and thread parity | [x] implemented, API/scanner | tested; [64/65/129 guides, FASTA/2bit, chunks, available SIMD and workers](test/variants/execution.jl) |
 | V16 | Reproducible permanent complex fixtures | [x] implemented | tested; [42 sequence cases, 2 metadata/marker cases, 14 invalid inputs](test/sample_data/vcf/README.md), byte-for-byte regeneration |
 | V17 | Seeded/dense extended suite with reproducible failures | [x] implemented | tested; [200 seeded cases, 60 dense mixed cases and 6/8/10-variant exhaustive combinations](test/extended/variants.jl) |
@@ -54,7 +54,7 @@ merely because their inputs have rejection tests.
 | D06 | Legacy vcfDB retirement | [ ] deferred | legacy implementation/tests remain |
 | D07 | Parallel, per-chromosome preparation | [ ] deferred | preparation is serial and holds all selected chromosomes; run cohort VCFs one chromosome at a time with `region` |
 | D08 | Representative population and patient-scale measurements | [~] partial | chr22 cost table for GIAB, ClinVar and gnomAD tiers; genome-wide cohort timing untested |
-| D09 | Variant-phase speed (see [Deferred design](#deferred-design)) | [ ] deferred | correctness first; no tuning done |
+| D09 | Variant-phase speed (see [Deferred design](#deferred-design)) | [~] partial | work sizing, stored reference spans and block reads done; see [Speed changes](#speed-changes) |
 
 Deliberate changes from the original design: unknown contigs and REF mismatches
 fail immediately; filtering preserves each allele combination; inserted endpoints
@@ -138,6 +138,10 @@ and gVCF `<NON_REF>`/`<*>` markers, with aggregate warning counts. Other ALT all
 on the same record remain available. These markers do not supply a deletion or an
 unknown alternate sequence by themselves.
 
+Contig and REF errors name a bcftools fix: `annotate --rename-chrs` when the
+reference has the same name with or without `chr`, `view -t ^contig` for contigs
+absent from the reference, and `norm -f` for REF mismatches.
+
 Symbolic SVs and breakends fail with an unsupported-allele error. Literal sequence
 alleles have no size cutoff. Users must left-align upstream. The reader trims common
 padding but does not validate left alignment or merge equivalent records.
@@ -170,11 +174,14 @@ as truncated.
 
 Fragments use flat segment arrays. A segment either refers to a reference range or
 to a concrete ALT. Empty ALT segments retain deletion junctions. Descriptors persist
-across guide batches. Workers materialize fragments into reusable buffers, then use
-the existing prefix kernel, Myers verifier, and traceback.
+across guide batches. Preparation reads the merged reference spans that fragments
+use once, through a forward 1 MiB block reader, and keeps them in memory. Workers
+materialize fragments from these spans into reusable buffers without file reads,
+then use the existing prefix kernel, Myers verifier, and traceback.
 
-Variant work packs fragments into approximately 2 MiB items with `distance + 1`
-gap bytes between fragments. Large fragments split into overlapping scan chunks.
+Variant work packs fragments into items of about a quarter of the fragment bases
+per scan thread (at least 64 KiB, at most the chunk size, 2 MiB by default), with
+`distance + 1` gap bytes between fragments. Large fragments split into overlapping scan chunks.
 Candidate windows must belong to one fragment and overlap its anchor before Myers.
 After traceback, the consumed target plus PAM determines the allele annotations.
 Unused extension bases do not contribute annotations.
@@ -245,6 +252,10 @@ including allele annotations, reference overlaps and insertion origins, and reje
 duplicate rows. Hand-calculated checks validate the oracle's edit model. Production
 VCF parsing, enumeration, conflict checks and coordinate lifting do not participate
 in the oracle; alignment and traceback remain shared with the legacy search.
+[test/src/distance_metrics.jl](test/src/distance_metrics.jl) checks `align` against
+a naive edit-distance DP on 5,000 seeded guide/reference pairs with k = 1-4,
+including IUPAC reference bases and indels; distances, gapless sequences and
+column costs all agree.
 
 [Permanent fixtures](test/sample_data/vcf/README.md) combine the existing
 semirandom genome example with tiny companion references. Every positive sequence
@@ -284,7 +295,7 @@ each make these tests fail. The extended suite adds 60 dense mixed cases with
 indels, MNPs, IUPAC and multiallelic records, every fourth with a random cap.
 
 Local validation on 2026-10-12 used Julia 1.10.10 with four threads. The regular
-suite passed 3,575 assertions, including fixture regeneration; the extended suite
+suite passed 3,492 assertions, including fixture regeneration; the extended suite
 passed 1,195 with seed `20261009`. The full package suite also passed with four
 threads. The execution matrix exercised portable, auto,
 AVX2 and AVX-512 backends, one/four workers, FASTA wrapping at 7/60 bases, 2bit,
@@ -297,16 +308,19 @@ both variant and reference-overlap annotations.
 
 `PrefixHashScanStats` records input counts, fragment counts and bases, the largest
 fragment count of one anchor (`max_anchor_fragments`), anchors truncated by the cap
-(`vcf_truncated_anchors`), descriptor bytes, preparation time, variant
-materialization I/O, candidates, anchor rejections, accepted variant rows, and
+(`vcf_truncated_anchors`), descriptor bytes (including stored reference spans),
+preparation time, variant fragment materialization time (`variant_io_ns`), candidates, anchor rejections, accepted variant rows, and
 retired variant guides. `verbose=true` reports preparation
-counts and descriptor memory once before guide batching.
+counts and descriptor memory once before guide batching. It also logs throttled
+`prefixHashScan progress` records (every `progress_interval` seconds) with
+`batch` set to `VCF read`, `VCF enumerate` or `<batch> VCF` for the variant scan.
+The CLI always runs verbose.
 
 Report performance as measured wall time and memory. Additional scanned bases alone
 do not predict overhead: small reference reads, enumeration, traceback, and output
 can dominate. Real-VCF costs are in [Allele cap and measured cost](#allele-cap-and-measured-cost).
 
-Run `scripts/benchmark_prefix_hash_scan_vcf.jl GENOME VCF GUIDES CHROM OUTDIR [RUNS]`
+Run `scripts/benchmark_prefix_hash_scan_vcf.jl GENOME VCF GUIDES CHROM|all OUTDIR [RUNS]`
 with `julia --project=. -t 8`. It warms both modes, alternates measured runs,
 checks reference-row parity and repeatability, and writes timings and allocation
 counts. Peak RSS includes warmup and both modes. It does not measure per-mode
@@ -322,6 +336,35 @@ descriptors. Preparation took a median 0.524 s. Worker I/O totaled 0.366 s.
 The runs allocated about 310 MB and 643 MB, respectively. Process peak RSS reached
 1.29 GB. All reference rows matched, and repeated outputs were byte-identical.
 These sparse synthetic records do not measure dense population combinations.
+The figures above predate the speed changes below.
+
+### Speed changes
+
+Deferred-design items 1-3 were measured on October 13, 2026 with the same
+benchmark: GRCh38 chromosome 22, 61 Cas9 guides, distance 3, eight threads, five
+alternating runs, default `vcf_max_alleles` 3. Worker time is summed over workers.
+Variant output was byte-identical to the previous code for all three inputs.
+
+| VCF | Before | After | Preparation before / after | Worker materialization before / after |
+|---|---:|---:|---:|---:|
+| Synthetic (62,686 records) | 1.56 s | 1.15 s | 0.49 / 0.36 s | 0.38 / 0.03 s |
+| GIAB HG001 v4.2.1 | 8.10 s | 7.38 s | 6.92 / 6.56 s | 0.36 / 0.03 s |
+| ClinVar, multiallelics joined | 74.5 s | 32.8 s | 30.7 / 30.3 s | 352 / 7.6 s |
+
+Reference-only medians were 0.44-0.49 s. Stored reference spans add 5 MB
+(synthetic), 4 MB (GIAB) and 1 MB (ClinVar) of descriptors. Items per thread of
+2, 4 and 8 gave the same synthetic median within noise; the code uses 4.
+
+GIAB and ClinVar preparation is dominated by parsing the whole genome-wide VCF,
+since `region` still reads every record. Reading all chromosomes with REF checks
+took 67.0 s before and 38.7 s after the block reader for GIAB, and 81.4 s and
+52.4 s for ClinVar; parsing alone took 9-13 s.
+
+Descriptor memory was measured with `Base.summarysize`, which tracks object
+identity. On genome-wide GIAB it took 189-223 s, four times the preparation, in
+every CLI run (the CLI logs it) and every run with `stats`. A linear count of
+array and string bytes replaced it (0.3 s). It omits per-object headers, so it
+reports about 20% less (1.35 GB versus 1.71 GB for genome-wide GIAB).
 
 ## Allele cap and measured cost
 
@@ -358,6 +401,20 @@ come from enumeration only, without a search.
 | | 4 | 878M (count) | | | 99,241 |
 | gnomAD PASS, all (7,584,432) | 2 | 81M (count) | about 25 GB | | 8,517,701 |
 | | 3 | 594M (count) | | | 8,039,325 |
+
+Genome-wide GIAB HG001 v4.2.1 (3,893,336 records), measured on October 13, 2026
+after the [speed changes](#speed-changes) with
+`scripts/benchmark_prefix_hash_scan_vcf.jl ... all` (61 Cas9 guides, distance 3,
+eight threads, five alternating runs):
+
+| k | Fragments | Fragment bases | Descriptors | Peak RSS | Time (median, range) | Reference only | Truncated anchors |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 3 | 4.42M | 235M | 1.35 GB | 6.5 GB | 49 s (44-100 s) | 2.5 s | 10,052 |
+
+Preparation took a median 45.8 s of the 49 s, and fragment materialization 2.6 s
+summed over workers. Output was byte-identical to the genome-wide k = 3 run made
+before the speed changes (940 variant rows). The slow runs (84 s and 100 s)
+directly followed another VCF run, and their preparation alone took 77-92 s.
 
 Memory is about 0.3 GB per million fragments. Preparation holds the fragments of
 every selected chromosome, so a genome-wide run costs roughly the sum over
@@ -410,21 +467,71 @@ Results on October 11-12, 2026, all passing:
 about one record per 5 bp, so few windows are small enough for the oracle. At k=3,
 GIAB truncated 10,052 anchors genome-wide and lost 2 of 942 variant rows.
 
+## TODO
+
+Backlog toward publication, in suggested order.
+
+Polish:
+
+- [x] Keep `test/local_human/vcf_realistic.jl` in git (data stays ignored).
+  `test/variants/regressions.jl` keeps only "reference cap retirement and variant
+  deduplication" and "example-genome fixture and CLI". Its other assertions not
+  covered elsewhere (region without VCF, legacy backend, counts, preparation
+  stats, long-insertion filter/summary agreement) moved to the input, execution
+  and corpus tests.
+- [x] Throttled progress records for VCF read, enumeration and the variant scan.
+- [x] Actionable input errors: `bcftools annotate --rename-chrs` for
+  `chr22`/`22` mismatches, `bcftools view -t ^contig` for contigs absent from the
+  reference (ClinVar NT_/NW_ records), `bcftools norm -f` for REF mismatches.
+- [x] Standalone app (built 2026-10-12): search with `--vcf`, `--region`,
+  `--vcf_max_alleles` and `--vcf_annotate`, then `filter` and
+  `summarize --variant_aware`, match `CHOPOFF.main` byte for byte with
+  `--simd_backend avx2`.
+- [x] Standalone app bug, not VCF-specific: with the AVX-512 backend (the `auto`
+  choice on a Xeon Gold 6126) the reference scan returned no rows on
+  `test/sample_data/vcf/references/contracts.fa`, `--region chr1`, d1. Cause: the
+  sysimage code could not inline the AVX-512 profile primitive and passed its
+  `<64 x i8>` argument in mismatched registers. The primitive now takes a pointer
+  and returns scalars (see prefixHashScan.md, SIMD backend). Rebuilt app
+  (2026-10-13): all four backends find the row; GIAB chr22 search, filter and
+  `summarize --variant_aware` with `auto` (AVX-512) match `CHOPOFF.main` byte for byte.
+- [x] V14: a failure injected into the second batch's variant scan leaves the
+  previous output and directory unchanged.
+- [x] `align` agrees with a naive edit-distance DP on 5,000 seeded pairs.
+
+Cheap speed and documentation:
+
+- [x] Speed items 1-3 from [Deferred design](#deferred-design), with
+  before/after chr22 timings and exact output parity; see [Speed changes](#speed-changes).
+- [x] Genome-wide GIAB timing (the main single-sample use case) in the cost table:
+  49 s median versus 2.5 s for reference only, after replacing `Base.summarysize`.
+- [x] README section: bcftools recipe, one example, output columns, and when to
+  change `vcf_max_alleles`. The example runs on the standalone app.
+
+Features and evaluation:
+
+- [ ] Genotype and phase support (D01). Restricting walks to alleles carried on
+  one phased haplotype gives per-sample results and bounds combinations without an
+  arbitrary cap, which makes cohort (1000 Genomes style) runs feasible. Needs its
+  own design plan.
+- [ ] Head-to-head comparison with CRISPRme and CRISPRitz on 1000 Genomes or GIAB:
+  runtime, memory, and found or missed off-targets.
+- [ ] Variant-aware count output; VCF searches currently require detail output.
+- [ ] Interval/BED regions (D03) and per-chromosome preparation (D07).
+
 ## Deferred design
 
 Speed and memory, in priority order. Each needs exact output parity and a measured
-win on the chr22 benchmark:
+win on the chr22 benchmark. Work sizing, stored reference spans and block reads
+are done ([Speed changes](#speed-changes)).
 
-1. Size variant work items by thread count. Packing 2 MiB items leaves most
-   workers idle for sparse VCFs (the synthetic chr22 set formed about two items).
-2. Store reference flanks at preparation, so workers do no per-segment file reads
-   and guide batches do not repeat them.
-3. Validate REF with a forward block buffer instead of one seek per record
-   (ClinVar genome-wide preparation took over 25 minutes).
-4. Accept a hit only when its window plus extension overlaps the last taken
+1. Skip records on unselected chromosomes with a light line scan (CHROM and POS
+   only, keeping the order and name checks) instead of the full VCF parser. For
+   GIAB on chromosome 22 the full parse is most of the 6.6 s preparation.
+2. Accept a hit only when its window plus extension overlaps the last taken
    variant of its fragment, and trim fragments to that band. Each site context is
    then verified once instead of once per fragment that contains it.
-5. Prepare and scan one chromosome at a time (D07), bounding peak memory by the
+3. Prepare and scan one chromosome at a time (D07), bounding peak memory by the
    largest chromosome, and share walk prefixes (a trie) instead of copying segment
    paths. These are the changes that could make k = 4-5 feasible for cohorts.
 

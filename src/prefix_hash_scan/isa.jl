@@ -4,7 +4,6 @@
 # `:portable` methods are plain Julia and run on any CPU.
 
 const PREFIX_HASH_SCAN_V32U8 = Vec{32, UInt8}
-const PREFIX_HASH_SCAN_V64U8 = Vec{64, UInt8}
 const PREFIX_HASH_SCAN_AVX2_FEATURE = UInt32(32 * 2 + 5)
 const PREFIX_HASH_SCAN_BMI2_FEATURE = UInt32(32 * 2 + 8)
 const PREFIX_HASH_SCAN_AVX512F_FEATURE = UInt32(32 * 2 + 16)
@@ -93,25 +92,6 @@ end
     return UInt64(prefix_hash_scan_movemask(bytes))
 end
 
-@inline function prefix_hash_scan_ascii_mask(
-    folded::PREFIX_HASH_SCAN_V64U8, upper::UInt8)
-
-    Base.llvmcall(
-        ("""
-         define i64 @entry(<64 x i8> %0, <64 x i8> %1) #0 {
-             %cmp = icmp eq <64 x i8> %0, %1
-             %mask = bitcast <64 x i1> %cmp to i64
-             ret i64 %mask
-         }
-         attributes #0 = { alwaysinline "target-features"="+avx512f,+avx512bw" }
-         """, "entry"),
-        UInt64,
-        Tuple{PREFIX_HASH_SCAN_V64U8, PREFIX_HASH_SCAN_V64U8},
-        folded,
-        PREFIX_HASH_SCAN_V64U8(upper),
-    )
-end
-
 @inline function prefix_hash_scan_raw_profile64(
     raw::AbstractVector{UInt8}, start_pos::Int, ::Val{:avx2})
 
@@ -129,17 +109,40 @@ end
     )
 end
 
+# AVX-512 code must not pass <64 x i8> across a call. A caller compiled without
+# AVX-512 (a sysimage base or clone target, `-C x86-64-v3`) cannot inline this
+# function; it would pass the vector in two YMM registers while the callee reads
+# one ZMM register. The load stays inside, and only scalars cross the boundary.
+@inline function prefix_hash_scan_avx512_ascii_mask(ptr::Ptr{UInt8}, upper::UInt8)
+    Base.llvmcall(
+        ("""
+         define i64 @entry(i64 %0, i8 %1) #0 {
+             %ptr = inttoptr i64 %0 to <64 x i8>*
+             %raw = load <64 x i8>, <64 x i8>* %ptr, align 1
+             %folded = and <64 x i8> %raw, <i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33, i8 -33>
+             %one = insertelement <64 x i8> undef, i8 %1, i32 0
+             %splat = shufflevector <64 x i8> %one, <64 x i8> undef, <64 x i32> zeroinitializer
+             %cmp = icmp eq <64 x i8> %folded, %splat
+             %mask = bitcast <64 x i1> %cmp to i64
+             ret i64 %mask
+         }
+         attributes #0 = { alwaysinline "target-features"="+avx512f,+avx512bw" }
+         """, "entry"),
+        UInt64, Tuple{Ptr{UInt8}, UInt8}, ptr, upper)
+end
+
 @inline function prefix_hash_scan_raw_profile64(
     raw::AbstractVector{UInt8}, start_pos::Int, ::Val{:avx512})
 
-    folded = vload(PREFIX_HASH_SCAN_V64U8, pointer(raw, start_pos)) &
-        PREFIX_HASH_SCAN_V64U8(0xdf)
-    return (
-        prefix_hash_scan_ascii_mask(folded, UInt8('A')),
-        prefix_hash_scan_ascii_mask(folded, UInt8('C')),
-        prefix_hash_scan_ascii_mask(folded, UInt8('G')),
-        prefix_hash_scan_ascii_mask(folded, UInt8('T')),
-    )
+    GC.@preserve raw begin
+        ptr = pointer(raw, start_pos)
+        return (
+            prefix_hash_scan_avx512_ascii_mask(ptr, UInt8('A')),
+            prefix_hash_scan_avx512_ascii_mask(ptr, UInt8('C')),
+            prefix_hash_scan_avx512_ascii_mask(ptr, UInt8('G')),
+            prefix_hash_scan_avx512_ascii_mask(ptr, UInt8('T')),
+        )
+    end
 end
 
 const PREFIX_HASH_SCAN_SWAR_LOW7 = 0x7f7f7f7f7f7f7f7f

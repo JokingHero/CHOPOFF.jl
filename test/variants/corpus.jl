@@ -46,6 +46,9 @@ include(joinpath(@__DIR__, "..", "sample_data", "vcf", "make_test_vcfs.jl"))
                 end
                 if startswith(case.id,"long_insertion")
                     @test any(row -> !ismissing(row.start_origin) && !ismissing(row.end_origin),eachrow(rows))
+                    filtered = filter_overlapping(copy(rows),case.distance)
+                    @test summarize_offtargets(rows;distance=case.distance,variant_aware=true) ==
+                        summarize_offtargets(filtered;distance=case.distance,variant_aware=true)
                 elseif case.id == "endpoint_insertion"
                     @test any(row -> !ismissing(row.start_origin) && ismissing(row.end_origin),eachrow(rows))
                 elseif case.id == "pam_create"

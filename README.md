@@ -101,6 +101,53 @@ CHOPOFF search --distance 3 \
 See the [prefixHashScan documentation](./docs/src/prefix_hash_scan.md)
 for IUPAC semantics, supported configurations, and human-genome benchmarks.
 
+### Variant-aware search (VCF)
+
+`prefixHashScan` also searches the alternative sequences in a VCF: SNVs, MNPs,
+insertions, deletions, and their combinations. Output keeps every reference
+off-target and adds rows for off-targets that only exist with variant alleles.
+CHOPOFF does not read genotypes, phase, FILTER, or allele frequency, so filter
+the VCF first.
+
+Prepare the VCF against the same reference you search. Contig names must match
+(`chr22` versus `22`). Keep multiallelic records joined with `-m+any`.
+
+```bash
+bcftools norm -f reference.fa -c e -m+any input.vcf.gz -Oz -o normalized.vcf.gz
+bcftools sort normalized.vcf.gz -Oz -o sorted.vcf.gz
+# if names differ: bcftools annotate --rename-chrs names.txt
+```
+
+Search, merge nearby rows into loci, and count loci per guide and distance:
+
+```bash
+export JULIA_NUM_THREADS=8
+CHOPOFF search --distance 2 \
+  --guides ./test/sample_data/vcf/guide.txt \
+  --output detail.csv \
+  prefixHashScan --genome "$EXAMPLE_GENOME" \
+  --vcf ./test/sample_data/vcf/small_norm.vcf --region semirandom1
+CHOPOFF filter --detail_file detail.csv --output filtered.csv --distance 2
+CHOPOFF summarize --detail_file filtered.csv --output counts.csv --variant_aware --distance 2
+```
+
+`--region` takes comma-separated chromosome names. `--vcf_annotate INFO/AF,FORMAT/AF`
+copies the named fields into each allele annotation. VCF output adds five columns:
+
+| Column | Meaning |
+|---|---|
+| `end` | Other end of the off-target, including the PAM |
+| `variants` | Alleles applied in this row; empty for reference rows |
+| `overlapping_variants` | Reference rows only: VCF alleles that overlap the site |
+| `start_origin`, `end_origin` | Allele and offset when an endpoint lies inside inserted sequence |
+
+`--vcf_max_alleles` (default 3) limits how many ALT alleles one off-target can
+combine. Single-sample VCFs are cheap at any value, so raise it if the run warns
+about truncated combinations. Cohort and catalog VCFs (gnomAD, ClinVar) grow
+steeply with this value: run them one chromosome at a time with `--region`,
+filter by frequency first, and use 2 for dense cohorts.
+See [vcf.md](./vcf.md) for semantics, validation, and measured costs.
+
 For direct SIMD search without building a database, SASSY supports an AVX-512
 path and AVX2 paths for older servers, including a non-PEXT path selected
 automatically on Zen 1/2 EPYC processors:

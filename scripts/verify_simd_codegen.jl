@@ -76,11 +76,27 @@ function verify_portable()
     println("Portable codegen verified: no x86 intrinsics or target features")
 end
 
+# Callers compiled without AVX-512 (sysimage targets, `-C x86-64-v3`) keep calls
+# to AVX-512 llvmcall functions. A 512-bit vector argument then uses mismatched
+# registers on each side, so only scalars may cross. Run under `-C x86-64-v3`.
+function verify_avx512_abi()
+    ir = llvm_module(CHOPOFF.prefix_hash_scan_raw_profile64,
+        Tuple{Vector{UInt8}, Int, Val{:avx512}})
+    for line in split(ir, '\n')
+        occursin(r"\bcall\b", line) && occursin("<64 x i8>", line) &&
+            error("prefixHashScan AVX-512 profiler passes <64 x i8> across a call: $line")
+    end
+    println("AVX-512 ABI verified: no 512-bit vector call arguments (CPU target $(Base.JLOptions().cpu_target == C_NULL ? "native" : unsafe_string(Base.JLOptions().cpu_target)))")
+end
+
 mode = isempty(ARGS) ? "auto" : ARGS[1]
 if mode == "auto"
     verify_portable()
     verify_avx2_safe()
+    verify_avx512_abi()
     CHOPOFF.Sassy.can_use_avx512() && verify_avx512()
+elseif mode == "avx512_abi"
+    verify_avx512_abi()
 elseif mode == "avx512"
     verify_avx512()
 elseif mode == "avx2_safe"
@@ -88,5 +104,5 @@ elseif mode == "avx2_safe"
 elseif mode == "portable"
     verify_portable()
 else
-    error("Usage: verify_simd_codegen.jl [auto|avx512|avx2_safe|portable]")
+    error("Usage: verify_simd_codegen.jl [auto|avx512|avx512_abi|avx2_safe|portable]")
 end

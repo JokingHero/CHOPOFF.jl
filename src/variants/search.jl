@@ -6,13 +6,21 @@ end
 
 const ScanVariantRow = Tuple{String, String, String, Int, String, Int, String, Int, String, String, String, String}
 
-function prefix_hash_scan_variant_work(data, geometry, chunk_bases)
+# Variant work items per scan thread; more than one balances uneven items.
+const PREFIX_HASH_SCAN_VARIANT_ITEMS_PER_THREAD = 4
+const PREFIX_HASH_SCAN_VARIANT_MIN_ITEM_BASES = 1 << 16
+
+function prefix_hash_scan_variant_work(data, geometry, chunk_bases, scan_threads)
     work = ScanVariantWork[]
     first = 1
     bases = 0
     separator = geometry.distance + 1
+    # Sparse VCFs pack into few chunk-sized items, which would idle most workers.
+    total = sum(f -> f.bases + separator, data.fragments; init = 0)
+    target = min(chunk_bases, max(PREFIX_HASH_SCAN_VARIANT_MIN_ITEM_BASES,
+        cld(total, PREFIX_HASH_SCAN_VARIANT_ITEMS_PER_THREAD * scan_threads)))
     for (i, fragment) in enumerate(data.fragments)
-        if bases > 0 && bases + fragment.bases + separator > chunk_bases
+        if bases > 0 && bases + fragment.bases + separator > target
             push!(work, ScanVariantWork(first:(i - 1), 0, 0))
             first, bases = i, 0
         end
@@ -46,7 +54,7 @@ function reserve_variant_hit!(state, seen, row, guide_idx)
     end
 end
 
-function scan_prefix_hash_scan_variant_work(ctx, worker, scratch, data, work, guides, state, seen, stats)
+function scan_prefix_hash_scan_variant_work(ctx, worker, data, work, guides, state, seen, stats)
     raw = worker.buffer
     empty!(raw)
     starts, stops, shifts = Int[], Int[], Int[]
@@ -59,7 +67,7 @@ function scan_prefix_hash_scan_variant_work(ctx, worker, scratch, data, work, gu
         start = length(raw) + 1
         push!(starts, start)
         push!(shifts, first - start)
-        materialize_variant_fragment!(raw, scratch, worker.io, ctx.index, data, fragment, first, last)
+        materialize_variant_fragment!(raw, data, fragment, first, last)
         push!(stops, length(raw))
         fi == lastindex(data.fragments) || append!(raw, fill(UInt8('-'), ctx.distance + 1))
     end
@@ -134,10 +142,16 @@ function scan_prefix_hash_scan_variant_work(ctx, worker, scratch, data, work, gu
 end
 
 function stream_prefix_hash_scan_variants!(out, data, geometry, query, dbi, guides,
-    guides_, myers_profiles, distance, chunk_bases, scan_threads, limits, stats, simd_backend)
+    guides_, myers_profiles, distance, chunk_bases, scan_threads, limits, stats, simd_backend;
+    progress = nothing)
 
-    work = prefix_hash_scan_variant_work(data, geometry, chunk_bases)
+    work = prefix_hash_scan_variant_work(data, geometry, chunk_bases, scan_threads)
     isempty(work) && return nothing
+    work_bases(w) = w.core_first == 0 ? sum(i -> data.fragments[i].bases, w.fragments) : w.core_last - w.core_first + 1
+    if progress !== nothing
+        progress = PrefixHashScanProgress(progress.label * " VCF", progress.interval_ns / 1e9)
+        progress.total_bases = sum(work_bases, work)
+    end
     index = dbi.gi.is_fa ? FASTA.Index(dbi.gi.filepath * ".fai") : read_prefix_hash_scan_twobit_index(dbi.gi.filepath)
     ctx = PrefixHashScanContext(geometry, query, dbi, guides_, myers_profiles, distance, index, simd_backend)
     state = PrefixHashScanEarlyStopState(length(guides), limits)
@@ -147,7 +161,6 @@ function stream_prefix_hash_scan_variants!(out, data, geometry, query, dbi, guid
     tasks = map(1:min(scan_threads, length(work))) do _
         Threads.@spawn begin
             worker = PrefixHashScanWorker(open(dbi.gi.filepath, "r"))
-            scratch = UInt8[]
             worker_stats = prefix_hash_scan_worker_stats(stats)
             try
                 while true
@@ -156,9 +169,10 @@ function stream_prefix_hash_scan_variants!(out, data, geometry, query, dbi, guid
                     if prefix_hash_scan_active_mask(state) == 0
                         results[i] = ScanVariantRow[]
                     else
-                        results[i] = scan_prefix_hash_scan_variant_work(ctx, worker, scratch,
+                        results[i] = scan_prefix_hash_scan_variant_work(ctx, worker,
                             data, work[i], guides, state, seen, worker_stats)
                     end
+                    report_prefix_hash_scan_progress!(progress, work_bases(work[i]))
                 end
             finally
                 close(worker.io)

@@ -173,6 +173,14 @@ compiled kernel contains no x86 intrinsics and no target features, which
 `test/src/prefix_hash_scan.jl` and `scripts/verify_simd_codegen.jl portable`
 check.
 
+AVX-512 primitives take a pointer and return scalar masks. They never pass a
+`<64 x i8>` value across a call. Code compiled without AVX-512, such as the
+standalone app's sysimage targets or `-C x86-64-v3`, cannot inline a function
+tagged `+avx512f,+avx512bw`. The vector would then travel in two YMM registers
+on the caller side and one ZMM register on the callee side, which corrupts
+the masks. Before this rule, the app's AVX-512 backend returned no rows.
+`scripts/verify_simd_codegen.jl avx512_abi`, run under `-C x86-64-v3`, checks it.
+
 ### Reference variants
 
 Tests compare the streaming backends against independent references:

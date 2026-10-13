@@ -707,7 +707,7 @@ function search_prefixHashScan(
         uses_raw_simd || error("VCF searches require a streaming backend")
         variant_data === nothing && (variant_data = prepare_prefix_hash_scan_variants(
             vcf, dbi, reference_lengths, selected, vcf_annotate; verbose = verbose,
-            max_alleles = vcf_max_alleles))
+            max_alleles = vcf_max_alleles, progress_interval = progress_interval))
     end
     if stats !== nothing && variant_data !== nothing
         stats.variants_read = variant_data.counts[:records]
@@ -716,7 +716,7 @@ function search_prefixHashScan(
         stats.max_anchor_fragments = variant_data.max_anchor_fragments
         stats.vcf_truncated_anchors = variant_data.truncated_anchors
         stats.fragment_bases = sum(f -> f.bases, variant_data.fragments; init = 0)
-        stats.descriptor_bytes = Base.summarysize(variant_data)
+        stats.descriptor_bytes = variant_descriptor_bytes(variant_data)
         stats.enumeration_ns = variant_data.enumeration_ns
     end
     if verbose && _batch[1] == 1
@@ -860,7 +860,7 @@ function search_prefixHashScan(
             variant_data === nothing || stream_prefix_hash_scan_variants!(
                 out, variant_data, geometry, query, dbi, guides, guides_, myers_profiles,
                 distance, stream_chunk_bases, scan_threads, early_stopping, stats,
-                Val(effective_simd_backend))
+                Val(effective_simd_backend); progress = progress)
             stats === nothing || (stats.scan_ns += time_ns() - scan_start)
             return nothing
         end
@@ -1289,7 +1289,7 @@ function search_prefixHashScan(
                 error("VCF searches require a streaming backend")
             variant_data = prepare_prefix_hash_scan_variants(
                 vcf, dbi, lengths, selected, vcf_annotate; verbose = verbose,
-                max_alleles = vcf_max_alleles)
+                max_alleles = vcf_max_alleles, progress_interval = progress_interval)
         end
     end
     prepared_paths, _ = load_prefix_hash_scan_paths(

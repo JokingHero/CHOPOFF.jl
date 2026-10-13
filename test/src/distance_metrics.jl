@@ -3,6 +3,7 @@ using Test
 using CHOPOFF: isinclusive, commonprefix, hamming, getseq,
     levenshtein, pa_sa, align, prefix_align, suffix_align!, suffix_align
 using BioSequences
+using Random
 
 @testset "distance_metrics.jl" begin
 
@@ -257,5 +258,45 @@ using BioSequences
                 end
             end
         end
+    end
+    @testset "align matches a naive edit-distance DP" begin
+        # The guide aligns in full against a prefix of ref; the unused ref suffix is free.
+        function naive(guide, ref)
+            n, m = length(guide), length(ref)
+            D = zeros(Int, n + 1, m + 1)
+            D[:, 1] .= 0:n
+            D[1, :] .= 0:m
+            for i in 1:n, j in 1:m
+                D[i + 1, j + 1] = min(D[i, j + 1] + 1, D[i + 1, j] + 1,
+                    D[i, j] + !iscompatible(guide[i], ref[j]))
+            end
+            return minimum(D[n + 1, :])
+        end
+        rng = MersenneTwister(20261012)
+        bad = String[]
+        for _ in 1:5000
+            k = rand(rng, 1:4)
+            guide = rand(rng, collect("ACGT"), 20)
+            ref = copy(guide)
+            for _ in 1:rand(rng, 0:(k + 1))
+                p = rand(rng, eachindex(ref))
+                op = rand(rng, 1:3)
+                op == 1 ? (ref[p] = rand(rng, collect("ACGTRYN"))) :
+                    op == 2 ? insert!(ref, p, rand(rng, collect("ACGT"))) : deleteat!(ref, p)
+            end
+            append!(ref, rand(rng, collect("ACGT"), k))
+            g, r = LongDNA{4}(String(guide)), LongDNA{4}(String(ref))
+            aln = align(g, r, k)
+            ok = aln.dist == min(naive(g, r), k + 1)
+            if ok && aln.dist <= k
+                cost = count(((a, b),) -> a == '-' || b == '-' || !iscompatible(DNA(a), DNA(b)),
+                    zip(aln.guide, aln.ref))
+                ok = replace(aln.guide, "-" => "") == String(guide) &&
+                    startswith(String(r), replace(aln.ref, "-" => "")) && cost == aln.dist
+            end
+            ok || push!(bad, "k=$k guide=$g ref=$r align=$aln naive=$(naive(g, r))")
+        end
+        isempty(bad) || @info "align disagrees with the naive DP" count = length(bad) examples = first(bad, 5)
+        @test isempty(bad)
     end
 end

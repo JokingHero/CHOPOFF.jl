@@ -18,6 +18,13 @@
             @test occursin(case.message,sprint(showerror,caught))
             @test read(out,String) == "preserve existing output"
         end
+        @testset "Input errors suggest a bcftools fix" begin
+            message(vcf) = try run(vcf); "" catch err; sprint(showerror,err) end
+            @test occursin("`bcftools view -t ^absent`",message(joinpath(root,"invalid","unknown_contig.vcf")))
+            @test occursin("bcftools norm -f",message(joinpath(root,"invalid","ref_mismatch.vcf")))
+            vcf=vtest_vcf(joinpath(dir,"renamed.vcf"),[("1",45,".","G","A",".",".",".")])
+            @test occursin("names it chr1, rename with `bcftools annotate --rename-chrs`",message(vcf))
+        end
         @testset "Header-only VCF and selected chromosomes" begin
             vcf=vtest_vcf(joinpath(dir,"empty.vcf"),[])
             run(vcf;region="chr2")
@@ -39,6 +46,17 @@
             @test DataFrame(CSV.File(out)).chromosome == ["chr1"]
             @test_throws ErrorException run(vcf;region="chr2")
             @test_throws ErrorException run(joinpath(root,"invalid","unknown_contig.vcf");region="chr1")
+            # Reference rows match a search without VCF; region also works without VCF.
+            base=joinpath(dir,"base.csv")
+            search_prefixHashScan([guide],genome,base;distance=1,region="chr1")
+            @test select(DataFrame(CSV.File(out)),names(DataFrame(CSV.File(base)))) == DataFrame(CSV.File(base))
+            CHOPOFF.search_prefixHashScan([guide],genome,Motif("Cas9";distance=1),base;
+                distance=1,region="chr2",scan_backend=:legacy)
+            @test DataFrame(CSV.File(base)).chromosome == ["chr2"]
+            search_prefixHashScan([guide],genome,base;distance=1,region="chr1",output=:counts)
+            @test DataFrame(CSV.File(base)).D0 == [1]
+            @test_throws ErrorException CHOPOFF.search_prefixHashScan([guide],genome,Motif("Cas9";distance=1),out;
+                distance=1,vcf,scan_backend=:legacy)
         end
         @testset "Ignored markers preserve literal siblings and emit one warning" begin
             stats=PrefixHashScanStats()

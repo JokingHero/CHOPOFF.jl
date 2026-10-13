@@ -28,6 +28,9 @@ struct PrefixHashScanVariants
     max_stop::Vector{Vector{Int}}
     segments::Vector{ScanVariantSegment}
     fragments::Vector{ScanVariantFragment}
+    reference_first::Vector{Vector{Int}}    # merged reference spans per chromosome
+    reference_offset::Vector{Vector{Int}}   # zero-based span offsets in reference_bytes
+    reference_bytes::Vector{UInt8}
     counts::Dict{Symbol, Int}
     max_anchor_fragments::Int
     max_alleles::Int
@@ -35,7 +38,19 @@ struct PrefixHashScanVariants
     enumeration_ns::UInt64
 end
 
-function materialize_variant_fragment!(raw, scratch, io, index, data, fragment, first, last)
+# Base.summarysize tracks object identity and took over three minutes on a
+# genome-wide single-sample VCF. This linear count omits per-object headers,
+# about 20% of the total for GIAB HG001.
+function variant_descriptor_bytes(data::PrefixHashScanVariants)
+    nested(v) = sum(sizeof, v; init = 0)
+    variant(v) = sizeof(ScanVariant) + sizeof(v.ref) + sizeof(v.alt) + sizeof(v.sequence) +
+        sizeof(v.allele_key) + sizeof(v.annotation)
+    return sum(variant, data.variants; init = 0) + sizeof(data.by_chrom) + nested(data.max_stop) +
+        sizeof(data.segments) + sizeof(data.fragments) + nested(data.reference_first) +
+        nested(data.reference_offset) + sizeof(data.reference_bytes)
+end
+
+function materialize_variant_fragment!(raw, data, fragment, first, last)
     offset = 0
     for si in fragment.segments
         seg = data.segments[si]
@@ -44,7 +59,10 @@ function materialize_variant_fragment!(raw, scratch, io, index, data, fragment, 
         if lo <= hi
             a, b = seg.first + lo - offset - 1, seg.first + hi - offset - 1
             if seg.variant == 0
-                append!(raw, read_prefix_hash_scan_range!(scratch, io, index, fragment.chrom, a, b))
+                starts = data.reference_first[fragment.chrom]
+                j = searchsortedlast(starts, a)
+                o = data.reference_offset[fragment.chrom][j] + a - starts[j]
+                append!(raw, @view data.reference_bytes[(o + 1):(o + b - a + 1)])
             else
                 append!(raw, @view data.variants[seg.variant].sequence[a:b])
             end

@@ -61,6 +61,13 @@
                 @test count(line -> startswith(line,"guide,"),readlines(out)) == 1
                 @test any(row -> row.guide == string(guides[n]) && !ismissing(row.variants),eachrow(rows))
             end
+            stats = PrefixHashScanStats()
+            CHOPOFF.search_prefixHashScan(guides[1:1],genome,Motif("Cas9";distance=1),joinpath(dir,"stats.csv");
+                distance=1,vcf,stats)
+            @test stats.variants_read == 1
+            @test stats.fragments == 1
+            @test stats.variant_rows > 0
+            @test stats.descriptor_bytes > 0
         end
     end
     @testset "Exact filtering and locus summaries" begin
@@ -116,6 +123,44 @@
             rows = DataFrame(CSV.File(api))
             @test nrow(rows) == 0
             @test length(names(rows)) == 12
+        end
+    end
+    @testset "Verbose progress covers VCF read, enumeration and scan" begin
+        root = joinpath(@__DIR__,"..","sample_data","vcf")
+        mktempdir() do dir
+            logs, _ = Test.collect_test_logs() do
+                search_prefixHashScan([LongDNA{4}(VCF_TEST_GUIDE)],joinpath(root,"references","contracts.fa"),
+                    joinpath(dir,"out.csv");distance=1,vcf=joinpath(root,"valid","annotations.vcf"),
+                    verbose=true,progress_interval=0)
+            end
+            labels = Set(get(Dict(l.kwargs),:batch,"") for l in logs if l.message == "prefixHashScan progress")
+            @test issubset(Set(["VCF read","VCF enumerate","1/1 VCF"]),labels)
+        end
+    end
+    @testset "A failure during the variant scan keeps the previous output [V14]" begin
+        root = joinpath(@__DIR__,"..","sample_data","vcf")
+        mktempdir() do dir
+            g = VCF_TEST_GUIDE
+            guides = [LongDNA{4}(join("ACGT"[1+((i >> (2*j)) & 3)] for j in 0:3)*g[5:end]) for i in 0:64]
+            out = joinpath(dir,"out.csv")
+            write(out,"preserve existing output")
+            before = readdir(dir)
+            # Batch 1 completes; batch 2 fails after its reference rows reach the staged file.
+            calls = Ref(0)
+            CHOPOFF.eval(:(stream_prefix_hash_scan_variants!(out::IOStream, args...; kwargs...) =
+                ($calls[] += 1) == 2 ? (write(out,"partial\n"); error("injected variant scan failure")) :
+                invoke(stream_prefix_hash_scan_variants!, Tuple{ntuple(_ -> Any, length(args) + 1)...},
+                    out, args...; kwargs...)))
+            override = only(filter(m -> m.sig.parameters[2] == IOStream, methods(CHOPOFF.stream_prefix_hash_scan_variants!)))
+            try
+                @test_throws "injected variant scan failure" Base.invokelatest(search_prefixHashScan,guides,
+                    joinpath(root,"references","contracts.fa"),out;distance=1,vcf=joinpath(root,"valid","annotations.vcf"))
+                @test calls[] == 2
+                @test read(out,String) == "preserve existing output"
+                @test readdir(dir) == before
+            finally
+                Base.delete_method(override)
+            end
         end
     end
 end
