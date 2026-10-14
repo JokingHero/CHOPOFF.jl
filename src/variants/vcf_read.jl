@@ -43,9 +43,15 @@ function prefix_hash_scan_chromosomes(region, names)
     return BitVector(name in requested for name in names)
 end
 
-variant_token(s) = replace(string(s), "%" => "%25", ";" => "%3B", "|" => "%7C")
+function variant_token(s)
+    t = string(s)
+    any(b -> b == UInt8('%') || b == UInt8(';') || b == UInt8('|'), codeunits(t)) || return t
+    return replace(t, "%" => "%25", ";" => "%3B", "|" => "%7C")
+end
 
 function foreach_concrete_variant(f, sequence::String)
+    all(b -> prefix_hash_scan_raw_code(b) != 0xff, codeunits(sequence)) &&
+        return f(collect(codeunits(sequence)))
     bytes = collect(codeunits(sequence))
     positions = findall(b -> prefix_hash_scan_raw_code(b) == 0xff, bytes)
     masks = prefix_hash_scan_iupac_mask.(bytes[positions])
@@ -161,7 +167,7 @@ function read_scan_variants(path, dbi, lengths, selected, annotate; progress = n
             tab2 = tab1 === nothing ? nothing : findnext('\t', text, tab1 + 1)
             pos = tab2 === nothing ? nothing : tryparse(Int, SubString(text, tab1 + 1, tab2 - 1))
             pos === nothing && error("Malformed VCF record $source: $(first(text, 80))")
-            chrom = String(SubString(text, 1, tab1 - 1))
+            chrom = SubString(text, 1, tab1 - 1)
             if !haskey(chrom_index, chrom)
                 renamed = startswith(chrom, "chr") ? chrom[4:end] : "chr" * chrom
                 error("VCF chromosome is absent from the reference: $chrom; " * (haskey(chrom_index, renamed) ?
@@ -173,7 +179,7 @@ function read_scan_variants(path, dbi, lengths, selected, annotate; progress = n
                 chrom in seen_chrom && error("VCF chromosome blocks are not contiguous: $chrom")
                 isempty(previous_chrom) || (finished_bases += lengths[chrom_index[previous_chrom]])
                 push!(seen_chrom, chrom)
-                previous_chrom, previous_pos = chrom, 0
+                previous_chrom, previous_pos = String(chrom), 0
             end
             pos >= previous_pos || error("VCF positions are not sorted at $chrom:$pos")
             previous_pos = pos
@@ -183,8 +189,14 @@ function read_scan_variants(path, dbi, lengths, selected, annotate; progress = n
                 counts[:outside_region] += 1
                 continue
             end
-            record = VCF.Record(text)
-            ref = uppercase(VCF.ref(record))
+            # ID, REF and ALT come from the line; the full record parser runs
+            # only when vcf_annotate needs INFO or FORMAT fields.
+            tab3 = findnext('\t', text, tab2 + 1)
+            tab4 = tab3 === nothing ? nothing : findnext('\t', text, tab3 + 1)
+            tab4 === nothing && error("Malformed VCF record $source: $(first(text, 80))")
+            tab5 = something(findnext('\t', text, tab4 + 1), ncodeunits(text) + 1)
+            record = isempty(fields) ? nothing : VCF.Record(text)
+            ref = uppercase(SubString(text, tab3 + 1, tab4 - 1))
             1 <= pos && pos + length(ref) - 1 <= lengths[ci] ||
                 error("VCF REF is outside the reference at $chrom:$pos")
             reference = uppercase(String(variant_reference_view(cursor, ci, pos, pos + length(ref) - 1)))
@@ -193,13 +205,10 @@ function read_scan_variants(path, dbi, lengths, selected, annotate; progress = n
                 mb != 0 && ma & mb == mb || error("VCF REF mismatch at $chrom:$pos: $ref versus $reference; " *
                     "check the reference build and normalize with `bcftools norm -f reference.fa -c e`")
             end
-            alts = VCF.hasalt(record) ? VCF.alt(record) : String[]
-            isempty(alts) && (counts[:no_alt] += 1)
+            alts = split(SubString(text, tab4 + 1, tab5 - 1), ',')
             length(alts) > 1 && (counts[:multiallelic] += 1)
-            # The parser can expose cumulative ranges for multiple IDs.
-            # Reading their complete field preserves the original ID list.
-            id_field = VCF.hasid(record) ? String(record.data[
-                first(first(record.id)):last(last(record.id))]) : ""
+            id_field = SubString(text, tab2 + 1, tab3 - 1)
+            id_field == "." && (id_field = SubString(text, 1, 0))
             for (alt_idx, alt_raw) in enumerate(alts)
                 if alt_raw in (".", "*", "<NON_REF>", "<*>")
                     reason = alt_raw == "." ? :no_alt : alt_raw == "*" ? :spanning_deletion : :non_ref
@@ -222,13 +231,13 @@ function read_scan_variants(path, dbi, lengths, selected, annotate; progress = n
                 first = pos + prefix
                 stop = pos + length(ref) - suffix
                 allele_key = variant_token("$chrom:$pos:$ref>$alt")
-                id = isempty(id_field) ? "$chrom:$pos:$ref>$alt" : id_field
-                annotation = variant_token(id) * "|" * allele_key
+                annotation = (isempty(id_field) ? allele_key : variant_token(id_field)) * "|" * allele_key
                 extra = variant_allele_annotation(record, fields, header.sampleID, alt_idx)
+                concrete_label = isempty(extra) ? annotation : annotation * extra
                 foreach_concrete_variant(alt) do concrete
-                    resolved = ambiguous ? "|resolved=" * String(copy(concrete)) : ""
+                    label = ambiguous ? annotation * "|resolved=" * String(copy(concrete)) * extra : concrete_label
                     push!(variants, ScanVariant(ci, pos, first, stop, source, ref, alt,
-                        concrete[(prefix + 1):(end - suffix)], allele_key, annotation * resolved * extra))
+                        concrete[(prefix + 1):(end - suffix)], allele_key, label))
                 end
             end
         end

@@ -38,43 +38,9 @@ function prepare_prefix_hash_scan_variants(path, dbi, lengths, selected, annotat
         push!(path, ScanVariantSegment(anchor, 1, length(initial.sequence)))
         taken = Int[anchor]
         initial_length = initial.first - left + length(initial.sequence)
-        goal = initial_length + window
-        capped = false
-        function emit(cursor, emitted)
-            remaining = min(goal - emitted, lengths[ci] - cursor + 1)
-            remaining > 0 && push!(path, ScanVariantSegment(0, cursor, cursor + remaining - 1))
-            first = length(segments) + 1
-            append!(segments, path)
-            push!(fragments, ScanVariantFragment(ci, first:length(segments), anchor, emitted + max(remaining, 0)))
-            remaining > 0 && pop!(path)
-        end
-        function walk(next, cursor, emitted)
-            if emitted >= goal || next > last(by_chrom[ci])
-                emit(cursor, emitted)
-                return
-            end
-            v = variants[next]
-            if v.first - cursor >= goal - emitted
-                emit(cursor, emitted)
-                return
-            end
-            # Skipping leaves reference emission to the next taken variant.
-            walk(next + 1, cursor, emitted)
-            v.first < cursor && return
-            any(i -> scan_variants_conflict(v, variants[i]), taken) && return
-            if length(taken) >= max_alleles
-                capped = true
-                return
-            end
-            n = length(path)
-            cursor < v.first && push!(path, ScanVariantSegment(0, cursor, v.first - 1))
-            push!(path, ScanVariantSegment(next, 1, length(v.sequence)))
-            push!(taken, next)
-            walk(next + 1, v.stop, emitted + v.first - cursor + length(v.sequence))
-            pop!(taken)
-            resize!(path, n)
-        end
-        walk(anchor + 1, initial.stop, initial_length)
+        walk = (; variants, segments, fragments, path, taken, ci, anchor, max_alleles,
+            last_variant = last(by_chrom[ci]), goal = initial_length + window, chrom_length = lengths[ci])
+        capped = walk_variant_anchor!(walk, anchor + 1, initial.stop, initial_length)
         # Merging per anchor keeps the span list near one entry per anchor.
         append!(reference_spans[ci], merge_variant_reference_spans!([(seg.first, seg.last)
             for seg in @view(segments[anchor_segments:end]) if seg.variant == 0 && seg.first <= seg.last]))
@@ -102,6 +68,43 @@ function prepare_prefix_hash_scan_variants(path, dbi, lengths, selected, annotat
     return data
 end
 
+function emit_variant_fragment!(w, cursor, emitted)
+    remaining = min(w.goal - emitted, w.chrom_length - cursor + 1)
+    remaining > 0 && push!(w.path, ScanVariantSegment(0, cursor, cursor + remaining - 1))
+    first = length(w.segments) + 1
+    append!(w.segments, w.path)
+    push!(w.fragments, ScanVariantFragment(w.ci, first:length(w.segments), w.anchor, emitted + max(remaining, 0)))
+    remaining > 0 && pop!(w.path)
+    return nothing
+end
+
+# Top-level recursion: a recursive local closure is boxed and dispatches
+# dynamically on every call. Returns true when vcf_max_alleles cut a combination.
+function walk_variant_anchor!(w, next, cursor, emitted)
+    if emitted >= w.goal || next > w.last_variant
+        emit_variant_fragment!(w, cursor, emitted)
+        return false
+    end
+    v = w.variants[next]
+    if v.first - cursor >= w.goal - emitted
+        emit_variant_fragment!(w, cursor, emitted)
+        return false
+    end
+    # Skipping leaves reference emission to the next taken variant.
+    capped = walk_variant_anchor!(w, next + 1, cursor, emitted)
+    v.first < cursor && return capped
+    any(i -> scan_variants_conflict(v, w.variants[i]), w.taken) && return capped
+    length(w.taken) >= w.max_alleles && return true
+    n = length(w.path)
+    cursor < v.first && push!(w.path, ScanVariantSegment(0, cursor, v.first - 1))
+    push!(w.path, ScanVariantSegment(next, 1, length(v.sequence)))
+    push!(w.taken, next)
+    capped |= walk_variant_anchor!(w, next + 1, v.stop, emitted + v.first - cursor + length(v.sequence))
+    pop!(w.taken)
+    resize!(w.path, n)
+    return capped
+end
+
 function merge_variant_reference_spans!(spans)
     sort!(spans)
     merged = Tuple{Int, Int}[]
@@ -123,10 +126,11 @@ function read_variant_reference_spans(dbi, lengths, reference_spans)
     firsts = Vector{Int}[]
     offsets = Vector{Int}[]
     bytes = UInt8[]
+    merged_spans = merge_variant_reference_spans!.(reference_spans)
+    sizehint!(bytes, sum(spans -> sum(((a, b),) -> b - a + 1, spans; init = 0), merged_spans; init = 0))
     open(dbi.gi.filepath, "r") do genome
         cursor = VariantReferenceCursor(genome, index, lengths)
-        for (ci, spans) in enumerate(reference_spans)
-            merged = merge_variant_reference_spans!(spans)
+        for (ci, merged) in enumerate(merged_spans)
             push!(firsts, first.(merged))
             push!(offsets, Int[])
             for (a, b) in merged

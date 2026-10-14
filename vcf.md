@@ -417,16 +417,31 @@ Repeated GIAB preparations in one process took 40.6-44.0 s, so the 84 s and 100 
 benchmark runs were not reproduced with preparation alone. Their cause (host load,
 or GC state left by the previous search) is unknown.
 
-Candidate fixes for the read, none applied yet:
+Applied after the profile, measured October 13, 2026 (same benchmark, five
+alternating runs on chromosome 22, three genome-wide):
 
-1. Pass plain ACGT ALTs to the callback directly in `foreach_concrete_variant`.
-2. Build the `chrom:pos:ref>alt` key once per ALT, and skip `replace` in
-   `variant_token` when the string has no `%`, `;` or `|`.
-3. Take ID, REF and ALT from the tab-split line and keep `VCF.Record` only for
-   `vcf_annotate`.
+- Plain ACGT ALTs skip the IUPAC expansion in `foreach_concrete_variant`.
+- The `chrom:pos:ref>alt` key is built once per ALT; `variant_token` skips
+  `replace` when the string has no `%`, `;` or `|`.
+- ID, REF and ALT come from the tab-split line. `VCF.Record` runs only when
+  `vcf_annotate` needs INFO or FORMAT fields, so without it selected records no
+  longer get the package's QUAL, FILTER and INFO syntax checks.
+- CHROM is a `SubString`; a `String` is allocated only on a chromosome change.
+- The enumeration walk is a top-level function. As a recursive local closure it
+  captured itself and `capped` in `Core.Box`, so every call dispatched
+  dynamically.
+- Reference span bytes are reserved before reading.
 
-Items 1 and 2 are small changes. They touch 41% of the profile, so an estimated
-20-30% of GIAB genome-wide preparation, not yet measured. Item 3 adds a second field parser.
+| Input | Before | After | Preparation before / after | Allocated before / after |
+|---|---:|---:|---:|---:|
+| Synthetic chr22 | 0.99 s | 0.86 s | 0.41 / 0.21 s | |
+| GIAB chr22 | 2.86 s | 2.64 s | 2.26 / 2.03 s | |
+| ClinVar chr22, k = 3 | 28.0 s | 20.8 s | 26.0 / 17.7 s | 11.1 / 6.8 GB |
+| GIAB genome-wide | 55.9 s | 32.0 s | 50.4 / 26.7 s | 19.6 / 10.1 GB |
+
+Output was byte-identical for all four, and prepared data (variants, counts,
+fragments, segments, reference spans) was identical for every valid fixture,
+including `vcf_annotate`.
 
 ## Allele cap and measured cost
 
@@ -477,6 +492,8 @@ Preparation took a median 45.8 s of the 49 s, and fragment materialization 2.6 s
 summed over workers. Output was byte-identical to the genome-wide k = 3 run made
 before the speed changes (940 variant rows). The slow runs (84 s and 100 s)
 directly followed another VCF run, and their preparation alone took 77-92 s.
+After the [preparation fixes](#genome-wide-preparation-profile) the median is
+32.0 s (31-44 s over three runs), with 26.7 s of preparation and 6.5 GB peak RSS.
 
 Memory is about 0.3 GB per million fragments. Preparation holds the fragments of
 every selected chromosome, so a genome-wide run costs roughly the sum over
@@ -570,13 +587,15 @@ Cheap speed and documentation:
 - [x] README section: bcftools recipe, one example, output columns, and when to
   change `vcf_max_alleles`. The example runs on the standalone app.
 - [x] Line scan for records on unselected chromosomes: GIAB chr22 6.90 s to 2.68 s;
-  see [Speed changes](#speed-changes). Standalone app rebuilt 2026-10-13 before
-  this change, so it does not include it.
+  see [Speed changes](#speed-changes). The standalone app rebuilt on 2026-10-13
+  (21:44) includes this change and the preparation fixes below; the full package
+  suite passed in its build.
 - [x] Profile genome-wide preparation (GIAB, ClinVar): phase times, CPU profile,
   and the slowdown of repeated runs in one process; see
   [Genome-wide preparation profile](#genome-wide-preparation-profile).
-- [ ] Read-path fixes 1-2 from the profile (concrete-ALT fast path, allele key
-  built once).
+- [x] Read-path and enumeration fixes from the profile: GIAB genome-wide 55.9 s
+  to 32.0 s, ClinVar chr22 28.0 s to 20.8 s; see
+  [Genome-wide preparation profile](#genome-wide-preparation-profile).
 
 Features and evaluation:
 
