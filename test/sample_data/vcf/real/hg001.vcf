@@ -1,0 +1,34 @@
+##fileformat=VCFv4.2
+##source=make_real_vcfs.jl from giab_hg001_norm.vcf.gz; contigs are GRCh38 windows, see windows.tsv
+##contig=<ID=hg001_22_17522970,length=85>
+##contig=<ID=hg001_22_20288181,length=107>
+##contig=<ID=hg001_22_23592794,length=94>
+##contig=<ID=hg001_22_27151532,length=82>
+##contig=<ID=hg001_22_35693317,length=81>
+##contig=<ID=hg001_22_39811985,length=81>
+##contig=<ID=hg001_22_42886416,length=80>
+##contig=<ID=hg001_22_46524509,length=112>
+##contig=<ID=hg001_22_47856959,length=88>
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	HG001
+hg001_22_17522970	41	.	GAAAA	AAAAA,G	.	PASS	.	GT	1/2
+hg001_22_17522970	45	.	A	AGGGG	.	PASS	.	GT	0/1
+hg001_22_20288181	41	.	T	TG	.	PASS	.	GT	1/1
+hg001_22_20288181	50	.	T	C	.	PASS	.	GT	1/1
+hg001_22_20288181	52	.	TG	T	.	PASS	.	GT	1/1
+hg001_22_20288181	58	.	T	C	.	PASS	.	GT	1/1
+hg001_22_20288181	67	.	G	T	.	PASS	.	GT	1/1
+hg001_22_23592794	41	.	A	G	.	PASS	.	GT	0/1
+hg001_22_23592794	42	.	TACACACACACAC	TACACACACAC,T	.	PASS	.	GT	2/1
+hg001_22_27151532	41	.	GT	TT,G	.	PASS	.	GT	2/1
+hg001_22_35693317	41	.	T	*,C	.	PASS	.	GT	1/2
+hg001_22_39811985	41	.	A	AAC	.	PASS	.	GT	1/0
+hg001_22_42886416	36	.	GGTAT	G	.	PASS	.	GT	1/0
+hg001_22_46524509	41	.	T	TGC	.	PASS	.	GT	0/1
+hg001_22_46524509	53	.	T	C	.	PASS	.	GT	0/1
+hg001_22_46524509	62	.	GTC	G	.	PASS	.	GT	0/1
+hg001_22_46524509	65	.	T	C	.	PASS	.	GT	0/1
+hg001_22_46524509	68	.	C	G	.	PASS	.	GT	1/1
+hg001_22_46524509	72	.	C	G	.	PASS	.	GT	0/1
+hg001_22_47856959	41	.	CGT	CT,C	.	PASS	.	GT	1/2
+hg001_22_47856959	43	.	TGTGTG	T	.	PASS	.	GT	0/1

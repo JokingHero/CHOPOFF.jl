@@ -7,6 +7,7 @@ Run `julia --project=. test/sample_data/vcf/make_test_vcfs.jl --check` to verify
 Each sequence case below has `valid/ID.vcf`, `references/ID.fa` (with FAI), and `guides/ID.txt`.
 `annotations` and `ignored_markers` use `references/contracts.fa` and `guides/mixed_choices.txt`.
 Edits and required witness alleles are explicit in `cases.jl`. Expected result sets come from the independent test oracle, never from the VCF scanner.
+Small fixtures cut from real call sets (GIAB, 1kGP, ClinVar, gnomAD) are in `real/` (see `real/README.md`).
 
 | ID | Checklist | Motif / distance | Required ALT IDs | Purpose |
 |---|---|---|---|---|
@@ -56,7 +57,7 @@ Edits and required witness alleles are explicit in `cases.jl`. Expected result s
 | ignored_markers | V03 / V10 | Cas9 / 1 | See input-contract assertions | Metadata/marker contract on references/contracts.fa |
 
 Invalid cases use `references/contracts.fa` and the guide from `guides/mixed_choices.txt`.
-Each file has one intended fault. Unsupported symbolic alleles are rejection tests, not SV support.
+Each file has one intended fault. Unsupported SV kinds are skipped with a warning, not rejected (see `test/variants/sv.jl`).
 
 | Invalid ID | Expected error fragment |
 |---|---|
@@ -67,10 +68,7 @@ Each file has one intended fault. Unsupported symbolic alleles are rejection tes
 | ref_crosses_end | outside the reference |
 | unsorted | not sorted |
 | repeated_contig | not contiguous |
-| unsupported_del | Unsupported VCF ALT |
-| unsupported_dup | Unsupported VCF ALT |
-| unsupported_inv | Unsupported VCF ALT |
-| unsupported_ins | Unsupported VCF ALT |
-| unsupported_cnv | Unsupported VCF ALT |
-| unsupported_bnd | Unsupported VCF ALT |
 | unsupported_letter | Unsupported VCF ALT |
+| sv_missing_end | needs integer INFO/END or INFO/SVLEN |
+| sv_end_before_pos | ends outside |
+| sv_end_past_chromosome | ends outside |

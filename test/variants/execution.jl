@@ -134,7 +134,7 @@
                     verbose=true,progress_interval=0)
             end
             labels = Set(get(Dict(l.kwargs),:batch,"") for l in logs if l.message == "prefixHashScan progress")
-            @test issubset(Set(["VCF read","VCF enumerate","1/1 VCF"]),labels)
+            @test issubset(Set(["VCF read","1/1 VCF enumerate","1/1 VCF"]),labels)
         end
     end
     @testset "A failure during the variant scan keeps the previous output [V14]" begin

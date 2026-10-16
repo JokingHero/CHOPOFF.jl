@@ -1,4 +1,4 @@
-using Test, CHOPOFF, BioSequences, FASTX, TwoBit, CSV, DataFrames, CodecZlib
+using Test, CHOPOFF, BioSequences, FASTX, TwoBit, CSV, DataFrames, CodecZlib, Logging
 
 function vtest_fasta(path, sequences; width = 60)
     offset = 0
@@ -51,42 +51,41 @@ end
 
 vtest_record(v; chrom = "chr1") = (chrom, v.pos, v.id, v.ref, v.vcf_alt, ".", "PASS", ".")
 
+function vtest_conflict(a, b)
+    a.group == b.group && return true
+    a.first == a.stop && b.first == b.stop && return a.first == b.first
+    a.first == a.stop && return b.first < a.first < b.stop
+    b.first == b.stop && return a.first < b.first < a.stop
+    return !isempty(intersect(a.first:(a.stop - 1), b.first:(b.stop - 1)))
+end
+
 function vtest_haplotype(sequence, selected; chrom = "chr1")
     edits = sort(selected; by = v -> (v.first, v.first == v.stop ? 0 : 1))
     for i in eachindex(edits), j in 1:(i - 1)
-        a, b = edits[i], edits[j]
-        a.group == b.group && return nothing
-        if a.first == a.stop && b.first == b.stop
-            a.first == b.first && return nothing
-        elseif a.first == a.stop
-            b.first < a.first < b.stop && return nothing
-        elseif b.first == b.stop
-            a.first < b.first < a.stop && return nothing
-        else
-            !isempty(intersect(a.first:(a.stop - 1), b.first:(b.stop - 1))) && return nothing
-        end
+        vtest_conflict(edits[i], edits[j]) && return nothing
     end
     bases = Char[]
-    coordinates = Tuple{Int, String}[]
+    # (reference position, origin allele key, offset); keys are shared, origins built on use.
+    coordinates = Tuple{Int, String, Int}[]
     events = Tuple{Int, Int, NamedTuple}[]
     cursor = 1
     for v in edits
         for p in cursor:(v.first - 1)
             push!(bases, sequence[p])
-            push!(coordinates, (p, ""))
+            push!(coordinates, (p, "", 0))
         end
         start = length(bases) + 1
+        key = vtest_key(v, chrom)
         for (offset, base) in enumerate(v.alt)
             push!(bases, base)
-            origin = vtest_key(v, chrom) * ":$offset"
-            push!(coordinates, length(v.alt) == v.stop - v.first ? (v.first + offset - 1, "") : (v.pos, origin))
+            push!(coordinates, length(v.alt) == v.stop - v.first ? (v.first + offset - 1, "", 0) : (v.pos, key, offset))
         end
         push!(events, (start, length(bases), v))
         cursor = v.stop
     end
     for p in cursor:length(sequence)
         push!(bases, sequence[p])
-        push!(coordinates, (p, ""))
+        push!(coordinates, (p, "", 0))
     end
     return String(bases), coordinates, events
 end
@@ -94,6 +93,7 @@ end
 # Encoding expectations are independent of the production token formatter.
 vtest_escape(s) = join(get(Dict('%' => "%25", ';' => "%3B", '|' => "%7C"), c, string(c)) for c in s)
 vtest_key(v, chrom) = vtest_escape("$chrom:$(v.pos):$(v.ref)>$(v.vcf_alt)")
+vtest_origin((p, key, offset)) = (p, isempty(key) ? "" : key * ":$offset")
 function vtest_annotation(v, chrom; resolved = true)
     id = v.id == "." ? "$chrom:$(v.pos):$(v.ref)>$(v.vcf_alt)" : v.id
     result = vtest_escape(id) * "|" * vtest_key(v, chrom)
@@ -117,9 +117,9 @@ end
 
 vtest_text(value) = ismissing(value) ? "" : string(value)
 vtest_tokens(value) = isempty(vtest_text(value)) ? () : Tuple(sort(split(vtest_text(value), ';')))
+# Alignment strings are left out: the linearDB oracle may place tied gaps elsewhere.
 function vtest_signature(row)
-    return (guide = string(row.guide), alignment_guide = string(row.alignment_guide),
-        alignment_reference = string(row.alignment_reference), distance = Int(row.distance),
+    return (guide = string(row.guide), distance = Int(row.distance),
         chromosome = string(row.chromosome), start = Int(row.start), strand = string(row.strand),
         stop = Int(row.end), variants = vtest_tokens(row.variants),
         overlapping_variants = vtest_tokens(row.overlapping_variants),
@@ -149,22 +149,50 @@ function vtest_haplotypes(reference, edits; chrom = "chr1", max_alleles = typema
     groups = [[i for i in eachindex(edits) if edits[i].group == group]
         for group in unique([v.group for v in edits])]
     haplotypes = []
-    for choices in Iterators.product(([0; group] for group in groups)...)
-        selected = [edits[i] for i in choices if i != 0]
-        length(selected) <= max_alleles || continue
-        hap = vtest_haplotype(reference, selected; chrom)
-        hap === nothing || push!(haplotypes, (hap..., !isempty(selected)))
+    selected = NamedTuple[]
+    # Depth-first over groups; conflicting or over-cap branches are pruned, so
+    # dense capped windows do not enumerate the full product.
+    function visit(k)
+        if k > length(groups)
+            push!(haplotypes, (vtest_haplotype(reference, selected; chrom)..., !isempty(selected)))
+            return
+        end
+        visit(k + 1)
+        length(selected) < max_alleles || return
+        for i in groups[k]
+            any(v -> vtest_conflict(v, edits[i]), selected) && continue
+            push!(selected, edits[i])
+            visit(k + 1)
+            pop!(selected)
+        end
     end
+    visit(1)
     return haplotypes
+end
+
+# Oracle search of haplotype genomes with the original linearDB, independent of
+# prefixHashScan. linearDB counts reference ambiguity over guide and PAM only, while
+# prefixHashScan also counts the extension, so genomes with IUPAC bases use the
+# prefixHashScan brute-force path instead.
+function vtest_search(dir, genome, sequences, guides, motif, distance, output)
+    if any(s -> any(c -> !(c in "ACGT"), s), sequences)
+        CHOPOFF.search_prefixHashScan(guides, genome, motif, output; distance,
+            query_variant = :bruteforce, early_stopping = fill(typemax(Int), distance + 1))
+        return output
+    end
+    db = mkpath(joinpath(dir, "oracle_linearDB"))
+    with_logger(NullLogger()) do
+        build_linearDB("oracle", genome, setdist(motif, distance), db, distance + 1)
+        search_linearDB(db, guides, output; distance)
+    end
+    return output
 end
 
 function vtest_oracle(dir, reference, edits, guides, motif, distance; chrom = "chr1", max_alleles = typemax(Int))
     expected = Set{NamedTuple}()
     haplotypes = vtest_haplotypes(reference, edits; chrom, max_alleles)
     genome = vtest_fasta(joinpath(dir, "oracle.fa"), ["h$i" => h[1] for (i, h) in enumerate(haplotypes)])
-    output = joinpath(dir, "oracle.csv")
-    CHOPOFF.search_prefixHashScan(guides, genome, motif, output;
-        distance, query_variant = :bruteforce, early_stopping = fill(typemax(Int), distance + 1))
+    output = vtest_search(dir, genome, (h[1] for h in haplotypes), guides, motif, distance, joinpath(dir, "oracle.csv"))
     for row in eachrow(DataFrame(CSV.File(output)))
         _, coordinates, events, alternative = haplotypes[parse(Int, row.chromosome[2:end])]
         lo, hi = vtest_span(row, motif)
@@ -181,10 +209,9 @@ function vtest_oracle(dir, reference, edits, guides, motif, distance; chrom = "c
                 footprint && push!(overlaps, vtest_annotation(v, chrom; resolved = false))
             end
         end
-        start, start_origin = coordinates[row.start]
-        stop, end_origin = coordinates[((row.strand == "+") == motif.extends5) ? lo : hi]
-        push!(expected, (guide = string(row.guide), alignment_guide = string(row.alignment_guide),
-            alignment_reference = string(row.alignment_reference), distance = Int(row.distance),
+        start, start_origin = vtest_origin(coordinates[row.start])
+        stop, end_origin = vtest_origin(coordinates[((row.strand == "+") == motif.extends5) ? lo : hi])
+        push!(expected, (guide = string(row.guide), distance = Int(row.distance),
             chromosome = chrom, start, strand = string(row.strand), stop,
             variants = Tuple(sort(alleles)), overlapping_variants = Tuple(sort(unique(overlaps))),
             start_origin, end_origin))

@@ -462,8 +462,13 @@ end
 variant_output_text(value) = ismissing(value) ? "" : string(value)
 
 # POS and trimmed ALT length of an origin key `chrom:POS:REF>ALT` (escaped).
+# A tandem duplication key `chrom:POS:REF><DUP>/END` inserts END - POS bases.
 function variant_origin_extent(key)
-    m = match(r":(\d+):([^:>]+)>([^:]+)$", key)
+    m = match(r":(\d+):([^:>]+)>(<[^>]*>/\d+|[^:]+)$", String(key))
+    if startswith(m.captures[3], '<')
+        pos = parse(Int, m.captures[1])
+        return pos, parse(Int, last(split(m.captures[3], '/'))) - pos
+    end
     unescape(x) = replace(x, "%3B" => ";", "%7C" => "|", "%25" => "%")
     ref, alt = unescape(m.captures[2]), unescape(m.captures[3])
     prefix = 0
@@ -544,6 +549,12 @@ You can specify distance to filter out some of the higher distances.
 `distance` - What is the maximum distance to assume in the data frame, 
     its possible to specify smaller distance than contained in the `res` DataFrame and autofilter lower distances.
 
+`variant_aware` - Count VCF loci once at their best distance.
+
+`per_sample`, `vcf`, `vcf_samples` - For `vcf_mode=:genotype` output, count loci per
+guide and sample. `D` columns count loci a copy certainly carries, `P` columns
+include possible carriers. `vcf` is the searched VCF, read for sample names and ploidy.
+
 # Examples
 ```julia
 $(make_example_doc())
@@ -551,8 +562,14 @@ $(make_example_doc())
 """
 function summarize_offtargets(res::DataFrame;
     distance::Int = isempty(res.distance) ? 0 : maximum(res.distance),
-    variant_aware::Bool = false)
+    variant_aware::Bool = false, per_sample::Bool = false,
+    vcf::Union{Nothing, String} = nothing, vcf_samples::Union{Nothing, Vector{String}} = nothing)
 
+    if per_sample
+        :carriers in propertynames(res) || error("per_sample requires vcf_mode=:genotype detail output")
+        vcf === nothing && error("per_sample requires the searched vcf for sample names and ploidy")
+        return summarize_per_sample(res, distance, vcf, vcf_samples)
+    end
     if variant_aware
         :variants in propertynames(res) || error("variant_aware requires VCF detail output")
         _, _, representatives = variant_locus_groups(res, distance)
@@ -566,4 +583,77 @@ function summarize_offtargets(res::DataFrame;
     df = combine(df,  :distance => (x -> counts_by_dist(x, distance)) => AsTable)
     sort!(df, vcat([Symbol("D$i") for i in 0:distance], :guide))
     return df
+end
+
+# Copies named per sample in a carriers or lost cell: certain copies (`S:j`,
+# `S:*`) and whether `S:?` appears.
+function variant_sample_tokens(text)
+    tokens = Dict{String, Tuple{Int, Bool}}()
+    for token in split(variant_output_text(text), ';'; keepempty = false)
+        name, slot = rsplit(token, ':'; limit = 2)
+        certain, possible = get(tokens, name, (0, false))
+        tokens[name] = slot == "?" ? (certain, true) : (certain + 1, possible)
+    end
+    return tokens
+end
+
+# Counts each locus once per guide and sample, at the best distance among the
+# rows the sample carries. D columns count loci some copy certainly carries; P
+# columns are the upper bound including possible carriers. A reference row is
+# possible while fewer than ploidy copies certainly lost it, and certain when
+# the `lost` cell also marks no further possible loss (`S:?`).
+function summarize_per_sample(res::DataFrame, distance::Int, vcf, samples)
+    res = res[res.distance .<= distance, :]
+    names, ploidy = variant_sample_ploidy(vcf, Set(string.(res.chromosome)), samples)
+    escaped = variant_token.(names)
+    certain = Dict{Tuple{String, String}, Vector{Int}}()
+    possible = Dict{Tuple{String, String}, Vector{Int}}()
+    guides = unique(string.(res.guide))
+    for guide in guides, name in escaped
+        certain[(guide, name)] = zeros(Int, distance + 1)
+        possible[(guide, name)] = zeros(Int, distance + 1)
+    end
+    _, groups, _ = variant_locus_groups(res, distance)
+    loci = Dict{Int, Vector{Int}}()
+    foreach(i -> push!(get!(loci, groups[i], Int[]), i), eachindex(groups))
+    for rows in values(loci)
+        guide = string(res.guide[rows[1]])
+        best_certain = Dict{String, Int}()
+        best_possible = Dict{String, Int}()
+        keep!(best, name, d) = (best[name] = min(get(best, name, d), d))
+        for i in rows
+            d = res.distance[i]
+            if isempty(variant_output_text(res.variants[i]))
+                lost = variant_sample_tokens(res.lost[i])
+                for (name, escaped_name) in zip(names, escaped)
+                    copies, maybe = get(lost, escaped_name, (0, false))
+                    kept = copies < get(ploidy, (name, string(res.chromosome[i])), 2)
+                    kept && !maybe && keep!(best_certain, escaped_name, d)
+                    kept && keep!(best_possible, escaped_name, d)
+                end
+            else
+                for (name, (copies, _)) in variant_sample_tokens(res.carriers[i])
+                    copies > 0 && keep!(best_certain, name, d)
+                    keep!(best_possible, name, d)
+                end
+            end
+        end
+        for (name, d) in best_certain
+            haskey(certain, (guide, name)) && (certain[(guide, name)][d + 1] += 1)
+        end
+        for (name, d) in best_possible
+            haskey(possible, (guide, name)) && (possible[(guide, name)][d + 1] += 1)
+        end
+    end
+    out = DataFrame(guide = String[], sample = String[])
+    for d in 0:distance
+        out[!, Symbol("D$d")] = Int[]
+    end
+    for d in 0:distance
+        out[!, Symbol("P$d")] = Int[]
+    end
+    for guide in guides, (name, escaped_name) in zip(names, escaped)
+        push!(out, (guide, name, certain[(guide, escaped_name)]..., possible[(guide, escaped_name)]...))
+    end
+    return out
 end

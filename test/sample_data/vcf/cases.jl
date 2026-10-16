@@ -99,7 +99,7 @@ function vfixture_cases()
 end
 
 function vfixture_invalid()
-    row(pos, ref, alt; chrom="chr1") = (chrom,pos,"bad",ref,alt,".","PASS",".")
+    row(pos, ref, alt; chrom="chr1", info=".") = (chrom,pos,"bad",ref,alt,".","PASS",info)
     return [
         (id="unknown_contig", records=[row(45,"G","A";chrom="absent")], message="absent from the reference"),
         (id="ref_mismatch", records=[row(45,"T","A")], message="REF mismatch"),
@@ -108,9 +108,10 @@ function vfixture_invalid()
         (id="ref_crosses_end", records=[row(143,"TT","C")], message="outside the reference"),
         (id="unsorted", records=[row(46,"T","C"),row(45,"G","A")], message="not sorted"),
         (id="repeated_contig", records=[row(45,"G","A"),row(45,"G","A";chrom="chr2"),row(46,"T","C")], message="not contiguous"),
-        [(id="unsupported_$name", records=[row(45,"G",alt)], message="Unsupported VCF ALT")
-            for (name,alt) in (("del","<DEL>"),("dup","<DUP>"),("inv","<INV>"),
-                ("ins","<INS>"),("cnv","<CNV>"),("bnd","G]chr2:45]"),("letter","Z"))]...,
+        (id="unsupported_letter", records=[row(45,"G","Z")], message="Unsupported VCF ALT"),
+        (id="sv_missing_end", records=[row(45,"G","<DEL>")], message="needs integer INFO/END or INFO/SVLEN"),
+        (id="sv_end_before_pos", records=[row(45,"G","<DUP>";info="END=45")], message="ends outside"),
+        (id="sv_end_past_chromosome", records=[row(45,"G","<INV>";info="END=144")], message="ends outside"),
     ]
 end
 

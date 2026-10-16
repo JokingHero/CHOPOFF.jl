@@ -1,8 +1,9 @@
 # julia --project=. -t 4 test/extended/variants.jl
-# Optional: CHOPOFF_VCF_SEED, CHOPOFF_VCF_CASES.
+# Optional: CHOPOFF_VCF_SEED, CHOPOFF_VCF_CASES, CHOPOFF_VCF_GT_SEED, CHOPOFF_VCF_GT_CASES.
 include(joinpath(@__DIR__,"..","helpers","vcf.jl"))
 include(joinpath(@__DIR__,"..","sample_data","vcf","cases.jl"))
 include(joinpath(@__DIR__,"..","helpers","vcf_sweeps.jl"))
+include(joinpath(@__DIR__,"..","helpers","vcf_sv.jl"))
 
 seed=parse(Int,get(ENV,"CHOPOFF_VCF_SEED","20261009"))
 cases=parse(Int,get(ENV,"CHOPOFF_VCF_CASES","200"))
@@ -83,5 +84,15 @@ timing=@timed @testset "Extended VCF [V17] seed=$seed" begin
             @test any(row -> row.distance == 0 && length(vtest_tokens(row.variants)) == n,eachrow(rows))
         end
     end
+    # Symbolic DEL, DUP and INV with nearby SNPs: oracle-checked literal rows equal symbolic rows.
+    @testset "Random symbolic SV case $i" for i in 1:90
+        mktempdir() do dir
+            r,svs,guides,d=vtest_sv_random_case(rng,i)
+            vtest_sv_compare(dir,r,svs,guides,Motif("Cas9";distance=d),d;chunk=isodd(i) ? 64 : 97)
+        end
+    end
 end
+# Genotype mode: CHOPOFF_VCF_GT_SEED, CHOPOFF_VCF_GT_CASES (default 200).
+haskey(ENV,"CHOPOFF_VCF_GT_CASES") || (ENV["CHOPOFF_VCF_GT_CASES"]="200")
+include(joinpath(@__DIR__,"..","variants","genotype_corpus.jl"))
 println("Elapsed $(round(timing.time;digits=2)) s; allocated $(timing.bytes) bytes; process peak RSS $(Sys.maxrss()) bytes")

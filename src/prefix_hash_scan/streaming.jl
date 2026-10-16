@@ -227,7 +227,11 @@ struct PrefixHashScanContext{G <: PrefixScanGeometry, Q, I, B <: Val}
     distance::Int
     index::I
     simd_backend::B
+    intervals::Union{Nothing, Vector{Vector{UnitRange{Int}}}}   # BED region, per chromosome
 end
+
+PrefixHashScanContext(geometry, query, dbi, guides_, myers_profiles, distance, index, simd_backend) =
+    PrefixHashScanContext(geometry, query, dbi, guides_, myers_profiles, distance, index, simd_backend, nothing)
 
 # Per-worker file handle and scratch buffers, reused across chunks.
 struct PrefixHashScanWorker
@@ -305,14 +309,15 @@ function stream_prefix_hash_scan_chunk(
     raw, global_offset = scanned
     chunk_counts = early_stop_state === nothing ? nothing :
         zeros(Int, length(ctx.guides_), ctx.distance + 1)
+    intervals = ctx.intervals === nothing ? nothing : ctx.intervals[work.chrom_idx]
     evaluate_prefix_hash_scan_hits!(
         plus, raw, ctx.geometry, worker.plus_hits, global_offset, ctx.dbi,
         false, ctx.guides_, ctx.myers_profiles, ctx.distance, stats,
-        early_stop_state, chunk_counts)
+        early_stop_state, chunk_counts, intervals)
     evaluate_prefix_hash_scan_hits!(
         minus, raw, ctx.geometry, worker.minus_hits, global_offset, ctx.dbi,
         true, ctx.guides_, ctx.myers_profiles, ctx.distance, stats,
-        early_stop_state, chunk_counts)
+        early_stop_state, chunk_counts, intervals)
     chunk_counts === nothing ||
         merge_prefix_hash_scan_chunk_counts!(early_stop_state, chunk_counts)
     return PrefixHashScanChromResult(plus, minus, stats)
@@ -343,20 +348,35 @@ function stream_prefix_hash_scan_count_chunk(
     return PrefixHashScanCountResult(counts, stats)
 end
 
+# With BED `intervals`, cores cover the candidate starts whose site (at most
+# `distance` before the start, and the candidate's last offset plus `distance`
+# after it) can overlap an interval; verification keeps the exact overlaps.
 function prefix_hash_scan_chunk_work(
     reference_lengths, chunk_bases::Int,
-    geometry::PrefixScanGeometry)
+    geometry::PrefixScanGeometry, intervals = nothing)
     work = PrefixHashScanChunkWork[]
     chrom_chunk_ranges = Vector{UnitRange{Int}}(undef, length(reference_lengths))
+    last_offset = prefix_scan_candidate_last_offset(geometry)
     for chrom_idx in eachindex(reference_lengths)
         range_first = length(work) + 1
-        last_candidate = reference_lengths[chrom_idx] -
-            prefix_scan_candidate_last_offset(geometry)
-        for core_first in 1:chunk_bases:last_candidate
+        last_candidate = reference_lengths[chrom_idx] - last_offset
+        cores = intervals === nothing ? [1:last_candidate] : UnitRange{Int}[]
+        if intervals !== nothing && reference_lengths[chrom_idx] > 0
+            for r in intervals[chrom_idx]
+                core = max(1, first(r) - last_offset - geometry.distance):min(last_candidate, last(r) + geometry.distance)
+                isempty(core) && continue
+                if !isempty(cores) && first(core) <= last(cores[end]) + 1
+                    cores[end] = first(cores[end]):max(last(cores[end]), last(core))
+                else
+                    push!(cores, core)
+                end
+            end
+        end
+        for core in cores, core_first in core.start:chunk_bases:core.stop
             push!(work, PrefixHashScanChunkWork(
                 chrom_idx,
                 core_first,
-                min(core_first + chunk_bases - 1, last_candidate),
+                min(core_first + chunk_bases - 1, core.stop),
             ))
         end
         chrom_chunk_ranges[chrom_idx] = range_first:length(work)
@@ -383,18 +403,19 @@ function run_prefix_hash_scan_chunks(
     stats,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState},
     simd_backend::Val,
-    progress::Union{Nothing, PrefixHashScanProgress}) where R
+    progress::Union{Nothing, PrefixHashScanProgress},
+    intervals = nothing) where R
 
     index = is_fasta(genome_path) ?
         FASTA.Index(genome_path * ".fai") :
         read_prefix_hash_scan_twobit_index(genome_path)
     ctx = PrefixHashScanContext(
         geometry, query, dbi, guides_, myers_profiles, distance, index,
-        simd_backend)
+        simd_backend, intervals)
     known_bounds = prefix_hash_scan_known_bounds_by_chromosome(
         genome_path, index, reference_lengths)
     work, chrom_chunk_ranges = prefix_hash_scan_chunk_work(
-        reference_lengths, chunk_bases, geometry)
+        reference_lengths, chunk_bases, geometry, intervals)
     if early_stop_state !== nothing
         early_stop_state.work_items_total = length(work)
     end
@@ -446,13 +467,14 @@ function stream_prefix_hash_scan(
     stats,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
     ; simd_backend::Val = default_prefix_hash_scan_simd_backend(),
-    progress::Union{Nothing, PrefixHashScanProgress} = nothing)
+    progress::Union{Nothing, PrefixHashScanProgress} = nothing,
+    intervals = nothing)
 
     return run_prefix_hash_scan_chunks(
         stream_prefix_hash_scan_chunk, PrefixHashScanChromResult,
         geometry, genome_path, reference_lengths, query, dbi, guides_,
         myers_profiles, distance, chunk_bases, scan_threads, stats,
-        early_stop_state, simd_backend, progress)
+        early_stop_state, simd_backend, progress, intervals)
 end
 
 function stream_prefix_hash_scan_counts(
@@ -469,12 +491,13 @@ function stream_prefix_hash_scan_counts(
     stats,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
     ; simd_backend::Val = default_prefix_hash_scan_simd_backend(),
-    progress::Union{Nothing, PrefixHashScanProgress} = nothing)
+    progress::Union{Nothing, PrefixHashScanProgress} = nothing,
+    intervals = nothing)
 
     results, _ = run_prefix_hash_scan_chunks(
         stream_prefix_hash_scan_count_chunk, PrefixHashScanCountResult,
         geometry, genome_path, reference_lengths, query, dbi, guides_,
         myers_profiles, distance, chunk_bases, scan_threads, stats,
-        early_stop_state, simd_backend, progress)
+        early_stop_state, simd_backend, progress, intervals)
     return results
 end

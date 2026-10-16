@@ -234,6 +234,7 @@ function gatherofftargets(
             guides = add_extension(guides, guides_pos, dbi, chrom, is_antisense)
         end
         guides, guides_pos = normalize_to_PAMseqEXT(guides, guides_pos, dbi, is_antisense)
+        isempty(guides) && return PrefixDB[]
         guides_pos = convert.(dbi.gi.pos_type, guides_pos)
         loc = Loc.(chrom_name_, guides_pos, !is_antisense)
 

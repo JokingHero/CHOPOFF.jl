@@ -1,13 +1,17 @@
 # Variant-aware prefixHashScan
 
 `search_prefixHashScan` accepts a normalized VCF through `vcf` or `--vcf`.
-The first release searches sequence-resolved SNVs, MNPs, insertions, deletions,
-and unequal-length replacements. It searches compatible REF/ALT combinations up to
-an ALT-allele cap. It does not interpret genotypes, phase, FILTER, or allele frequency.
+It searches sequence-resolved SNVs, MNPs, insertions, deletions,
+unequal-length replacements, and precise symbolic `<DEL>`, `<DUP>` and `<INV>`
+structural variants (see [Structural variants](#structural-variants)). It searches compatible REF/ALT combinations up to
+an ALT-allele cap. With `vcf_mode=:genotype` it searches only combinations that a
+sample copy may carry, using GT and PS, and reports carriers. It does not interpret
+FILTER or allele frequency.
 
 Status: complete for single-sample VCFs, validated on GIAB HG001 genome-wide.
-Cohort and catalog VCFs (gnomAD, ClinVar) work per chromosome with a small cap;
-genome-wide cohort runs need the deferred memory work below.
+Cohort and catalog VCFs (gnomAD, ClinVar) work with a small cap. Fragments are
+enumerated one chromosome at a time, so union-mode memory follows the largest
+chromosome; genotype mode still holds every selected chromosome's GT entries.
 
 A search covers the non-conflicting allele combinations represented by accepted
 records, with at most `vcf_max_alleles` (default 3) ALT alleles in one local
@@ -27,7 +31,7 @@ merely because their inputs have rejection tests.
 | ID | Requirement | Implementation | Validation / evidence |
 |---|---|---|---|
 | V01 | Sorted records, contig names, bounds and REF validation | [x] implemented, [reader](src/variants/vcf_read.jl) | tested; [isolated input failures](test/variants/input.jl) |
-| V02 | Plain VCF, gzip and BGZF | [x] implemented, reader | tested; [byte parity, genuine BGZF split within a row](test/variants/input.jl) |
+| V02 | Plain VCF, gzip and BGZF | [x] implemented, reader | tested; [byte parity, genuine BGZF split within a row](test/variants/input.jl), [multithreaded BGZF batches, corrupt and truncated blocks](test/variants/bgzf.jl) |
 | V03 | Ignored markers and unsupported-allele errors | [x] implemented, reader | tested; [marker siblings, aggregate warning, rejection fixtures](test/variants/input.jl) |
 | V04 | SNV/MNP/indel/replacement combinations and reference choices | [x] implemented, [enumerator](src/variants/enumerate.jl) | tested; [full-haplotype oracle and required witnesses](test/variants/corpus.jl) |
 | V05 | Pairwise conflicts and original-record ALT exclusivity | [x] implemented, reader/enumerator | tested; [same-gap, boundary, nontransitive and split-source cases](test/sample_data/vcf/README.md) |
@@ -46,13 +50,14 @@ merely because their inputs have rejection tests.
 | V18 | Sparse chromosome-scale timing | [x] implemented, [benchmark](scripts/benchmark_prefix_hash_scan_vcf.jl) | tested on synthetic chr22; measurements below |
 | V19 | `vcf_max_alleles` cap, truncation and above-default warnings | [x] implemented, enumerator | tested; [capped oracle, warnings, validation](test/variants/coverage.jl), [capped dense cases](test/extended/variants.jl); chr22 cost table below |
 | V20 | Realistic inputs: GIAB HG001, ClinVar, gnomAD v3.1.2 chr22 | [x] validated | windowed oracle, reference parity, byte parity and an independent row validator; see [Realistic validation](#realistic-validation) |
-| D01 | Genotypes, phase blocks and carrier/sample summaries | [ ] deferred | untested; v1 ignores GT/phase |
-| D02 | Symbolic SVs, BNDs and nearby small-variant combinations | [ ] deferred | untested; v1 rejects non-literal alleles |
-| D03 | Interval/BED selection with deletion-aware reachability | [ ] deferred | untested; whole chromosomes only |
+| D01 | Genotypes, phase blocks and carrier/sample summaries | [x] implemented, [genotypes](src/variants/genotypes.jl) | tested; [token property tests](test/variants/genotypes.jl), [per-sample oracle, hand cases, summaries](test/variants/genotype_corpus.jl); see [Genotype mode](#genotype-mode) |
+| D02a | Symbolic DEL, DUP and INV and nearby small-variant combinations | [x] implemented, reader/enumerator | tested; [symbolic-literal parity, oracle, skips, errors, genotype mode](test/variants/sv.jl), [90 random junction cases](test/extended/variants.jl), genome-wide HG002 parity; see [Structural variants](#structural-variants) |
+| D02b | BNDs, long-range junction anchors, `<INS>` without sequence | [ ] deferred | skipped with a warning |
+| D03 | Interval/BED selection with deletion-aware reachability | [x] implemented, [region parser](src/variants/vcf_read.jl), [anchor selection](src/variants/enumerate.jl), scanner | tested; [parser and restrictions](test/variants/input.jl), [filtered-search parity, deletion bridge, early stopping](test/variants/regions.jl); see [Regions](#regions) |
 | D04 | IUPAC compression valve | [ ] deferred | untested; explicit expansion only |
-| D05 | `lost` summaries | [ ] deferred | untested; absence of a row is not proof of loss |
+| D05 | `lost` summaries | [~] partial | genotype mode reports copies that lose a reference site; union mode unchanged |
 | D06 | Legacy vcfDB retirement | [ ] deferred | legacy implementation/tests remain |
-| D07 | Parallel, per-chromosome preparation | [ ] deferred | preparation is serial and holds all selected chromosomes; run cohort VCFs one chromosome at a time with `region` |
+| D07 | Parallel, per-chromosome preparation | [~] partial, [enumerator](src/variants/enumerate.jl), [scanner](src/variants/search.jl) | tested; [block parity across threads](test/variants/regions.jl), byte parity on GIAB and ClinVar; the read and GT store still cover all selected chromosomes |
 | D08 | Representative population and patient-scale measurements | [~] partial | chr22 cost table for GIAB, ClinVar and gnomAD tiers; genome-wide cohort timing untested |
 | D09 | Variant-phase speed (see [Deferred design](#deferred-design)) | [~] partial | work sizing, stored reference spans and block reads done; see [Speed changes](#speed-changes) |
 
@@ -78,13 +83,19 @@ CHOPOFF filter --detail_file detail.csv --output filtered.csv --distance 3
 CHOPOFF summarize --detail_file filtered.csv --output counts.csv --variant_aware --distance 3
 ```
 
+SV call sets need the same contig names. Symbolic records need no `norm`; to
+search SVs together with small variants, merge them into one sorted VCF
+(`bcftools concat -a` then `bcftools sort`).
+
 Keep multiallelic records together when possible. The reader splits them internally
 and remembers that their ALT choices are exclusive. Pre-split records without
 source provenance become independent choices, subject to footprint conflicts.
 That can add combinations absent from the original multiallelic record.
 
-A tabix index is unnecessary. The reader streams plain VCF or gzipped VCF,
-including concatenated BGZF members, through the existing decompressor.
+The reader uses only the `##fileformat`, `##INFO`, `##FORMAT` and `#CHROM` header
+lines and skips other meta lines, including malformed ones. A tabix index is unnecessary. The reader streams plain VCF or gzipped VCF. BGZF
+input (bgzip, `bcftools -Oz`) inflates its blocks on all threads while records
+are parsed; other gzip input uses the single-threaded decompressor.
 BCF input is outside this release.
 
 Use upstream tools for FILTER, frequency, and sample selection. Selecting sample
@@ -107,9 +118,9 @@ search_prefixHashScan(guides, genome_path, motif, output_file;
 ```
 
 `region=nothing` searches every reference chromosome. Otherwise, `region` accepts
-comma-separated chromosome names. Unknown names, interval strings, and BED paths
-are errors. Chromosome selection also works without a VCF, including count output
-and the legacy scanner.
+comma-separated chromosome names or a BED file path; see [Regions](#regions).
+Unknown names and interval strings are errors. Chromosome selection also works
+without a VCF, including count output and the legacy scanner.
 
 VCF searches require detail output and an eligible streaming geometry.
 Invalid configuration fails before output opens. The public three-argument method
@@ -142,7 +153,7 @@ Contig and REF errors name a bcftools fix: `annotate --rename-chrs` when the
 reference has the same name with or without `chr`, `view -t ^contig` for contigs
 absent from the reference, and `norm -f` for REF mismatches.
 
-Symbolic SVs and breakends fail with an unsupported-allele error. Literal sequence
+Symbolic SVs follow [Structural variants](#structural-variants). Literal sequence
 alleles have no size cutoff. Users must left-align upstream. The reader trims common
 padding but does not validate left alignment or merge equivalent records.
 
@@ -150,6 +161,123 @@ Use `vcf_annotate` or `--vcf_annotate INFO/AF,FORMAT/AF` to retain selected fiel
 Unknown header fields fail at startup. INFO/FORMAT fields with Number=A select the
 chosen ALT value. Number=R retains the REF and chosen ALT values. Other cardinalities
 retain their original value. FORMAT annotations name their samples without interpreting GT.
+
+## Structural variants
+
+Precise symbolic deletions, tandem duplications and inversions become literal
+alleles of any length. They then combine with nearby small variants, take part in
+genotype mode, and are filtered and summarized like other alleles. Every other
+SV form is skipped, never an error, and each skipped kind is counted.
+
+| ALT | Searched as | Footprint and sequence |
+|---|---|---|
+| `<DEL>`, `<DEL:*>` (including `<DEL:ME:*>`) | deletion of POS+1..END | `[POS+1, END+1)`, empty |
+| `<DUP:TANDEM>` | insertion of a reference copy before the original | gap POS+1, `ref[POS+1..END]` |
+| `<DUP>` | as `<DUP:TANDEM>`, with a warning | gap POS+1, `ref[POS+1..END]` |
+| `<INV>` | equal-length replacement | `[POS+1, END+1)`, reverse complement of `ref[POS+1..END]` |
+| any of the above with INFO/IMPRECISE | skipped, counted as `imprecise` | breakpoints, and so junction sequence, are uncertain |
+| `<INS>`, `<INS:*>` (including mobile elements) | skipped, counted as `ins` | inserted sequence unknown; literal insertions are searched |
+| `<CNV>`, `<CNV:*>` | skipped, counted as `cnv` | copy number without arrangement or sequence |
+| `<DUP:*>` other than `TANDEM` (e.g. `<DUP:INT>`) | skipped, counted as `dup_other` | location of the copy unknown |
+| breakends (`t[p[`, `]p]t`, `.A`, `A.`) and translocations | skipped, counted as `bnd` | needs junctions between distant or reverse-oriented segments (D02b) |
+| any other symbol (`<CPX>`, `<CTX>`, ...) | skipped, counted as `other` | complex or undefined arrangement |
+| a non-IUPAC letter (`Z`) | error | |
+
+END comes from INFO/END, else POS + |SVLEN| (the ALT's value when SVLEN has one
+per ALT). A record without either, or with END not in (POS, chromosome length],
+fails. REF is the padding base and is checked like any REF; GATK-SV writes `N`,
+which matches every base. `CIPOS`/`CIEND` without `IMPRECISE` are searched at the
+stated breakpoints.
+
+IMPRECISE records are skipped on purpose. The target use is well-annotated
+genomes of decent quality, and an imprecise breakpoint makes junction sites
+guesses. Skipping them also drops what does not depend on the exact breakpoint:
+reference sites a carrier loses inside an imprecise deletion are not listed in
+`overlapping_variants` or `lost`. The 1000 Genomes SV set has 7,883 such deletions
+(plus 1,546 duplications and 471 inversions). Records without the flag are
+treated as exact even when they carry `CIPOS`/`CIEND` (about 5,600 in that set). Reference `N` inside a copied or inverted segment stays `N`
+and falls under `ambig_max`.
+
+Skips are reported once per run: a warning with the count and up to five example
+loci per kind, the counts (`sv_skipped_<kind>`, `sv_del`, `sv_dup`, `sv_inv`) in the
+`prefixHashScan variants` log line, and `PrefixHashScanStats.vcf_sv_searched` and
+`vcf_sv_skipped`.
+
+The allele key keeps the original ALT and adds END: `chrom:POS:REF><DUP:TANDEM>/END`.
+Inserted bases of a duplication have the origin `chrom:POS:REF><DUP:TANDEM>/END:offset`.
+
+Meaning of the rows:
+
+- Every interior site of a carried duplication exists twice. The copy's site is a
+  separate variant row on the insertion-origin axis, so `summarize --variant_aware`
+  counts both copies. Offsets within `distance` of a copy end join the reference
+  axis at POS, as for literal insertions.
+- The new site at the duplication junction (`ref[END]` followed by `ref[POS+1]`) and
+  sites bridging a deletion are variant rows like those of literal alleles.
+- An inversion is reported per base, as for MNPs. Reference rows inside it list it
+  in `overlapping_variants`, and in genotype mode carriers lose them; the inverted
+  site appears as a variant row.
+
+Limitations:
+
+- Small variants inside a duplication apply to the original copy only; the inserted
+  copy is reference sequence.
+- Small variants inside an inversion conflict with it, so their combinations inside
+  the inverted segment are not searched.
+- Reference sites crossing gap POS|POS+1 of a duplication list it in
+  `overlapping_variants` and `lost`, although the tandem copy keeps that adjacency.
+- Union-mode summaries count overlapping duplication alleles of one region
+  (different END) separately, as for alternative insertions. Use
+  `summarize --per_sample` for cohort SV VCFs.
+- Interior rows of large duplications spend the variant early-stopping budget.
+- Breakends and translocations need junctions between distant or reverse-oriented
+  segments (D02b) and are skipped.
+
+### SV validation
+
+[test/variants/sv.jl](test/variants/sv.jl) runs each symbolic case twice: as the
+literal VCF, whose rows the [oracle](test/helpers/vcf.jl) checks, and as the symbolic
+VCF. The rows must be equal once allele keys are renamed. Cases: a 12 kb deletion
+bridging a site with and without a flank SNP, tandem duplications and an inversion
+longer than the scan chunk, an upstream walk taking a long duplication, deep copy
+sites in filter and summary, SVLEN-only and multiallelic records, every skipped kind,
+malformed records, and genotype mode. The extended suite adds 90 seeded random
+cases (seed `20261009`) in which a DEL, DUP or INV joins the two halves of a site at
+a random split, with up to three SNPs and a guide with up to `d` substitutions;
+every case reports a row using the SV.
+
+Real data, GRCh38, 61 Cas9 guides, distance 3, eight threads, measured
+October 15, 2026 on a loaded host (files and preparation in `../sv_data/README.md`):
+
+- GIAB HG002 v5.0q, small variants and SVs, all literal (5.9M records after
+  normalization). A copy with 12,430 deletions of at least 50 bp written as `<DEL>`
+  and 788 insertions that repeat the following reference written as `<DUP:TANDEM>`
+  gave the same 28,158 rows genome-wide as the literal file, once keys were renamed;
+  23 rows use a converted SV. Both runs built 124.4M fragments (6.87 Gb), truncated
+  452,116 anchors at k = 3, and took 269 s (literal, first) and 214 s, with 14-16 GB
+  peak RSS. This v5.0q file is far denser than the v4.2.1 HG001 set above.
+- 1000 Genomes high-coverage SV set, chromosome 22 (2,643 records: 1,449 `<DEL>`,
+  14 `<DEL:ME*>`, 512 `<DUP>` up to 3.4 Mb, 4 `<INV>`; IMPRECISE records and the
+  other kinds skipped). Union mode, `vcf_realistic.jl search`: 183 variant rows, all
+  second copies of reference sites inside duplications, each rebuilt from its
+  alleles; reference rows equal the search without VCF; `overlapping_variants`
+  correct on all 457 reference rows; output byte-identical across 1/8 threads,
+  64 KiB chunks and the portable backend; 8.9 s. Genotype mode with all 3,202
+  samples, `gtsearch`: 18,786 certain carrier copies and 11,001 lost reference
+  copies, all consistent with GT; 13.7 s, 1.8 GB peak RSS.
+- The 1000 Genomes header contains `###INFO=<ID=STRANDS,...>`, which bcftools
+  accepts and the Julia VCF header parser rejects. The reader now passes only
+  `##fileformat`, `##INFO`, `##FORMAT` and `#CHROM` lines to that parser and skips
+  every other meta line.
+
+Existing outputs did not change: GIAB HG001 and ClinVar chromosome 22 searches
+were byte-identical before and after the walk changes.
+
+Long alleles stay cheap: a walk passes a taken deletion in one step, and a taken
+allele that runs past the walk's goal is cut there, because no site overlapping
+the anchor reaches beyond it. Each duplication or inversion is scanned in full
+once, as its own anchor. `ScanVariant` stores each copied or inverted sequence, so
+memory grows with their total length.
 
 ## Walks, fragments, and coordinates
 
@@ -173,14 +301,18 @@ compatible variant in reach is skipped only because of the cap, the anchor count
 as truncated.
 
 Fragments use flat segment arrays. A segment either refers to a reference range or
-to a concrete ALT. Empty ALT segments retain deletion junctions. Descriptors persist
-across guide batches. Preparation reads the merged reference spans that fragments
-use once, through a forward 1 MiB block reader, and keeps them in memory. Workers
-materialize fragments from these spans into reusable buffers without file reads,
-then use the existing prefix kernel, Myers verifier, and traceback.
+to a concrete ALT. Empty ALT segments retain deletion junctions. Preparation reads
+the VCF once and keeps the variants for all guide batches. The variant scan then
+enumerates fragments one chromosome at a time, in blocks of consecutive anchors
+(four per scan thread) on all scan threads, scans them and frees them. Each block
+reads the merged reference spans its fragments use once, through a forward 1 MiB
+block reader. Workers materialize fragments from these spans into reusable
+buffers without file reads, then use the existing prefix kernel, Myers verifier,
+and traceback. Enumeration repeats for every 64-guide batch, so a search with more
+than 64 guides pays it once per batch.
 
-Variant work packs fragments into items of about a quarter of the fragment bases
-per scan thread (at least 64 KiB, at most the chunk size, 2 MiB by default), with
+Variant work packs each chromosome's fragments into items of about a quarter of its
+fragment bases per scan thread (at least 64 KiB, at most the chunk size, 2 MiB by default), with
 `distance + 1` gap bytes between fragments. Large fragments split into overlapping scan chunks.
 Candidate windows must belong to one fragment and overlap its anchor before Myers.
 After traceback, the consumed target plus PAM determines the allele annotations.
@@ -223,6 +355,120 @@ A reference-equivalent ALT choice remains an annotated variant row. Absence of a
 variant row does not prove that a variant destroys a site. No `lost` count or
 cutting-activity prediction exists in this release.
 
+## Genotype mode
+
+`vcf_mode=:genotype` (CLI `--vcf_mode genotype`) reads GT and PS for all samples or
+for `vcf_samples` (`--vcf_samples S1,S2`). A walk takes an allele only when some
+copy of a selected sample may carry it together with every allele already taken,
+so the walk follows carried haplotypes. The cap defaults to unlimited in this mode.
+ALTs that no selected sample may carry are dropped, so they appear in neither
+walks nor `overlapping_variants`.
+
+Phase groups:
+
+- `|` without PS: one phase set per sample and chromosome (reference-panel phasing).
+- `|` with PS: one phase set per PS value.
+- `/`, partial phasing (`0|1/2`) and haploid calls: their own group, copies permute freely.
+- VCF 4.4 leading indicators (`|0|1`) are read; PSL and PSQ are ignored.
+
+A copy carries a variant row when it carries every allele the site uses and none
+of the other alleles that intersect a consumed reference base or insert at a gap
+the site crosses (including the edges of a taken deletion). Alleles hidden inside
+a taken deletion impose nothing. A copy loses a reference row when it carries an
+allele in `overlapping_variants`.
+
+Genotype output adds six columns:
+
+| Column | Meaning |
+|---|---|
+| `carriers` | Variant rows: copies carrying the site |
+| `lost` | Reference rows: copies lacking the site |
+| `n_carriers`, `n_lost` | Certain copies (`S:j` and `S:*` tokens) |
+| `n_possible`, `n_lost_possible` | Samples with an `S:?` token |
+
+Tokens consider every permutation of phase groups and every value of missing
+alleles (`.`):
+
+- `S:j` holds for copy j in every case. `S:j@PS` names copy j of a PS block;
+  without a suffix j is the chromosome-wide copy. Indexes of different PS blocks
+  are not comparable.
+- `S:*` holds for some copy in every case, but which copy is unknown, for example
+  a single unphased heterozygous allele. It repeats once per certain copy.
+- `S:?` holds in some case only: unphased combinations, alleles in different PS
+  blocks, missing alleles. In `lost`, `S:?` after certain tokens means further
+  copies may lose the site.
+
+Rows carried by no selected copy are dropped. Some call sets, including the 1000
+Genomes panel, place overlapping alleles on one copy (for example two deletions of
+one STR) instead of using `*`. The run warns once with the pair count. Walks never
+take both alleles, and by the overlap rule only rows of the allele that hides the
+other credit that copy. For ploidy above two, `S:?` can
+appear where a counting argument proves some copy carries the site.
+
+`summarize_offtargets(res; per_sample=true, vcf, vcf_samples, distance)` (CLI
+`summarize --per_sample --vcf in.vcf.gz`) counts loci per guide and sample at the
+best distance among rows the sample carries. `D` columns count loci some copy
+certainly carries. `P` columns are the upper bound with possible carriers. A
+reference row is possible while fewer than ploidy copies certainly lost it, and
+certain when `lost` also has no `S:?` for the sample. The VCF supplies sample names
+and per-chromosome ploidy, since hom-ref samples appear in no token.
+
+### Genotype validation and cost
+
+[test/variants/genotypes.jl](test/variants/genotypes.jl) checks the GT parser,
+the store and 3,000 random token cases against brute-force enumeration of phase
+permutations and missing alleles. [test/variants/genotype_corpus.jl](test/variants/genotype_corpus.jl)
+runs hand cases (cis, trans, unphased, PS blocks, deletion edges, sample
+selection, conflicts, errors, CLI) and random cases against a
+[per-copy oracle](test/helpers/vcf_genotypes.jl). The oracle builds each copy's
+haplotype per assignment, searches it with linearDB (see
+[Validation and measurement](#validation-and-measurement)) and derives tokens from
+the definitions. Rows must also be a subset of union-mode rows.
+Random cases default to 20 (`CHOPOFF_VCF_GT_CASES`, `CHOPOFF_VCF_GT_SEED`); the
+extended suite runs 200. On 2026-10-14, 200 cases with seed `20261014` passed.
+
+Real data checks use `test/local_human/vcf_realistic.jl gtsearch|gtwindows`, which
+rebuild each listed copy's haplotype from the VCF and check the reported site:
+
+- NA12878 from the 1000 Genomes 30x phased panel, chr22 (59,328 records): 12
+  variant rows with 16 certain carriers, 457 reference rows with 25 lost copies,
+  no failures. A copy with synthetic 50 kb PS blocks and 10% unphased hets also
+  passed. GIAB HG001/HG002 v4.2.1 are unphased (`/`, no PS) and were not used.
+- 1000 Genomes chr22, every 32nd of 3,202 samples (100): 127 variant rows, 2,698
+  certain carriers, 2,895 lost copies, no failures. 100 random windows with 20
+  samples also passed.
+
+Reference rows matched the reference-only search, and outputs were byte-identical
+across one or eight threads and 64 kb chunks.
+
+Cost on GRCh38 chr22 (61 Cas9 guides, distance 3, eight threads, no allele cap,
+shared host under load). Reference alone took 7.4 s.
+
+| Samples | Wall | Peak RSS | Fragments | Max per anchor | GT entries | Descriptors |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 (NA12878 VCF) | 8.5 s | 1.2 GB | | | | |
+| 100 | 72, 91 s | 1.5 GB | 0.55 M | 6,772 | 6.3 M | 0.28 GB |
+| 3,202 | 225, 253 s | 6.0 GB | 1.75 M | 8,192 | 205 M | 4.2 GB |
+
+Each run is a fresh process including compilation. Reading inflates BGZF blocks
+and parses GT columns on all threads, in batches of 1,024 lines; the rest of each
+record stays sequential. Alternating runs against sequential GT parsing gave 111
+and 115 s (100 samples) and 357 and 422 s (3,202 samples); before that, the
+single-threaded gzip reader added another 5-15%. Output was byte-identical in all
+runs. Reading the whole file line by line takes 7.7 s with the BGZF reader and
+29 s with the single-threaded one. At 3,202 samples, garbage collection takes
+50-65 s, and the main thread spends about 70 s reading lines and checking records.
+The variant scan took under 10 s.
+Union mode needs the cap on the same file; see
+[Allele cap and measured cost](#allele-cap-and-measured-cost).
+
+Genotype mode keeps the GT store for every selected chromosome for the whole
+run. The store is sparse (205M entries for 3,202 samples on chr22, not samples
+times records), but scaled by genome share a genome-wide 1000 Genomes run would
+need about 13 billion entries and roughly 250 GB. Run cohort genotype searches
+one chromosome at a time with `region`; the 1000 Genomes panel ships per
+chromosome anyway. Single-sample genome-wide runs hold about one entry per record.
+
 ## Filtering and summaries
 
 Filtering assigns loci across reference and variant rows together. It uses the
@@ -242,16 +488,55 @@ at its best distance. It accepts raw or filtered VCF output. Use the same explic
 `distance` for filtering and summarizing. Plain summaries retain their row-count
 behavior. Searches without `vcf` retain the original output schema.
 
+## Regions
+
+`region` (CLI `--region`) also accepts a BED file path. The reader skips `#`,
+`track` and `browser` lines, reads the first three tab-separated columns
+(0-based, half-open), and merges overlapping or adjacent intervals. Unknown
+chromosomes, `start >= end` and intervals past the chromosome end are errors.
+BED input must be uncompressed.
+
+A row is reported when its site overlaps an interval. The site runs from `start`
+to `end`, including the PAM. Variant rows use their lifted endpoints, so a site
+that bridges a deletion covers the deleted reference between its endpoints, and
+an endpoint inside an insertion counts at POS. Reference-row
+`overlapping_variants` and genotype `lost` still consider every variant on the
+chromosome.
+
+The reference scan reads only candidate windows that can reach an interval: each
+interval widened by the candidate window and `distance`. Verification checks the
+exact traceback span before a row spends early-stopping budget, so rows outside
+the region never retire a guide.
+
+Variant anchors are selected with a deletion-aware bound. After its anchor a walk
+emits at most W bases. Reference bases outside every variant footprint can only
+be passed by emitting them, so the walk ends before the (W + 1)-th such base.
+Deletions therefore extend the reach without a fixed margin, and the bound
+assumes no allele cap, so it also holds in genotype mode. Records on the selected
+chromosomes are read whole; only the anchors are restricted.
+
+BED regions need detail output and a streaming backend. Count output has no
+traceback span to test, and the legacy scanner has no interval support; both are
+errors.
+
 ## Validation and measurement
 
 The regular entrypoint is [test/src/variants.jl](test/src/variants.jl). Its
 [oracle](test/helpers/vcf.jl) constructs complete alternative haplotypes with a
-separate edit model, searches them with the brute-force legacy backend, and lifts
-coordinates with its own per-base map. It compares all twelve output columns,
-including allele annotations, reference overlaps and insertion origins, and rejects
-duplicate rows. Hand-calculated checks validate the oracle's edit model. Production
-VCF parsing, enumeration, conflict checks and coordinate lifting do not participate
-in the oracle; alignment and traceback remain shared with the legacy search.
+separate edit model, searches them with linearDB, and lifts coordinates with its
+own per-base map. linearDB is the original CHOPOFF engine and shares no search code
+with prefixHashScan: site finding, filtering, alignment and offsets are all separate.
+It compares every output column except the two alignment strings, including
+distance, allele annotations, reference overlaps and insertion origins, and rejects
+duplicate rows. Alignment strings are skipped because linearDB (`suffix_align`) and
+prefixHashScan (`align`) may place a gap differently in an alignment with the same
+distance. Haplotype sets with any IUPAC base use the prefixHashScan brute-force
+backend instead: linearDB counts ambiguous bases over guide and PAM only and lets an
+`N` in the extension match freely, while prefixHashScan counts the whole window. A
+parity run on 2026-10-16 over the whole variant suite found the same sites and
+distances in both engines.
+Hand-calculated checks validate the oracle's edit model. Production VCF parsing,
+enumeration, conflict checks and coordinate lifting do not participate in the oracle.
 [test/src/distance_metrics.jl](test/src/distance_metrics.jl) checks `align` against
 a naive edit-distance DP on 5,000 seeded guide/reference pairs with k = 1-4,
 including IUPAC reference bases and indels; distances, gapless sequences and
@@ -262,6 +547,18 @@ semirandom genome example with tiny companion references. Every positive sequenc
 case requires a specific allele witness, so an empty result cannot pass. Invalid
 inputs are separate files. The generator's `--check` mode regenerates into a
 temporary directory and checks bytes and file lists without changing the corpus.
+
+[Real-data fixtures](test/sample_data/vcf/real/README.md) are 98 GRCh38 windows
+(about 19 kb, under 1 MB with expected outputs) cut from GIAB HG002 v5.0q, GIAB
+HG001, the 1kGP phased panel and PS file, the 1kGP SV set (trio
+NA12878/NA12891/NA12892), ClinVar and gnomAD. `make_real_vcfs.jl` picks windows
+greedily until each tag (variant kind, size class, GT pattern, PS switch, SV kind,
+overlapping, adjacent and clustered records) is covered twice, and needs the large
+local files. [test/variants/real.jl](test/variants/real.jl) compares every window
+with the haplotype oracle, checks genotype carriers with the per-copy oracle where
+the window allows it, checks HG002 symbolic SVs against their literal twin, and
+compares whole-set union, genotype and `summarize --per_sample` output with
+`expected/`. It runs in about 100 s.
 
 The regular suite includes exhaustive bounded haplotypes, motif/strand/distance
 sweeps and the public API/CLI contract. The separate extended suite uses a fixed
@@ -302,18 +599,25 @@ AVX2 and AVX-512 backends, one/four workers, FASTA wrapping at 7/60 bases, 2bit,
 and chunks of 64, 97 and 2,097,152 bases. These are correctness checks, not timings
 for a representative biological dataset.
 
+After the region and per-chromosome changes (2026-10-15, four threads), the
+regular suite passed 10,942 assertions, the extended suite 1,195 plus 231 genotype
+assertions (200 cases), fixture regeneration matched, and the full package suite
+passed.
+
 The annotation regression exposed cumulative ID ranges in the installed VCF parser.
 The reader preserves the complete ID field so multiple IDs appear exactly once in
 both variant and reference-overlap annotations.
 
 `PrefixHashScanStats` records input counts, fragment counts and bases, the largest
 fragment count of one anchor (`max_anchor_fragments`), anchors truncated by the cap
-(`vcf_truncated_anchors`), descriptor bytes (including stored reference spans),
-preparation time, variant fragment materialization time (`variant_io_ns`), candidates, anchor rejections, accepted variant rows, and
-retired variant guides. `verbose=true` reports preparation
-counts and descriptor memory once before guide batching. It also logs throttled
+(`vcf_truncated_anchors`), descriptor bytes (variants plus the largest
+chromosome's fragments and reference spans), preparation time (read plus
+enumeration), variant fragment materialization time (`variant_io_ns`), candidates,
+anchor rejections, accepted variant rows, and retired variant guides.
+`verbose=true` reports read counts once before guide batching and fragment counts
+after the first batch's variant scan. It also logs throttled
 `prefixHashScan progress` records (every `progress_interval` seconds) with
-`batch` set to `VCF read`, `VCF enumerate` or `<batch> VCF` for the variant scan.
+`batch` set to `VCF read`, `<batch> VCF enumerate` or `<batch> VCF` for the variant scan.
 The CLI always runs verbose.
 
 Report performance as measured wall time and memory. Additional scanned bases alone
@@ -409,9 +713,10 @@ time counted at the allocating line):
 | REF and ALT accessors, `uppercase`, REF check | 12% |
 | Variant sort (tuple key ending in the annotation string) | 5% |
 
-Genome-wide ClinVar at k = 3 is not practical: 455M fragments, 91 GB of descriptors
-and 158 GB peak RSS, with enumeration taking 95% of the time. Catalog VCFs need
-`region` per chromosome, as the cost table shows.
+Genome-wide ClinVar at k = 3 was not practical: 455M fragments, 91 GB of
+descriptors and 158 GB peak RSS, with enumeration taking 95% of the time. After
+[per-chromosome enumeration](#per-chromosome-enumeration) the full search takes
+460 s and 29 GB.
 
 Repeated GIAB preparations in one process took 40.6-44.0 s, so the 84 s and 100 s
 benchmark runs were not reproduced with preparation alone. Their cause (host load,
@@ -442,6 +747,36 @@ alternating runs on chromosome 22, three genome-wide):
 Output was byte-identical for all four, and prepared data (variants, counts,
 fragments, segments, reference spans) was identical for every valid fixture,
 including `vcf_annotate`.
+
+### Per-chromosome enumeration
+
+Measured October 15, 2026 with `scripts/benchmark_prefix_hash_scan_vcf.jl` (61 Cas9
+guides, distance 3, eight threads, k = 3), one measured run after warmup per
+process; genome-wide GIAB alternated three processes per version. The host was
+loaded, so chr22 times are higher than in the tables above. Variant output was
+byte-identical to the previous code in every run.
+
+| Input | Before | After | Preparation before / after | Peak RSS before / after |
+|---|---:|---:|---:|---:|
+| GIAB chr22 | 6.8 s | 6.3 s | 6.2 / 5.6 s | 1.34 / 1.31 GB |
+| ClinVar chr22 | 22.4 s | 12.9 s | 20.4 / 11.2 s | 5.9 / 5.9 GB |
+| GIAB genome-wide | 49.6 s (48.7-52.2) | 44.2 s | 46.0 / 38.7 s | 5.2 / 4.0 GB |
+| ClinVar genome-wide | preparation alone 1,034-1,386 s | 460 s | | 158 / 29.4 GB |
+
+Preparation here is the read plus enumeration. Descriptors for genome-wide GIAB
+fell from 1.38 GB to 0.67 GB (variants plus the largest chromosome's fragments).
+Genome-wide ClinVar holds 14.7 GB of descriptors and reports 208,607 variant rows.
+Concatenating the thread blocks raised ClinVar chr22 peak RSS to 8.6 GB, so the
+scan reads blocks directly. Without a collection between chromosomes, genome-wide
+GIAB peaked at 8.6 GB; an incremental collection removed it without a measurable
+time cost, and a full one added 18 s.
+
+BED timing, GIAB genome-wide, 1,000 random 1 kb intervals on chromosomes 1-22
+and X, three in-process repetitions: reference-only 0.48-0.64 s, with VCF 39.5-40.0 s
+versus 38.3-38.4 s for the whole genome. The BED output equalled the whole-genome
+rows filtered by site overlap. With a VCF the read of every record on the selected
+chromosomes dominates; restricting the read to records near intervals is not
+implemented.
 
 ## Allele cap and measured cost
 
@@ -495,11 +830,11 @@ directly followed another VCF run, and their preparation alone took 77-92 s.
 After the [preparation fixes](#genome-wide-preparation-profile) the median is
 32.0 s (31-44 s over three runs), with 26.7 s of preparation and 6.5 GB peak RSS.
 
-Memory is about 0.3 GB per million fragments. Preparation holds the fragments of
-every selected chromosome, so a genome-wide run costs roughly the sum over
-chromosomes (chr22 is about 1.6% of GRCh38). Run cohort VCFs one chromosome at a
-time with `region`, filter by frequency upstream, and use k = 2 for dense cohorts.
-For single-sample VCFs, raising k costs little.
+Memory is about 0.3 GB per million fragments. Fragments exist one chromosome at a
+time, so a genome-wide run costs the largest chromosome's fragments plus the
+variants of every selected chromosome; time still sums over chromosomes (chr22 is
+about 1.6% of GRCh38). Filter cohort VCFs by frequency upstream and use k = 2 for
+dense cohorts. For single-sample VCFs, raising k costs little.
 
 Before the cap, exhaustive enumeration of gnomAD AF ≥ 1% chr22 exceeded 177 GB and
 was stopped.
@@ -599,14 +934,12 @@ Cheap speed and documentation:
 
 Features and evaluation:
 
-- [ ] Genotype and phase support (D01). Restricting walks to alleles carried on
-  one phased haplotype gives per-sample results and bounds combinations without an
-  arbitrary cap, which makes cohort (1000 Genomes style) runs feasible. Needs its
-  own design plan.
+- [x] Genotype and phase support (D01); see [Genotype mode](#genotype-mode).
 - [ ] Head-to-head comparison with CRISPRme and CRISPRitz on 1000 Genomes or GIAB:
   runtime, memory, and found or missed off-targets.
 - [ ] Variant-aware count output; VCF searches currently require detail output.
-- [ ] Interval/BED regions (D03) and per-chromosome preparation (D07).
+- [x] Interval/BED regions (D03) and per-chromosome enumeration (D07); see
+  [Regions](#regions) and [Per-chromosome enumeration](#per-chromosome-enumeration).
 
 ## Deferred design
 
@@ -617,9 +950,11 @@ the line scan for unselected chromosomes are done ([Speed changes](#speed-change
 1. Accept a hit only when its window plus extension overlaps the last taken
    variant of its fragment, and trim fragments to that band. Each site context is
    then verified once instead of once per fragment that contains it.
-2. Prepare and scan one chromosome at a time (D07), bounding peak memory by the
-   largest chromosome, and share walk prefixes (a trie) instead of copying segment
-   paths. These are the changes that could make k = 4-5 feasible for cohorts.
+2. Share walk prefixes (a trie) instead of copying segment paths. With
+   per-chromosome enumeration (done), this could make k = 4-5 feasible for cohorts.
+3. Stream the VCF one chromosome block at a time, with all guide batches per
+   chromosome, so the variants and the GT store are bounded too. This matters for
+   genome-wide cohort genotype runs; see [Genotype mode](#genotype-mode).
 
 Genotype support needs original ALT indexes, per-record ploidy, missing calls, and
 phase-block-aware carrier checks. Intersect haplotype slots within each phase block,
@@ -627,14 +962,11 @@ then combine sample-level feasibility across independent blocks. A global slot A
 would reject valid cross-block combinations. Skipped variants hidden by a taken
 deletion must not impose reference-allele requirements.
 
-SV support needs junction provenance, mate handling, and combinations with nearby
-variants. Generic `<DUP>` does not specify a tandem junction. BND identity must include
-orientation and inserted sequence. Short inversions or duplications can place both
-junctions inside one site. Reference-only junction flanks would miss combined sites.
-
-Interval/BED selection needs deletion-aware reachability. A fixed W-base reference
-margin can omit a distant SNP brought into the interval by a deletion. Whole-chromosome
-selection avoids this boundary problem.
+Precise DEL, DUP and INV are searched (D02a). Breakends remain (D02b): they need
+fragment segments that carry their own chromosome and orientation, a two-sided walk
+outward from each junction so small variants on both sides combine with it, mate
+pairing, and `end_chromosome`/`end_strand` output columns. Long duplications and
+inversions could then also be searched by their junctions instead of full copies.
 
 The IUPAC compression valve remains deferred. It must account for existing reference
 ambiguity and preserve allele provenance. Explicit ALT expansion is the first-release

@@ -58,6 +58,37 @@
             @test_throws ErrorException CHOPOFF.search_prefixHashScan([guide],genome,Motif("Cas9";distance=1),out;
                 distance=1,vcf,scan_backend=:legacy)
         end
+        @testset "BED region input [D03]" begin
+            lengths=Dict(split(l,'\t')[1]=>parse(Int,split(l,'\t')[2]) for l in readlines(genome*".fai"))
+            bed(lines)=(path=joinpath(dir,"targets.bed"); write(path,join(lines,'\n')*'\n'); path)
+            message(f) = try f(); "" catch err; sprint(showerror,err) end
+            selected,intervals=CHOPOFF.prefix_hash_scan_region(bed(["# header","track name=t","browser position chr1",
+                "chr1\t10\t20\tname\t0\t+","chr1\t0\t5","chr1\t4\t8","chr1\t20\t25"]),["chr1","chr2"],[lengths["chr1"],lengths["chr2"]])
+            @test selected == [true,false]
+            @test intervals == [[1:8,11:25],UnitRange{Int}[]]
+            names_=["chr1","chr2"]; lens=[lengths["chr1"],lengths["chr2"]]
+            @test occursin("absent from the reference: 1",message(()->CHOPOFF.prefix_hash_scan_region(bed(["1\t0\t5"]),names_,lens)))
+            @test occursin("names it chr1",message(()->CHOPOFF.prefix_hash_scan_region(bed(["1\t0\t5"]),names_,lens)))
+            @test occursin("start < end",message(()->CHOPOFF.prefix_hash_scan_region(bed(["chr1\t5\t5"]),names_,lens)))
+            @test occursin("start < end",message(()->CHOPOFF.prefix_hash_scan_region(bed(["chr1\t-1\t5"]),names_,lens)))
+            @test occursin("start < end",message(()->CHOPOFF.prefix_hash_scan_region(bed(["chr1\t0\t$(lens[1]+1)"]),names_,lens)))
+            @test occursin("tabs",message(()->CHOPOFF.prefix_hash_scan_region(bed(["chr1 0 5"]),names_,lens)))
+            @test occursin("no intervals",message(()->CHOPOFF.prefix_hash_scan_region(bed(["# only"]),names_,lens)))
+            path=bed(["chr2\t0\t$(lens[2])"])
+            @test occursin("output=:detail",message(()->search_prefixHashScan([guide],genome,joinpath(dir,"c.csv");
+                distance=1,region=path,output=:counts)))
+            @test occursin("streaming backend",message(()->CHOPOFF.search_prefixHashScan([guide],genome,Motif("Cas9";distance=1),
+                joinpath(dir,"l.csv");distance=1,region=path,scan_backend=:legacy)))
+            # A whole-chromosome interval equals selecting the chromosome.
+            a,b=joinpath(dir,"a.csv"),joinpath(dir,"b.csv")
+            search_prefixHashScan([guide],genome,a;distance=1,region=path)
+            search_prefixHashScan([guide],genome,b;distance=1,region="chr2")
+            @test read(a,String) == read(b,String)
+            guides=joinpath(dir,"guides.txt"); write(guides,VCF_TEST_GUIDE*"\n")
+            CHOPOFF.main(["search","--guides",guides,"--output",b,"--distance","1",
+                "prefixHashScan","--genome",genome,"--region",path])
+            @test read(a,String) == read(b,String)
+        end
         @testset "Ignored markers preserve literal siblings and emit one warning" begin
             stats=PrefixHashScanStats()
             @test_logs (:warn,r"VCF non-sequence alleles ignored") CHOPOFF.search_prefixHashScan(

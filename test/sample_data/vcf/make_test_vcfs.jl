@@ -28,6 +28,7 @@ function write_vcf_fixtures(destination)
         "Each sequence case below has `valid/ID.vcf`, `references/ID.fa` (with FAI), and `guides/ID.txt`.",
         "`annotations` and `ignored_markers` use `references/contracts.fa` and `guides/mixed_choices.txt`.",
         "Edits and required witness alleles are explicit in `cases.jl`. Expected result sets come from the independent test oracle, never from the VCF scanner.",
+        "Small fixtures cut from real call sets (GIAB, 1kGP, ClinVar, gnomAD) are in `real/` (see `real/README.md`).",
         "", "| ID | Checklist | Motif / distance | Required ALT IDs | Purpose |", "|---|---|---|---|---|"]
     for case in vfixture_cases()
         vtest_fasta(joinpath(destination,"references",case.id*".fa"), [case.chrom=>case.reference])
@@ -41,7 +42,7 @@ function write_vcf_fixtures(destination)
         push!(index,"| $(case.id) | V03 / V10 | Cas9 / 1 | See input-contract assertions | Metadata/marker contract on references/contracts.fa |")
     end
     append!(index,["", "Invalid cases use `references/contracts.fa` and the guide from `guides/mixed_choices.txt`.",
-        "Each file has one intended fault. Unsupported symbolic alleles are rejection tests, not SV support.",
+        "Each file has one intended fault. Unsupported SV kinds are skipped with a warning, not rejected (see `test/variants/sv.jl`).",
         "", "| Invalid ID | Expected error fragment |", "|---|---|"])
     for case in vfixture_invalid()
         vtest_vcf(joinpath(destination,"invalid",case.id*".vcf"),case.records)

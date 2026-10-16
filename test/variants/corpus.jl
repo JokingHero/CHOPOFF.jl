@@ -10,16 +10,16 @@ include(joinpath(@__DIR__, "..", "sample_data", "vcf", "make_test_vcfs.jl"))
         snp = vtest_edit(s,2,3,"T","snp")
         seq, coords, events = vtest_haplotype(s,[snp])
         @test seq == "ATCCGG"
-        @test coords == [(i,"") for i in 1:6]
+        @test vtest_origin.(coords) == [(i,"") for i in 1:6]
         @test vtest_annotation(snp,"chr1") == "snp|chr1:2:A>T"
         insertion = vtest_edit(s,3,3,"T","ins")
         seq,coords,events = vtest_haplotype(s,[insertion])
         @test seq == "AATCCGG"
-        @test coords == [(1,""),(2,""),(2,"chr1:2:A>AT:1"),(3,""),(4,""),(5,""),(6,"")]
+        @test vtest_origin.(coords) == [(1,""),(2,""),(2,"chr1:2:A>AT:1"),(3,""),(4,""),(5,""),(6,"")]
         deletion = vtest_edit(s,3,5,"","del")
         seq,coords,events = vtest_haplotype(s,[deletion])
         @test seq == "AAGG"
-        @test coords == [(1,""),(2,""),(5,""),(6,"")]
+        @test vtest_origin.(coords) == [(1,""),(2,""),(5,""),(6,"")]
         @test (events[1][1],events[1][2]) == (3,2)
         @test vtest_haplotype(s,[deletion,vtest_edit(s,4,5,"T","inside")]) === nothing
         @test length(vtest_haplotypes(s,[deletion,insertion])) == 4

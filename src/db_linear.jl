@@ -93,12 +93,12 @@ function build_linearDB(
         dbi.gi.chrom)
     close(ref)
     prefixes = Set(prefixes)
-    GC.gc() # free memory
+    GC.gc(false) # free memory
 
     # step 2
     @info "Step 2: Constructing per prefix db."
     # Iterate over all prefixes and merge different chromosomes
-    ThreadsX.map(prefixes) do prefix
+    ThreadsX.map(collect(prefixes)) do prefix
         guides = Vector{LongDNA{4}}()
         loci = Vector{Loc}()
         for chrom in dbi.gi.chrom
@@ -220,7 +220,7 @@ function search_linearDB(
 
     ldb = load(joinpath(storage_dir, "linearDB.bin"))
     prefixes = collect(ldb.prefixes)
-    if distance > length(first(prefixes)) || distance > ldb.dbi.motif.distance
+    if (!isempty(prefixes) && distance > length(first(prefixes))) || distance > ldb.dbi.motif.distance
         error("For this database maximum distance is " * 
               string(min(ldb.dbi.motif.distance, length(first(prefixes)))))
     end
@@ -309,7 +309,7 @@ function search_linearDB_with_es(
 
     ldb = load(joinpath(storage_dir, "linearDB.bin"))
     prefixes = collect(ldb.prefixes)
-    if distance > length(first(prefixes)) || distance > ldb.dbi.motif.distance
+    if (!isempty(prefixes) && distance > length(first(prefixes))) || distance > ldb.dbi.motif.distance
         error("For this database maximum distance is " * 
               string(min(ldb.dbi.motif.distance, length(first(prefixes)))))
     end

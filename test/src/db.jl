@@ -269,6 +269,21 @@ end
         @test nrow(ldbes) >= 2
     end
 
+    @testset "linearDB without sites on a strand or at all" begin
+        # One site on the + strand only (no CC), then no site at all.
+        for (seq, n) in (("ACGTGTCAGTACGATCGTACTGGAAAAAAAAAA", 1), ("ACACACACACACACACACACACACACACAC", 0))
+            sparse_genome = joinpath(tdir, "sparse_$n.fa")
+            write(sparse_genome, ">h1\n$seq\n")
+            write(sparse_genome * ".fai", "h1\t$(length(seq))\t4\t$(length(seq))\t$(length(seq) + 1)\n")
+            sparse_path = mkpath(joinpath(tdir, "sparse_linearDB_$n"))
+            build_linearDB("sparse", sparse_genome, Motif("Cas9"), sparse_path, 7)
+            for search in (search_linearDB, (args...; kw...) -> search_linearDB_with_es(args...; kw..., early_stopping = [5, 5, 5, 5]))
+                search(sparse_path, [dna"ACGTGTCAGTACGATCGTAC"], joinpath(sparse_path, "out.csv"); distance = 3)
+                @test nrow(DataFrame(CSV.File(joinpath(sparse_path, "out.csv")))) == n
+            end
+        end
+    end
+
     #=
     @testset "linearDB vs prefixHashDB on distance 3 and semirandom1"
         motif = Motif("Cas9"; distance = 1)

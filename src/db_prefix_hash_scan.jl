@@ -136,6 +136,8 @@ mutable struct PrefixHashScanStats
     fragments::Int
     max_anchor_fragments::Int
     vcf_truncated_anchors::Int
+    vcf_sv_searched::Int
+    vcf_sv_skipped::Int
     fragment_bases::Int
     descriptor_bytes::Int
     enumeration_ns::UInt64
@@ -144,13 +146,15 @@ mutable struct PrefixHashScanStats
     anchor_rejected::Int
     variant_rows::Int
     variant_retired_guides::Int
+    genotype_samples::Int
+    genotype_entries::Int
     path_source::Symbol
     query_variant::Symbol
     scan_backend::Symbol
     simd_backend::Symbol
 end
 
-# Built from the field types rather than a positional list of 38 zeros and four
+# Built from the field types rather than a positional list of 40 zeros and four
 # symbols, so adding a counter to the struct needs no edit here or in reset!.
 PrefixHashScanStats() = PrefixHashScanStats(
     (T === Symbol ? :none : zero(T)
@@ -633,10 +637,19 @@ variant scans have independent early-stopping limits.
 `vcf_annotate` - INFO/key or FORMAT/key fields to retain in allele annotations.
 
 `vcf_max_alleles` - Maximum ALT alleles in one searched local haplotype (default
-`CHOPOFF.PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES`). Combinations with more ALT alleles are
+`CHOPOFF.PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES` in union mode, unlimited in genotype mode). Combinations with more ALT alleles are
 omitted with a warning. Larger values grow memory like C(n, k) in dense loci.
 
-`region` - Comma-separated whole chromosome names, or `nothing` for all.
+`vcf_mode` - `:union` (default) searches every compatible ALT combination.
+`:genotype` searches only combinations some selected sample copy may carry and adds
+`carriers`, `lost` and count columns; it needs GT and has no allele cap by default.
+
+`vcf_samples` - Sample names for `vcf_mode=:genotype`, or `nothing` for all.
+
+`region` - Comma-separated whole chromosome names, a BED file path, or `nothing`
+for all. With BED, a row is reported when its site (`start` to the opposite
+endpoint, including PAM) overlaps an interval; this needs a streaming backend
+and detail output.
 
 # Examples
 ```julia
@@ -666,7 +679,9 @@ function search_prefixHashScan(
     _batch::Tuple{Int, Int} = (1, 1),
     vcf::Union{Nothing, String} = nothing,
     vcf_annotate::Vector{String} = String[],
-    vcf_max_alleles::Int = PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES,
+    vcf_max_alleles::Union{Nothing, Int} = nothing,
+    vcf_mode::Symbol = :union,
+    vcf_samples::Union{Nothing, Vector{String}} = nothing,
     region::Union{Nothing, String} = nothing,
     _variants = nothing)
 
@@ -697,27 +712,37 @@ function search_prefixHashScan(
         uses_raw_simd, early_stop_state) = resolve_prefix_hash_scan_plan(
         guides, motif, dbi, distance, hash_len, early_stopping,
         query_variant, scan_backend, simd_backend, stream_chunk_bases)
-    selected = prefix_hash_scan_chromosomes(region, dbi.gi.chrom)
+    selected, intervals = prefix_hash_scan_region(region, dbi.gi.chrom, reference_lengths)
+    if intervals !== nothing
+        output == :detail || error("BED regions require output=:detail")
+        uses_raw_simd || error("BED regions require a streaming backend")
+    end
     vcf === nothing && !isempty(vcf_annotate) && error("vcf_annotate requires vcf")
-    vcf === nothing && vcf_max_alleles != PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES &&
-        error("vcf_max_alleles requires vcf")
+    validate_prefix_hash_scan_vcf_options(vcf, vcf_max_alleles, vcf_mode, vcf_samples)
     variant_data = _variants
     if vcf !== nothing
         output == :detail || error("VCF searches require output=:detail")
         uses_raw_simd || error("VCF searches require a streaming backend")
         variant_data === nothing && (variant_data = prepare_prefix_hash_scan_variants(
             vcf, dbi, reference_lengths, selected, vcf_annotate; verbose = verbose,
-            max_alleles = vcf_max_alleles, progress_interval = progress_interval))
+            max_alleles = prefix_hash_scan_vcf_max_alleles(vcf_max_alleles, vcf_mode),
+            progress_interval = progress_interval, genotype = vcf_mode == :genotype, samples = vcf_samples,
+            intervals = intervals))
     end
     if stats !== nothing && variant_data !== nothing
         stats.variants_read = variant_data.counts[:records]
-        stats.variants_skipped = sum(variant_data.counts[k] for k in (:outside_region, :no_alt, :spanning_deletion, :non_ref, :iupac_skipped))
-        stats.fragments = length(variant_data.fragments)
-        stats.max_anchor_fragments = variant_data.max_anchor_fragments
-        stats.vcf_truncated_anchors = variant_data.truncated_anchors
-        stats.fragment_bases = sum(f -> f.bases, variant_data.fragments; init = 0)
+        stats.variants_skipped = sum(get(variant_data.counts, k, 0) for k in (:outside_region, :no_alt, :spanning_deletion, :non_ref, :iupac_skipped, :not_carried))
+        stats.vcf_sv_searched = sum(get(variant_data.counts, k, 0) for k in (:sv_del, :sv_dup, :sv_inv))
+        stats.vcf_sv_skipped = sum((n for (k, n) in variant_data.counts if startswith(string(k), "sv_skipped_")); init = 0)
+        # Fragment counts, the largest chromosome's descriptors and enumeration
+        # time are added by the variant scan.
         stats.descriptor_bytes = variant_descriptor_bytes(variant_data)
-        stats.enumeration_ns = variant_data.enumeration_ns
+        stats.enumeration_ns = variant_data.read_ns
+        genotypes = variant_data.genotypes
+        if genotypes !== nothing
+            stats.genotype_samples = vcf_samples === nothing ? length(genotypes.samples) : length(vcf_samples)
+            stats.genotype_entries = length(genotypes.sample)
+        end
     end
     if verbose && _batch[1] == 1
         scheduler = uses_raw_simd ? :chunk : :record
@@ -812,7 +837,7 @@ function search_prefixHashScan(
         query, dbi, guides_, myers_profiles::Vector{PrefixHashScanMyersProfile},
         distance, stream_chunk_bases, scan_threads,
         stats, early_stop_state; simd_backend = Val(effective_simd_backend),
-        progress = progress)
+        progress = progress, intervals = intervals)
 
     if output == :counts
         scan_start = prefix_hash_scan_timer(stats)
@@ -846,7 +871,7 @@ function search_prefixHashScan(
     open(output_file, _append_output ? "a" : "w") do out
         _append_output ||
             write(out, variant_data === nothing ?
-                "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n" : PREFIX_SCAN_VARIANT_HEADER)
+                "guide,alignment_guide,alignment_reference,distance,chromosome,start,strand\n" : prefix_scan_variant_header(variant_data))
 
         if uses_raw_simd
             scan_start = prefix_hash_scan_timer(stats)
@@ -860,7 +885,7 @@ function search_prefixHashScan(
             variant_data === nothing || stream_prefix_hash_scan_variants!(
                 out, variant_data, geometry, query, dbi, guides, guides_, myers_profiles,
                 distance, stream_chunk_bases, scan_threads, early_stopping, stats,
-                Val(effective_simd_backend); progress = progress)
+                Val(effective_simd_backend); progress = progress, report = _batch[1] == 1)
             stats === nothing || (stats.scan_ns += time_ns() - scan_start)
             return nothing
         end
@@ -1219,9 +1244,10 @@ per-batch summary.
 
 See the four-argument method for the scan tuning options.
 
-`vcf`, `vcf_annotate`, `vcf_max_alleles`, and `region` - Add normalized VCF alleles,
-copy selected INFO/key or FORMAT/key fields, cap ALT alleles per local haplotype,
-and select comma-separated whole chromosomes.
+`vcf`, `vcf_annotate`, `vcf_max_alleles`, `vcf_mode`, `vcf_samples`, and `region` -
+Add normalized VCF alleles, copy selected INFO/key or FORMAT/key fields, cap ALT
+alleles per local haplotype, restrict combinations to sample genotypes, and select
+comma-separated whole chromosomes or BED intervals (sites overlapping an interval).
 VCF input requires streaming detail output. See the four-argument method and
 `vcf.md` for allele, coordinate, and early-stopping semantics.
 
@@ -1246,7 +1272,9 @@ function search_prefixHashScan(
     progress_interval::Real = PREFIX_HASH_SCAN_PROGRESS_INTERVAL_S,
     vcf::Union{Nothing, String} = nothing,
     vcf_annotate::Vector{String} = String[],
-    vcf_max_alleles::Int = PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES,
+    vcf_max_alleles::Union{Nothing, Int} = nothing,
+    vcf_mode::Symbol = :union,
+    vcf_samples::Union{Nothing, Vector{String}} = nothing,
     region::Union{Nothing, String} = nothing)
 
     progress_interval >= 0 || error("progress_interval must not be negative.")
@@ -1277,19 +1305,21 @@ function search_prefixHashScan(
     hash_len >= 1 ||
         error("search_prefixHashScan requires guide length greater than distance.")
     vcf === nothing && !isempty(vcf_annotate) && error("vcf_annotate requires vcf")
-    vcf === nothing && vcf_max_alleles != PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES &&
-        error("vcf_max_alleles requires vcf")
+    validate_prefix_hash_scan_vcf_options(vcf, vcf_max_alleles, vcf_mode, vcf_samples)
     variant_data = nothing
     if vcf !== nothing || region !== nothing
         dbi, lengths = prefix_hash_scan_dbinfo(genome_path, motif_)
-        selected = prefix_hash_scan_chromosomes(region, dbi.gi.chrom)
+        selected, intervals = prefix_hash_scan_region(region, dbi.gi.chrom, lengths)
+        intervals === nothing || output == :detail || error("BED regions require output=:detail")
         if vcf !== nothing
             output == :detail || error("VCF searches require output=:detail")
             resolve_prefix_scan_geometry(motif_, distance, hash_len) === nothing &&
                 error("VCF searches require a streaming backend")
             variant_data = prepare_prefix_hash_scan_variants(
                 vcf, dbi, lengths, selected, vcf_annotate; verbose = verbose,
-                max_alleles = vcf_max_alleles, progress_interval = progress_interval)
+                max_alleles = prefix_hash_scan_vcf_max_alleles(vcf_max_alleles, vcf_mode),
+                progress_interval = progress_interval, genotype = vcf_mode == :genotype, samples = vcf_samples,
+                intervals = intervals)
         end
     end
     prepared_paths, _ = load_prefix_hash_scan_paths(
@@ -1328,6 +1358,8 @@ function search_prefixHashScan(
                 vcf = vcf,
                 vcf_annotate = vcf_annotate,
                 vcf_max_alleles = vcf_max_alleles,
+                vcf_mode = vcf_mode,
+                vcf_samples = vcf_samples,
                 region = region,
                 _variants = variant_data,
             )
@@ -1346,3 +1378,15 @@ function search_prefixHashScan(
         output_file, guides, counts, early_stopping)
     return nothing
 end
+
+function validate_prefix_hash_scan_vcf_options(vcf, max_alleles, mode, samples)
+    vcf === nothing && max_alleles !== nothing && error("vcf_max_alleles requires vcf")
+    mode in (:union, :genotype) || error("vcf_mode must be :union or :genotype")
+    vcf === nothing && mode != :union && error("vcf_mode requires vcf")
+    samples === nothing || mode == :genotype || error("vcf_samples requires vcf_mode=:genotype")
+    samples === nothing || !isempty(samples) || error("vcf_samples must name at least one sample")
+    return nothing
+end
+
+prefix_hash_scan_vcf_max_alleles(max_alleles, mode) = something(max_alleles,
+    mode == :genotype ? typemax(Int) : PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES)

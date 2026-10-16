@@ -354,11 +354,18 @@ function parse_commandline(args::Array{String})
             arg_type = String
             default = ""
         "--vcf_max_alleles"
-            help = "Maximum ALT alleles in one searched local haplotype. Larger values grow memory quickly in dense loci; see vcf.md."
+            help = "Maximum ALT alleles in one searched local haplotype (default $PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES in union mode, unlimited in genotype mode). Larger values grow memory quickly in dense loci; see vcf.md."
             arg_type = Int
-            default = PREFIX_HASH_SCAN_VCF_DEFAULT_MAX_ALLELES
+        "--vcf_mode"
+            help = "union searches every compatible ALT combination; genotype searches combinations carried by sample copies (GT/PS) and adds carrier columns."
+            arg_type = String
+            default = "union"
+            range_tester = x -> x in ("union", "genotype")
+        "--vcf_samples"
+            help = "Comma-separated sample names for --vcf_mode genotype (default: all samples)."
+            arg_type = String
         "--region"
-            help = "Comma-separated reference chromosome names. Interval and BED selection are not supported."
+            help = "Comma-separated reference chromosome names, or a BED file path (reports sites overlapping its intervals; detail output only)."
             arg_type = String
         "--genome"
             help = "Path to an indexed FASTA or 2bit reference."
@@ -506,6 +513,15 @@ function parse_commandline(args::Array{String})
         "--variant_aware"
             help = "Count VCF loci once, using the best distance across allele combinations."
             action = :store_true
+        "--per_sample"
+            help = "Per guide and sample locus counts from vcf_mode genotype output: D (certain) and P (possible) columns. Needs --vcf."
+            action = :store_true
+        "--vcf"
+            help = "The VCF searched with --vcf_mode genotype; supplies sample names and ploidy for --per_sample."
+            arg_type = String
+        "--vcf_samples"
+            help = "Comma-separated sample names for --per_sample (default: all samples)."
+            arg_type = String
         "--distance"
             help = "Maximum edit distance and locus grouping radius; use the same value as filter."
             arg_type = Int
@@ -711,6 +727,8 @@ function main(args::Array{String})
                 vcf = scan_args["vcf"],
                 vcf_annotate = isempty(scan_args["vcf_annotate"]) ? String[] : String.(split(scan_args["vcf_annotate"], ',')),
                 vcf_max_alleles = scan_args["vcf_max_alleles"],
+                vcf_mode = Symbol(scan_args["vcf_mode"]),
+                vcf_samples = scan_args["vcf_samples"] === nothing ? nothing : String.(split(scan_args["vcf_samples"], ',')),
                 region = scan_args["region"],
             )
         elseif args["%COMMAND%"] == "sassy"
@@ -776,7 +794,9 @@ function main(args::Array{String})
         args = args["summarize"]
         res = DataFrame(CSV.File(args["detail_file"]))
         distance = something(args["distance"], isempty(res.distance) ? 0 : maximum(res.distance))
-        res = summarize_offtargets(res; distance = distance, variant_aware = args["variant_aware"])
+        res = summarize_offtargets(res; distance = distance, variant_aware = args["variant_aware"],
+            per_sample = args["per_sample"], vcf = args["vcf"],
+            vcf_samples = args["vcf_samples"] === nothing ? nothing : String.(split(args["vcf_samples"], ',')))
         CSV.write(args["output"], res)
 
     elseif args["%COMMAND%"] == "list"

@@ -171,6 +171,7 @@ function evaluate_prefix_hash_scan_candidate!(
     stats::S,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
     chunk_counts::Union{Nothing, Matrix{Int}} = nothing,
+    intervals::Union{Nothing, Vector{UnitRange{Int}}} = nothing,
     ) where {S <: Union{Nothing, PrefixHashScanStats}}
 
     candidate_mask &= prefix_hash_scan_active_mask(early_stop_state)
@@ -200,8 +201,10 @@ function evaluate_prefix_hash_scan_candidate!(
             end
             continue
         end
-        reserve_prefix_hash_scan_hit!(
-            early_stop_state, chunk_counts, guide_idx, dist) || continue
+        # A BED region spends early-stopping budget only on overlapping sites,
+        # which needs the traceback span first.
+        intervals === nothing && (reserve_prefix_hash_scan_hit!(
+            early_stop_state, chunk_counts, guide_idx, dist) || continue)
 
         if isempty(ot)
             materialize_start = prefix_hash_scan_timer(stats)
@@ -220,6 +223,13 @@ function evaluate_prefix_hash_scan_candidate!(
             stats.align_ns += time_ns() - align_start
         end
         aln.dist > distance && continue
+        if intervals !== nothing
+            lo, hi = prefix_hash_scan_site_span(geometry, dbi.motif,
+                candidate_start + global_offset, is_antisense, aln.ref)
+            prefix_hash_scan_overlaps(intervals, lo, hi) || continue
+            reserve_prefix_hash_scan_hit!(
+                early_stop_state, chunk_counts, guide_idx, dist) || continue
+        end
 
         if dbi.motif.extends5
             aln_guide = reverse(aln.guide)
@@ -257,13 +267,14 @@ function evaluate_prefix_hash_scan_hits!(
     stats::S,
     early_stop_state::Union{Nothing, PrefixHashScanEarlyStopState} = nothing,
     chunk_counts::Union{Nothing, Matrix{Int}} = nothing,
+    intervals::Union{Nothing, Vector{UnitRange{Int}}} = nothing,
     ) where {S <: Union{Nothing, PrefixHashScanStats}}
 
     for hit in hits
         evaluate_prefix_hash_scan_candidate!(
             output, raw, geometry, hit.start, hit.mask, global_offset, dbi,
             is_antisense, guides_, myers_profiles, distance, stats,
-            early_stop_state, chunk_counts)
+            early_stop_state, chunk_counts, intervals)
     end
     return output
 end

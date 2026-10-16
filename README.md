@@ -104,7 +104,9 @@ for IUPAC semantics, supported configurations, and human-genome benchmarks.
 ### Variant-aware search (VCF)
 
 `prefixHashScan` also searches the alternative sequences in a VCF: SNVs, MNPs,
-insertions, deletions, and their combinations. Output keeps every reference
+insertions, deletions, precise symbolic `<DEL>`, `<DUP>` and `<INV>` structural
+variants, and their combinations. Other SV kinds (`<INS>`, `<CNV>`, breakends,
+IMPRECISE records) are skipped with a warning that counts them. Output keeps every reference
 off-target and adds rows for off-targets that only exist with variant alleles.
 CHOPOFF does not read genotypes, phase, FILTER, or allele frequency, so filter
 the VCF first.
@@ -131,7 +133,8 @@ CHOPOFF filter --detail_file detail.csv --output filtered.csv --distance 2
 CHOPOFF summarize --detail_file filtered.csv --output counts.csv --variant_aware --distance 2
 ```
 
-`--region` takes comma-separated chromosome names. `--vcf_annotate INFO/AF,FORMAT/AF`
+`--region` takes comma-separated chromosome names or a BED file; with BED, only sites
+overlapping an interval are reported. `--vcf_annotate INFO/AF,FORMAT/AF`
 copies the named fields into each allele annotation. VCF output adds five columns:
 
 | Column | Meaning |
@@ -144,8 +147,9 @@ copies the named fields into each allele annotation. VCF output adds five column
 `--vcf_max_alleles` (default 3) limits how many ALT alleles one off-target can
 combine. Single-sample VCFs are cheap at any value, so raise it if the run warns
 about truncated combinations. Cohort and catalog VCFs (gnomAD, ClinVar) grow
-steeply with this value: run them one chromosome at a time with `--region`,
-filter by frequency first, and use 2 for dense cohorts.
+steeply with this value: filter by frequency first and use 2 for dense cohorts.
+Fragments are enumerated one chromosome at a time, so memory follows the largest
+chromosome.
 See [vcf.md](./vcf.md) for semantics, validation, and measured costs.
 
 For direct SIMD search without building a database, SASSY supports an AVX-512
